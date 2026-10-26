@@ -234,10 +234,16 @@ class Checker:
                 used.add(f"{dt.name}.{fn}")
                 return fields[fn]
 
-            for fn, op, st in q.conds:
-                f = field_of(fn)
-                if f is not None and (f.type.kind != "名前" or st not in [x for s in self.p.states if s.name == f.type.target for x in [s.initial, *s.middle, *s.final]]):
-                    self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 「{st}」は項目 {fn} の状態ではありません")
+            for group in q.conds:
+                for fn, op, st in group:
+                    f = field_of(fn)
+                    if f is None:
+                        continue
+                    if st.isdigit():
+                        if f.type.kind not in ("整数", "金額", "日時", "割合"):
+                            self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 数との比較は、数か日時の項目にだけ使えます")
+                    elif f.type.kind != "名前" or st not in [x for s in self.p.states if s.name == f.type.target for x in [s.initial, *s.middle, *s.final]]:
+                        self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 「{st}」は項目 {fn} の状態ではありません")
             for fn, op, arg in q.filters:
                 f = field_of(fn)
                 if f is None:
