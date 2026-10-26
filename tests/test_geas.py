@@ -892,3 +892,10 @@ fn main() {
     rows, n = r.stdout.splitlines()
     assert rows == "メモID=B/名前=null/札数=2/札の種類=1;メモID=A/名前=null/札数=0/札の種類=0", rows  # null は並びの最後
     assert n == "1"  # 重さが null のものは絞り込みを満たさない
+
+
+def test_問いが残っているうちは生成しない():
+    ck = chk(mutate(CODE, "let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "let 合計 = 小計 + 小計 * 税率"))
+    assert ck.ok and not ck.ready
+    with pytest.raises(AssertionError, match="問い"):
+        generate(ck)

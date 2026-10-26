@@ -173,6 +173,11 @@ class Checker:
     def ok(self):
         return not any(x.level == ERROR for x in self.diags)
 
+    @property
+    def ready(self):
+        """生成してよいか。問いが残っている（仕様が決まっていない）うちは生成しない"""
+        return not any(x.level in (ERROR, QUESTION) for x in self.diags)
+
     def check_type(self, t: Type, where: str):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか"""
         if t.kind == "参照" and t.target not in self.data:

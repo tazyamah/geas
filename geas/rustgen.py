@@ -125,7 +125,7 @@ def opt(v):
 
 class Gen:
     def __init__(self, ck: Checker):
-        assert ck.ok, "検査にエラーがあるので生成しません"
+        assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
         self.out: list[str] = []

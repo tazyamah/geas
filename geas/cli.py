@@ -92,10 +92,10 @@ def main(argv=None) -> int:
         text = render(ck, build(ck), f"（{Path(a.code).name}）")
         Path(a.o).write_text(text) if a.o else print(text)
         return 0 if ck.ok else 1
-    if not ck.ok:
+    if not ck.ready:
         for d in ck.diags:
             print(d)
-        print("検査にエラーがあるので、続けません。", file=sys.stderr)
+        print("検査にエラーか問いが残っているので、続けません（問いに答えて、コードか計画書に反映してください）。", file=sys.stderr)
         return 1
     lib = generate(ck)
     if a.cmd == "rust":
