@@ -7,6 +7,19 @@ from .ast import *  # noqa: F401,F403
 from .lexer import Tok, lex
 
 
+def parse_labels(doc: str) -> dict:
+    """説明コメントの表示名。`@ja 注文` のように言語ごとに書く。タグが無ければ、全体を既定（空の言語名）の表示名とする"""
+    out: dict[str, str] = {}
+    plain: list[str] = []
+    for ln in doc.split("\n"):
+        if ln.startswith("@"):
+            tag, _, text = ln[1:].partition(" ")
+            out[tag] = text.strip()
+        elif ln:
+            plain.append(ln)
+    return ({"": " ".join(plain)} if plain else {}) | out
+
+
 # 論理型の名前に使えない、組み込みの型の名前
 BUILTIN_TYPE_NAMES = {"id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref", "仮想日時"}
 
@@ -113,7 +126,9 @@ class Parser:
         self.skip_nl()
         while self.peek().kind != "EOF":
             line = self.peek().line
+            doc = self.peek().doc
             kw = self.name()
+            declared = self.peek().val
             if kw == "entity":
                 p.data.append(self.data(line))
             elif kw == "data":
@@ -146,6 +161,8 @@ class Parser:
                 p.events.append(self.event(line))
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
+            if doc:
+                p.labels[declared] = parse_labels(doc)
             self.skip_nl()
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "仮想日時" in self.used_builtin:

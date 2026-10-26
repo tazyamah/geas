@@ -167,6 +167,7 @@ class Program:
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
+    labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
 
 
 # ---- 式 ----

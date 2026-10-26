@@ -1817,3 +1817,12 @@ def test_仕様書にフロー図が出る_並列は_プラスのゲートウェ
     assert '-- "受付" -->' in md and "応答（reply）" in md
     plain = render(chk(CODE), build(chk(CODE)))
     assert '{"＋"}' not in plain and '{"×"}' in plain and "待つ 決済待ち" in plain
+
+
+def test_説明コメントは意味を変えず_仕様書の名前と表示名の表になる():
+    ck = chk(mutate(CODE, "entity 顧客 {", "/// 買う人\n/// @en Customer\nentity 顧客 {"))
+    assert ck.ready, ck.diags
+    assert ("顧客", "既定: 買う人 / en: Customer") in build(ck)["名前"]
+    assert "## 名前と表示名" in render(ck, build(ck))
+    assert generate(ck) == generate(chk(CODE))  # 説明コメントがあってもなくても、生成されるコードは同じ
+    assert "名前と表示名" not in render(chk(CODE), build(chk(CODE)))

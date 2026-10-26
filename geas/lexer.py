@@ -12,6 +12,7 @@ class Tok:
     kind: str  # NAME NUM STR OP NL EOF
     val: str
     line: int
+    doc: str = ""  # この字句の直前にあった説明コメント（///）。仕様書の表示名に使う。意味は変えない
 
 
 PUNCT = set('{}()[],:;.=<>+-*/%|→Σ!')
@@ -22,6 +23,13 @@ SPACE = " \t\r　"
 def lex(src: str) -> list[Tok]:
     toks: list[Tok] = []
     i, line, n = 0, 1, len(src)
+    docs: list[str] = []  # 続けて書かれた /// の行。次の字句に付ける
+
+    def add(tok: Tok):
+        if docs and tok.kind not in ("NL", "EOF"):
+            tok.doc = "\n".join(docs)
+            docs.clear()
+        toks.append(tok)
 
     depth = 0  # ( ) の中の改行は式の続き（長い式を折り返せる）
 
@@ -38,28 +46,32 @@ def lex(src: str) -> list[Tok]:
         elif c in SPACE:
             i += 1
         elif src.startswith("//", i) or c == "#":
-            while i < n and src[i] != "\n":
-                i += 1
+            j = i
+            while j < n and src[j] != "\n":
+                j += 1
+            if src.startswith("///", i):  # 説明コメント。コンパイラは読み飛ばし、仕様書の生成だけが使う
+                docs.append(src[i + 3 : j].strip())
+            i = j
         elif c == '"':
             j = src.find('"', i + 1)
             if j < 0:
                 raise LexError(f"{line}行目: 文字列が閉じていません")
-            toks.append(Tok("STR", src[i + 1 : j], line))
+            add(Tok("STR", src[i + 1 : j], line))
             i = j + 1
         elif src[i : i + 2] in TWO:
             v = src[i : i + 2]
-            toks.append(Tok("OP", "→" if v == "->" else v, line))
+            add(Tok("OP", "→" if v == "->" else v, line))
             i += 2
         elif c in PUNCT:
             depth = max(0, depth + (c == "(") - (c == ")"))
-            toks.append(Tok("OP", c, line))
+            add(Tok("OP", c, line))
             i += 1
         else:
             j = i
             while j < n and src[j] not in SPACE and src[j] != "\n" and src[j] not in PUNCT and src[j] != '"':
                 j += 1
             run = src[i:j]
-            toks.append(Tok("NUM" if run.isdigit() else "NAME", run, line))
+            add(Tok("NUM" if run.isdigit() else "NAME", run, line))
             i = j
     nl()
     toks.append(Tok("EOF", "", line))
