@@ -507,3 +507,205 @@ def test_新規作成の状態は状態名で書く():
 def test_空の_if_はエラーで止まる():
     ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n"))
     assert any("if の中が空" in m for m in msgs(ck, ERROR))
+
+
+# ---- 不変条件と項目の範囲は、書き込むその場で、値の範囲から示す ----
+REFLECT = ("  writes 注文.状態\n  transition 注文: 決済要求済 → 完了", "  writes 注文.状態, 注文.合計\n  transition 注文: 決済要求済 → 完了")
+
+
+def test_項目の更新で在庫を減らすと範囲も不変条件も示せない():
+    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n",
+                           "  reads 注文.合計, 注文.状態, 商品.在庫\n  writes 注文.状態, 商品.在庫\n"),
+                    "  注文.状態 = 決済要求済\n",
+                    "  注文.状態 = 決済要求済\n  let 品 = 注文[注文ID] else { return 注文なし }\n  let 商 = 商品[注文ID] else { return 注文なし }\n  商.在庫 = 商.在庫 - 1\n"))
+    assert any("反例" in m and "商品.在庫" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ減算を2回すると不足の確認は効かない():
+    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    assert any("反例" in m for m in msgs(chk(mutate(CODE, up, up + up)), ERROR))
+
+
+def test_状態がSでないと分かっていれば値を下げてよい():
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    assert ck.ok, ck.diags
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.合計 = 0\n  注文.状態 = 完了\n"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_Sで新規作成するなら値の確認が要る():
+    ck = chk(mutate(mutate(CODE, "transition 注文: (new) → 受付", "transition 注文: (new) → 決済要求済"), "状態: 受付 }", "状態: 決済要求済 }"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_分岐の中の書き込みで確認は崩れる():
+    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n", "  reads 注文.合計, 注文.状態\n  writes 注文.状態, 注文.合計\n"),
+                    "  注文.状態 = 決済要求済\n", "  if 注文.合計 > 100 {\n    注文.合計 = 0\n  }\n  注文.状態 = 決済要求済\n"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_遷移した後は元の状態の確認が消える():
+    ck = chk(mutate(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 決済要求済\n  transition 注文: 受付 → キャンセル"),
+                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  注文.状態 = キャンセル\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_同じデータの別の束縛の確認も遷移で消える():
+    ck = chk(mutate(two_orders(PAY + "  let 別 = 注文[別ID] else { return 注文なし }\n  if 別.状態 != 受付 { return 状態違い }\n"),
+                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  別.状態 = 決済要求済\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_書けない形の不変条件はエラーになる():
+    ck = chk(CODE + "\ninvariant 商品: 在庫 <= 100\n")
+    assert any("まだ検査できません" in m for m in msgs(ck, ERROR))
+
+
+def test_項目の更新は型を確かめる():
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 注文ID\n"))
+    assert any("型の違う値" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_項目へ数を書くと物理数へ変換される(tmp_path):
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_減らした後に確かめた不足の集まりは古い():
+    chk_line = "  if 不足 is nonempty { return 在庫不足(不足) }\n"
+    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    src = mutate(CODE, up, up + chk_line + up)
+    assert chk(mutate(CODE, up, up)).ok
+    assert any("反例" in m for m in msgs(chk(src), ERROR))
+
+
+# ---- 外部作用とフローの重複・矛盾 ----
+FOR = """
+deed 引当 {
+  input 明細: 商品 → int 1..99, 注文ID: id
+  result 待ち解除結果
+  effects 倉庫.引当
+
+  for (k, v) in 明細 {
+    request 倉庫.引当(k, v, idempotency_key = KEY)
+  }
+  return 反映済
+}
+
+nexus 引当の流れ {
+  引当: 反映済 → reply, 注文なし → reply, 状態違い → reply
+}
+"""
+
+
+def with_for(key):
+    src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))",
+                 'effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id, 数: int 1..99) no_wait "試し"')
+    return chk(src + FOR.replace("KEY", key))
+
+
+def test_for_の中の冪等キーは回す値によらないと止まる():
+    assert any("for で回す値によりません" in m for m in msgs(with_for("注文ID"), ERROR))
+    assert not any("冪等" in m for m in msgs(with_for("k"), ERROR))
+
+
+def test_冪等キーは_ID_か文字列():
+    ck = chk(mutate(CODE, "idempotency_key = 注文ID)", "idempotency_key = 1)"))
+    assert any("冪等キーは ID か文字列" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ結果に行き先を2つ書くと止まる():
+    ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
+    assert any("行き先が2つ以上" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():
+    ck = chk(CODE + "\nnexus 二重 {\n  受注: 受付 → reply, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply\n}\n")
+    assert any("違う行き先" in m for m in msgs(ck, ERROR))
+
+
+def test_失敗の理由を宣言して待たないのは矛盾():
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", 'effect 決済.請求(注文ID: id, 金額: money(円)) failures 残高不足 no_wait "試し"'))
+    assert any("no_wait" in m for m in msgs(ck, ERROR))
+
+
+# ---- 生成した Rust が必ずビルドできる ----
+def test_定義の名前の重複は止まる():
+    for old, new in [("data 顧客 {", "data 顧客 {\n  顧客ID: id unique\n}\n\ndata 顧客 {"),
+                     ("  在庫: int 0..\n", "  在庫: int 0..\n  在庫: money(円) 0..\n"),
+                     ("  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id\n  slot 注文ID: id\n  reads 注文.合計")]:
+        assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
+
+
+def test_未定義の型の名前は止まる():
+    ck = chk(mutate(CODE, "  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id, 謎: 謎型\n  reads 注文.合計"))
+    assert any("謎型" in m for m in msgs(ck, ERROR))
+
+
+def test_最後に_return_が無いと止まる():
+    ck = chk(mutate(CODE, "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n  return 要求済\n",
+                    "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n"))
+    assert any("return で終えて" in m for m in msgs(ck, ERROR))
+
+
+def test_if_の条件は真偽():
+    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { return 合計ゼロ }\n  if 注文.合計 { return 合計ゼロ }\n"))
+    assert any("if の条件" in m for m in msgs(ck, ERROR))
+
+
+def test_update_の値の型を確かめる():
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "writes 注文.合計").replace("注文[k].状態 = 完了", "注文[k].合計 = 完了")
+    assert any("型の違う値" in m for m in msgs(chk(src), ERROR))
+
+
+@needs_cargo
+def test_割合の参照があってもホストつきでビルドできる(tmp_path):
+    ck = chk(CODE)
+    write_crate(ck, generate(ck), "fn main() {\n    let r = geas_app::host::有理を読む(\"1/10\", Some(0), Some(1)).unwrap();\n"
+                "    assert_eq!(r.to_string(), \"1/10\");\n    assert!(geas_app::host::有理を読む(\"3/2\", Some(0), Some(1)).is_err());\n}\n", tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+# ---- 誤検出と警告の漏れ ----
+def test_update_の書き込みは_ほかで読んだ項目を消さない():
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "reads 注文.合計\n  writes 注文.合計").replace(
+        "  update { 注文[k].状態 = 完了 | k in 他 }\n", "  update { 注文[k].合計 = 1 | k in 他, 注文[k].合計 > 0 }\n")
+    ck = chk(src)
+    assert not any("注文.合計" in m and "使っていません" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+def test_使わない外部作用と届かない状態は警告():
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", "effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id) no_wait \"試し\""))
+    assert any("どの処理からも要求されていません" in m for m in msgs(ck, "警告"))
+    ck = chk(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 受付"))
+    assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
+
+
+# ---- ネクサスで次の処理へは、結果の中身を名前と型で渡す ----
+def test_結果の中身には名前が要る():
+    with pytest.raises(ParseError, match="名前を付けて"):
+        parse(mutate(CODE, "  受付(注文ID: id)\n", "  受付(id)\n"))
+
+
+def test_結果の中身と次の処理の入力は名前と型で突き合わせる():
+    assert any("中身「不足」を、処理 決済要求 は入力にもっていません" in m
+               for m in msgs(chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → 決済要求, 商品なし")), ERROR))
+    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(番号: id)\n"))
+    assert any("入力「注文ID」が、結果「受付」の中身にありません" in m for m in msgs(ck, ERROR))
+    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(注文ID: set of id)\n"))
+    assert any("型" in m and "受付" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_ホストは結果の中身を名前つきで返す(tmp_path):
+    ck = chk(CODE)
+    req = ('{"名前":"受注","文脈":{"税率":"1/10","新注文ID":"N1"},"入力":{"顧客ID":"C1","明細":{"A":2}},'
+           '"保存":{"商品":{"A":{"商品ID":"A","在庫":5,"単価":100}},"顧客":{"C1":{"顧客ID":"C1"}}}}')
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert '"中身":{"注文ID":"N1"}' in r.stdout, r.stdout

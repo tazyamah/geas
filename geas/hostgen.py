@@ -5,6 +5,7 @@ import json
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
+from .rustgen import opt
 from .spec import fmt_cause
 
 JSON_PRELUDE = r'''// 自動生成。手で編集しない。
@@ -85,6 +86,15 @@ pub fn b64_encode(b: &[u8]) -> String {
     }
     o
 }
+/// 割合は "分子/分母" の文字列で受け取る（小数にすると丸めが入るため）。範囲の宣言もここで確かめる
+pub fn 有理を読む(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<有理, String> {
+    let (a, b) = s.split_once('/').ok_or_else(|| "割合は \"分子/分母\" で書いてください".to_string())?;
+    let 分子: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
+    let 分母: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
+    if 分母 <= 0 { return Err("割合の分母は 1 以上にしてください".into()); }
+    if lo.map_or(false, |l| 分子 < l * 分母) || hi.map_or(false, |h| 分子 > h * 分母) { return Err("範囲外の割合です".into()); }
+    Ok(有理 { 分子, 分母 })
+}
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut o = Vec::with_capacity(s.len() / 4 * 3);
     let (mut n, mut k) = (0u32, 0);
@@ -111,6 +121,9 @@ def from_j(t: Type, j: str) -> str:
         return f'{phys(t)}::try_from({j}.as_int()?).map_err(|_| "範囲外の数です".to_string())?'
     if k == "日時":
         return f"({j}.as_int()? as i64)"
+    if k == "割合":
+        r = t.range
+        return f'有理を読む({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
     if k == "バイト列":
         return f"b64_decode({j}.as_str()?)?"
     if k == "集合":
@@ -131,6 +144,8 @@ def to_j(t: Type, x: str) -> str:
         return f"{x}.to_string()"
     if k == "バイト列":
         return f"js_str(&b64_encode(&{x}))"
+    if k == "割合":
+        return f"js_str(&{x}.to_string())"
     if k == "集合":
         return f"js_set(&{x})"
     if k == "名前":
@@ -188,9 +203,21 @@ def host_source(ck: Checker) -> str:
         vals = ", ".join(f'js_str("{n}"), {to_j(t, n)}' for n, t in e.params)
         w(f'        外部作用::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"冪等キー\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(冪等キー)),')
     w("    }\n}")
+    # 結果の中身（名前つき）。ネクサスの次の処理へは、これをそのまま入力として渡す
+    for r in p.results:
+        w(f"fn {r.name}_中身(r: &{r.name}) -> String {{\n    match r {{")
+        for v, ps in r.variants:
+            if ps:
+                names = [f"a{i}" for i in range(len(ps))]
+                fmt = ",".join("{}:{}" for _ in ps)
+                vals = ", ".join(f'js_str("{n}"), {to_j(t, a)}' for (n, t), a in zip(ps, names))
+                w(f'        {r.name}::{v}({", ".join(names)}) => format!("{{{{{fmt}}}}}", {vals}),')
+            else:
+                w(f'        {r.name}::{v} => "{{}}".to_string(),')
+        w("    }\n}")
     # 処理の呼び出し
-    w("fn 結果を書く(名前: &str, 引数: Vec<String>, 外部: Vec<String>, 保存: &保存) -> String {\n"
-      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 外部.join(","), 保存を書く(保存))\n}')
+    w("fn 結果を書く(名前: &str, 引数: Vec<String>, 中身: String, 外部: Vec<String>, 保存: &保存) -> String {\n"
+      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 中身, 外部.join(","), 保存を書く(保存))\n}')
     w("fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存) -> Result<String, String> {\n    match 名前 {")
     for proc in p.processes:
         info = ck.infos[proc.name]
@@ -199,7 +226,7 @@ def host_source(ck: Checker) -> str:
         inf = [f"{x}: {from_j(t, f'入力.get(\"{x}\")?')}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
-        w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
+        w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
@@ -211,7 +238,7 @@ def host_source(ck: Checker) -> str:
             inf.append(f"{x}: {e}")
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
-        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, vec![], 保存))\n        }}')
+        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
     w("pub fn 呼ぶ(要求: &str) -> Result<String, String> {\n"
       '    let r = parse(要求)?;\n    let mut s = 保存を読む(r.get("保存")?)?;\n'

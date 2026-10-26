@@ -319,11 +319,12 @@ class Gen:
         for r in self.p.results:
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub enum {r.name} {{")
-            for v, ts in r.variants:
+            vs = [(v, [t for _, t in ps]) for v, ps in r.variants]  # Rust では位置で持つ（名前は検査と受け渡しの定義に使う）
+            for v, ts in vs:
                 self.w(f"    {v}({', '.join(rust_type(t) for t in ts)})," if ts else f"    {v},")
             self.w("}")
             self.w(f"impl {r.name} {{\n    pub fn 表示(&self) -> String {{\n        match self {{")
-            for v, ts in r.variants:
+            for v, ts in vs:
                 if ts:
                     names = [f"a{i}" for i in range(len(ts))]
                     shown = ", ".join(show_expr(t, n) if t.kind != "ID" else n for t, n in zip(ts, names))
@@ -333,11 +334,11 @@ class Gen:
                     self.w(f'            {r.name}::{v} => "{v}".to_string(),')
             self.w("        }\n    }")
             self.w("    pub fn 名前(&self) -> &'static str {\n        match self {")
-            for v, ts in r.variants:
+            for v, ts in vs:
                 self.w(f'            {r.name}::{v}' + ("(..)" if ts else "") + f' => "{v}",')
             self.w("        }\n    }")
             self.w("    pub fn 引数(&self) -> Vec<String> {\n        match self {")
-            for v, ts in r.variants:
+            for v, ts in vs:
                 if ts:
                     names = [f"a{i}" for i in range(len(ts))]
                     shown = ", ".join(f'format!("{{}}", {show_expr(t, n)})' for t, n in zip(ts, names))
@@ -353,7 +354,7 @@ class Gen:
                 rdef = self.ck.results[self.ck.procs[proc].result]
                 m = dict(routes)
                 self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> 行き先 {{\n    match r {{")
-                for v, ts in rdef.variants:
+                for v, ts in rdef.variants:  # ts は中身（名前, 型）。ここでは有無だけ見る
                     pat = f"{rdef.name}::{v}" + ("(..)" if ts else "")
                     dest = m[v]
                     self.w(f"        {pat} => " + ("行き先::応答," if dest == "応答" else f'行き先::待つ("{dest[3:]}"),' if dest.startswith("待つ ") else f'行き先::処理("{dest}"),'))
@@ -538,7 +539,9 @@ class ProcGen:
         elif isinstance(st, SetField):
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
-            self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {self.rx(st.e)}));")
+            t = self.field_type(d, st.f)
+            v = self.conv(t, self.rx(st.e), f"{d}.{st.f}") if t.kind in ("整数", "金額") else self.rx(st.e)
+            self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Create):
             dt = self.ck.data[st.data]
             key = self.ck.key_field(st.data)

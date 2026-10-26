@@ -50,7 +50,7 @@ class State:
 @dataclass
 class ResultDef:
     name: str
-    variants: list[tuple[str, list[Type]]]
+    variants: list[tuple[str, list[tuple[str, Type]]]]  # 種類ごとの中身（名前と型）。次の処理へは名前と型で渡す
     line: int = 0
 
 

@@ -51,6 +51,8 @@ nexus 注文受付 { 受注: 受付 → 決済要求, 顧客なし → reply, ..
 trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now + 30 min → ... }
 ```
 
+結果の中身には名前を付けます（`result 受注結果 { 受付(注文ID: id), 在庫不足(不足: set of id), 顧客なし }`）。ネクサスで次の処理へ進むときは、結果の中身を次の処理の入力へ名前と型で渡します。過不足や型の違いはエラーです（`trigger` の引数と同じルール）。
+
 `if` の中には、`return`・項目の更新・`update`・`request`・入れ子の `if` を書けます（`let` は外に書きます）。検査は、状態を変える文ごとに「その分岐で元の状態を確かめているか」を追います。
 
 `query` の `where` は、1行が `or` でつないだ組、行どうしが `and` です（`where 状態 == 公開 or 状態 == 下書き`、`where 重さ >= 10`）。
@@ -58,6 +60,8 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 `query` に `select 注文ID, 顧客.顧客ID as 顧客, sum(明細) as 点数` と書くと、IDの列でなく列つきの行を返します（参照の先の項目は結合、`sum` と `count` はキーつきの集まりの集計）。
 
 文字列の検索は `filter 本文 contains 単語` が完全一致の部分文字列で、同一視する軸は書いたものだけです（`ignore_case`＝大小、`ignore_kana`＝ひらがなとカタカナ、`ignore_width`＝全角と半角の英数記号）。正規化（NFC）は入力の境界で済ませる前提で、検索には持ち込みません。
+
+`invariant` に書けるのは「項目 >= 数」と「状態の項目 == 状態 implies 項目 > 数」の形です。検査は、項目へ書き込むたびに、その場で値の範囲から約束が守れることを示し、示せなければエラーにします（項目の型の範囲 `int 0..` なども同じように示します）。値の範囲は、入力と項目の範囲、`if x.項目 <= 0 { return … }` のような確認、減らす前の不足の確認から分かります。
 
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
