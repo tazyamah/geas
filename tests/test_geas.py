@@ -1613,3 +1613,35 @@ def test_仮想日時はホストの境界で成分ごとに確かめ_未指定�
     assert "範囲外" in got[1] and "期日.月" in got[1], got[1]
     assert '\\"月\\":10' in got[2] and '\\"日\\":26' in got[2] and '\\"年\\":null' in got[2], got[2]
     assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]
+
+
+CONVERT = PART.replace("part 税込(x: 非負金額) -> 非負金額 guarantee result >= x", "convert 税込(x: 非負金額) -> 非負金額 = x + x")
+
+
+def test_convert_は式が定義で_外の部品も保証も要らない():
+    ck = chk(CONVERT)
+    assert ck.ready, ck.diags
+    assert build(ck)["部品"] == [("税込", "x: 金額(円) 0..", "金額(円) 0..", "= x + x")]
+    assert not ck.infos["置く"].parts
+    assert "trait 部品群" not in generate(ck)
+
+
+def test_convert_の式の型が戻り値と違うと止まる():
+    bad = CONVERT.replace("= x + x", "= int(x)")
+    assert any("戻り値の型と違います" in m or "戻り値の型（" in m for m in msgs(chk(bad), ERROR))
+
+
+@needs_cargo
+def test_convert_は生成コードの中で計算され_実行時の範囲検査は出さない(tmp_path):
+    ck = chk(CONVERT)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_convert_の結果が範囲に収まると示せなければ検査で止まる():
+    bad = CONVERT.replace("convert 税込(x: 非負金額) -> 非負金額", "convert 税込(x: 非負金額) -> 税抜の限り")
+    assert any("収まると示せません" in m for m in msgs(chk(bad), ERROR))
+    ok = CONVERT.replace("convert 税込(x: 非負金額) -> 非負金額 = x + x", "convert 税込(x: 税抜の限り) -> 非負金額 = x + x")
+    assert chk(ok).ready
+    assert "保証違反(\"税込\"" not in generate(chk(ok))

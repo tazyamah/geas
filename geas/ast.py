@@ -76,6 +76,7 @@ class Part:
     ret: "Type"
     guarantee: object
     line: int = 0
+    body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
 
 
 @dataclass
