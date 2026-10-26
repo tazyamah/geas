@@ -678,6 +678,8 @@ class ProcChecker:
         ck = self.ck
         if isinstance(e, Num):
             return "Int"
+        if isinstance(e, Dur):
+            return "Dur"
         if isinstance(e, Null):
             return "Null"
         if isinstance(e, Name):
@@ -958,6 +960,16 @@ class ProcChecker:
             if a != b:
                 self.d(ERROR, "型", f"「{show(e)}」: 違う型を比べています")
             return "Bool"
+        if e.op in ("+", "-") and "Time" in (a, b) and not (e.op == "-" and a == "Dur"):
+            if (a, b) == ("Time", "Dur") or (e.op == "+" and (a, b) == ("Dur", "Time")):
+                return "Time"  # 時刻 ± 期間 は時刻
+            if (a, b) == ("Time", "Time") and e.op == "-":
+                return "Int"  # 時刻どうしの差は、秒数
+            self.d(ERROR, "型", f"「{show(e)}」: 時刻に足し引きできるのは期間（30 min など）だけです。時刻どうしは引き算（差は秒数）だけできます")
+            return "?"
+        if "Dur" in (a, b):
+            self.d(ERROR, "型", f"「{show(e)}」: 期間は、時刻に足し引きするときだけ使えます")
+            return "?"
         if e.op in ("+", "-"):
             if "Rational" in (a, b):
                 self.d(QUESTION, "丸め", f"「{show(e)}」: 端数が出る計算の丸め（切り捨て・切り上げ・四捨五入）と単位が"

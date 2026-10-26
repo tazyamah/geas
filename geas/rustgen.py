@@ -42,6 +42,8 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
     }
     Ok(())
 }
+/// 時刻（秒）の絶対値の上限。期間の足し引きが i64 であふれないよう、外から入る値を境界で止める
+pub const 時刻の限り: i128 = 1_000_000_000_000_000;
 pub fn 文字種検査(名: &str, s: &str, 許す: &[(char, char)]) -> Result<(), String> {
     match s.chars().find(|c| !許す.iter().any(|&(a, b)| a <= *c && *c <= b)) {
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", 名, c)),
@@ -126,6 +128,8 @@ def range_checks(items) -> list[str]:
         opt_ = getattr(t, "optional", False)
         x = "x" if opt_ else f"self.{name}"
         chk = []
+        if t.kind == "日時":
+            chk.append(f'範囲検査("{name}", {"*x" if opt_ else x} as i128, Some(-時刻の限り), Some(時刻の限り))?;')
         if t.kind == "文字列" and t.range:
             chk.append(f'範囲検査("{name}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
         if t.kind == "文字列" and t.chars is not None:
@@ -552,6 +556,8 @@ class ProcGen:
     def rx(self, e) -> str:
         if isinstance(e, Num):
             return f"{e.v}i128"
+        if isinstance(e, Dur):
+            return f"{e.secs}i64"
         if isinstance(e, Name):
             if e.n in self.scope:
                 kind, tok = self.scope[e.n]
@@ -594,6 +600,8 @@ class ProcGen:
             l, r = self.rx(e.l), self.rx(e.r)
             if e.op == "*" and "Ratio" in (lt, rt):
                 return f"積({r}, {l})" if lt == "Ratio" else f"積({l}, {r})"
+            if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
+                return f"(({l} as i128) - ({r} as i128))"
             op = {"かつ": "&&"}.get(e.op, e.op)
             return f"({l} {op} {r})"
         if isinstance(e, (SetB, SumE)):

@@ -183,6 +183,13 @@ class Null:
 
 
 @dataclass
+class Dur:
+    """期間の数値（秒）。30 min のように、数と単位で書く。時刻に足し引きするためだけの値で、項目には入れられない"""
+    secs: int
+    text: str = ""
+
+
+@dataclass
 class Name:
     n: str
 
@@ -350,6 +357,8 @@ def show(e) -> str:
         return str(e.v)
     if isinstance(e, Null):
         return "null"
+    if isinstance(e, Dur):
+        return e.text or f"{e.secs} sec"
     if isinstance(e, Tuple):
         return "(" + ", ".join(map(show, e.items)) + ")"
     if isinstance(e, Name):

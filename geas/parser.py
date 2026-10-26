@@ -12,7 +12,8 @@ class ParseError(Exception):
 
 
 CMP = ("<", ">", "<=", ">=", "==", "!=")
-UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}
+UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}  # day は 24 時間（86400 秒）で、暦の1日ではない
+MAX_DUR = 10**10  # 期間の上限（約317年）。時刻の足し引きがあふれないようにする
 UNIT_WORDS = "sec・min・hour・day"
 SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
 PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
@@ -565,6 +566,13 @@ class Parser:
         t = self.peek()
         if t.kind == "NUM":
             self.next()
+            nxt = self.peek()
+            if nxt.kind == "NAME" and nxt.val in UNITS:  # 30 min：期間（時刻に足し引きする）
+                self.next()
+                secs = int(t.val) * UNITS[nxt.val]
+                if secs > MAX_DUR:
+                    raise self.err(f"期間が長すぎます（{t.val} {nxt.val}。{MAX_DUR} 秒まで）")
+                return Dur(secs, f"{t.val} {nxt.val}")
             return Num(int(t.val))
         if self.accept("("):
             e = self.expr()

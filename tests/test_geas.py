@@ -1026,6 +1026,57 @@ def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
     assert all(g.startswith("Err(") for g in got[1:5]), got[1:5]  # 空・長すぎ・使えない文字は入力不正
 
 
+TIMEC = """data 約束 {
+  約束ID: id unique
+  期限: time
+  待ち秒: int
+}
+result 約束結果 {
+  約束した(約束ID: id)
+}
+deed 約束する {
+  input 開始: time required
+  slot 現在: time
+  writes 約束
+  result 約束結果
+  effects none
+
+  let 約束 = create 約束 { 期限: 現在 + 24 hour, 待ち秒: 現在 - 開始 }
+  return 約束した(約束.約束ID)
+}
+nexus 流れ {
+  約束する: 約束した → reply
+}
+"""
+
+
+def test_時刻に期間を足し引きでき_時刻の差は秒数になる():
+    assert chk(TIMEC).ok, chk(TIMEC).diags
+    assert chk(mutate(TIMEC, "現在 + 24 hour", "現在 - 90 min")).ok
+    assert chk(mutate(TIMEC, "現在 + 24 hour", "24 hour + 現在")).ok
+    for bad in ("現在 + 開始", "現在 + 5", "24 hour", "現在 * 2"):
+        ck = chk(mutate(TIMEC, "期限: 現在 + 24 hour", f"期限: {bad}"))
+        assert msgs(ck, ERROR), bad
+    ck = chk(mutate(TIMEC, "待ち秒: 現在 - 開始", "待ち秒: 24 hour - 現在"))
+    assert msgs(ck, ERROR)
+    with pytest.raises(ParseError, match="長すぎます"):
+        chk(mutate(TIMEC, "24 hour", "99999999999 sec"))
+
+
+def test_ホストは時刻の計算をして_範囲外の時刻は境界で止める(tmp_path):
+    ck = chk(TIMEC)
+    calls = [(1000, 400), (1000, 10**16), (10**16, 400)]
+    main = "fn main() {\n" + "".join(
+        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"約束する","文脈":{{"新約束ID":"K1","現在":{n}}},"入力":{{"開始":{b}}},"保存":{{}}}}"#));\n'
+        for n, b in calls) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert "87400" in got[0] and "600" in got[0], got[0]  # 期限 = 1000 + 86400、待ち = 1000 - 400
+    assert got[1].startswith("Err(") and got[2].startswith("Err("), got[1:]
+
+
 SLOT = """data 品 {
   品ID: id unique
   数: int 0..1000 required
