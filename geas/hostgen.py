@@ -113,6 +113,14 @@ pub fn js_arr(v: &[String]) -> String { format!("[{}]", v.iter().map(|x| js_str(
 '''
 
 
+def input_j(x: str, t: Type) -> str:
+    """処理と問い合わせの入力。無いかもしれない入力は、キーが無いのも null も同じ「無い」。
+    必ず要る入力（required）は、キーが無くても null でも入力不正"""
+    if t.optional:
+        return f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(replace(t, optional=False), "v")}), None => None }}'
+    return from_j(t, f'入力.get("{x}")?')
+
+
 def from_j(t: Type, j: str) -> str:
     """JSON 値 j から Rust の値へ（エラーは ? で伝える）。
     無いかもしれない項目は、null なら None。キーそのものが無い（undefined）のはエラー"""
@@ -229,20 +237,14 @@ def host_source(ck: Checker) -> str:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'新{d}ID: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
-        inf = [f"{x}: {from_j(t, f'入力.get(\"{x}\")?')}" for x, t in proc.inputs]
+        inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
         w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
-        inf = []
-        for x, t in q.inputs:
-            base = replace(t, optional=False)
-            e = from_j(base, f'入力.get("{x}")?')
-            if t.optional:  # 問い合わせの任意の入力は、無くても null でもよい
-                e = f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(base, "v")}), None => None }}'
-            inf.append(f"{x}: {e}")
+        inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')

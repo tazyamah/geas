@@ -20,11 +20,16 @@ def fmt_secs(s: int) -> str:
     return f"{s}秒"
 
 
+def input_names(inputs) -> list[str]:
+    """入力の名前。必ず要る入力（required）には「（必須）」を付ける（仕様書の関心は必須のほう）"""
+    return [n if t.optional else f"{n}（必須）" for n, t in inputs]
+
+
 def query_rows(q) -> dict:
     conds = [" または ".join(f"{f} {op} {st}" for f, op, st in group) for group in q.conds]
     conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}" for f, op, a in q.filters]
     cols = [c.name for c in q.select]
-    return {"問い合わせ": q.name, "入力": [n for n, _ in q.inputs], "読む": sorted(q.reads), "条件": conds, "列": cols,
+    return {"問い合わせ": q.name, "入力": input_names(q.inputs), "読む": sorted(q.reads), "条件": conds, "列": cols,
             "並び": f"{q.order[0]} {q.order[1]}" if q.order else "", "先頭": q.limit or ""}
 
 
@@ -63,7 +68,7 @@ def build(ck: Checker) -> dict:
             rs.append((v, routes.get(proc.name, {}).get(v, "（未定義）")))
         procs.append({
             "処理": proc.name,
-            "入力": [n for n, _ in proc.inputs],
+            "入力": input_names(proc.inputs),
             "読む": sorted(info.reads),
             "書く": sorted(info.writes),
             "結果": rs,

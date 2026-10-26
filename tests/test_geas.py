@@ -184,6 +184,14 @@ def test_cli_compare(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
+def test_計画と必須の入力が違うと突合で出る(tmp_path):
+    plan = (EX / "shop_plan.md").read_text().replace("| 決済要求 | 注文ID（必須） |", "| 決済要求 | 注文ID |")
+    (tmp_path / "plan.md").write_text(plan)
+    r = subprocess.run([sys.executable, "-m", "geas", "compare", str(EX / "shop.geas"), str(tmp_path / "plan.md"), "--no-run"],
+                       capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode != 0 and "注文ID" in r.stdout, r.stdout
+
+
 # ---- トリガ ----
 def test_トリガの要因が仕様書に出る():
     spec = build(chk(CODE))
@@ -218,7 +226,7 @@ def test_計画にあるトリガの行き先がコードと違えば検出す�
 
 
 def test_入力の範囲が項目より広いと止まる():
-    ck = chk(mutate(CODE, "input 顧客ID: id, 明細: 商品 → int 1..99", "input 顧客ID: id, 明細: 商品 → int 1..200"))
+    ck = chk(mutate(CODE, "顧客ID: id required, 明細: 商品 → int 1..99 required", "顧客ID: id required, 明細: 商品 → int 1..200 required"))
     assert any("範囲の広い入力" in m for m in msgs(ck, ERROR))
 
 
@@ -453,11 +461,11 @@ def test_外部作用の無いアプリでも生成した_crate_がビルドで�
 
 # ---- 確認は「どのキーで引いたものか」に効く（データ名には効かない） ----
 PAY = "  let 注文 = 注文[注文ID] else { return 注文なし }\n  if 注文.状態 != 受付 { return 状態違い }\n"
-TWO = "deed 決済要求 {\n  input 注文ID: id, 別ID: id\n"
+TWO = "deed 決済要求 {\n  input 注文ID: id required, 別ID: id required\n"
 
 
 def two_orders(body):
-    return mutate(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id\n", TWO), PAY, body)
+    return mutate(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id required\n", TWO), PAY, body)
 
 
 def test_別の注文の状態を確かめても_こちらは遷移できない():
@@ -636,12 +644,12 @@ def test_失敗の理由を宣言して待たないのは矛盾():
 def test_定義の名前の重複は止まる():
     for old, new in [("data 顧客 {", "data 顧客 {\n  顧客ID: id unique\n}\n\ndata 顧客 {"),
                      ("  在庫: int 0.. required\n", "  在庫: int 0.. required\n  在庫: money(円) 0..\n"),
-                     ("  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id\n  slot 注文ID: id\n  reads 注文.合計")]:
+                     ("  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required\n  slot 注文ID: id\n  reads 注文.合計")]:
         assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
 
 
 def test_未定義の型の名前は止まる():
-    ck = chk(mutate(CODE, "  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id, 謎: 謎型\n  reads 注文.合計"))
+    ck = chk(mutate(CODE, "  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required, 謎: 謎型\n  reads 注文.合計"))
     assert any("謎型" in m for m in msgs(ck, ERROR))
 
 
@@ -770,7 +778,7 @@ result 題の結果 {
   題なし
 }
 deed 書く {
-  input 本文: text
+  input 本文: text required
   writes メモ
   result 書いた結果
   effects none
@@ -779,7 +787,7 @@ deed 書く {
   return 書いた(メモ.メモID)
 }
 deed 題を見る {
-  input メモID: id
+  input メモID: id required
   reads メモ.題
   result 題の結果
   effects none
@@ -850,6 +858,77 @@ def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     assert got[2].startswith("Err(") and "題" in got[2], got[2]
 
 
+NULLIN = """data メモ {
+  メモID: id unique
+  本文: text required
+  題: text
+  重さ: int 0..
+}
+result 書いた結果 {
+  書いた(メモID: id)
+  無題
+}
+deed 書く {
+  input 本文: text required, 題: text, 重さ: int 0..9
+  writes メモ
+  result 書いた結果
+  effects none
+
+  let t = 題 else { return 無題 }
+  if 重さ is null { return 無題 }
+  if 重さ > 5 { return 無題 }
+  let メモ = create メモ { 本文: 本文, 題: t, 重さ: 重さ }
+  return 書いた(メモ.メモID)
+}
+deed 下書き {
+  input 本文: text required, 題: text
+  writes メモ
+  result 書いた結果
+  effects none
+
+  let メモ = create メモ { 本文: 本文, 題: 題 }
+  return 書いた(メモ.メモID)
+}
+nexus 流れ {
+  書く: 書いた → reply, 無題 → reply
+  下書き: 書いた → reply, 無題 → reply
+}
+"""
+
+
+def test_入力は既定で無いかもしれず_確かめてから使う():
+    assert chk(NULLIN).ok, chk(NULLIN).diags
+    ck = chk(NULLIN.replace("  if 重さ is null { return 無題 }\n", ""))
+    assert any("入力「重さ」は無いことがあります" in m for m in msgs(ck, ERROR))
+    with pytest.raises(ParseError, match="required"):
+        parse(NULLIN.replace("題: text, 重さ", "題: text optional, 重さ"))
+
+
+def test_トリガの引数には必ず要る入力を渡す():
+    ck = chk(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id required\n", "deed 決済要求 {\n  input 注文ID: id\n"))
+    assert any("required の入力を渡してください" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_ホストは無いかもしれない入力のキー無しと_null_を同じに扱う(tmp_path):
+    ck = chk(NULLIN)
+    calls = [("書く", '{"本文":"a","題":"t","重さ":3}'), ("書く", '{"本文":"a","重さ":3}'), ("書く", '{"本文":"a","題":null,"重さ":3}'),
+             ("書く", '{"本文":"a","題":"","重さ":3}'), ("書く", '{"題":"t","重さ":3}'), ("書く", '{"本文":null,"題":"t","重さ":3}'),
+             ("書く", '{"本文":"a","題":"t","重さ":10}'), ("下書き", '{"本文":"a"}')]
+    main = "fn main() {\n" + "".join(
+        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"{n}","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        for n, i in calls) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    ok = lambda x, v: f'\\"結果\\":\\"{v}\\"' in x
+    assert ok(got[0], "書いた") and ok(got[1], "無題") and ok(got[2], "無題"), got[:3]
+    assert ok(got[3], "書いた"), got[3]  # 空文字は「ある」
+    assert all(g.startswith("Err(") for g in got[4:7]), got[4:7]  # 必須の入力が無い・null、範囲の外は入力不正
+    assert ok(got[7], "書いた") and '\\"題\\":null' in got[7], got[7]  # 無い入力は、そのまま null の項目へ
+
+
 NULLQ = """data 人 {
   人ID: id unique
   名前: text
@@ -861,7 +940,7 @@ data メモ {
   札: 人 → int 1..9
 }
 query 一覧 {
-  input 最小: int optional
+  input 最小: int
   from メモ
   filter 重さ at_least 最小
   order 重さ newest

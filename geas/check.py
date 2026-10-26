@@ -421,6 +421,9 @@ class Checker:
         for n, _ in tg.params:
             if n not in have:
                 self.d(ERROR, "トリガ", where, f"トリガ {trig} の引数「{n}」を、処理 {proc} は入力にもっていません")
+        for n, t in self.procs[proc].inputs:
+            if t.optional and any(n == x for x, _ in tg.params):
+                self.d(ERROR, "トリガ", where, f"トリガ {trig} の引数「{n}」には、required の入力を渡してください（無いかもしれない値では待てません）")
         mine = {n: show_type(t) for n, t in self.procs[proc].inputs}
         for n, t in tg.params:
             if n in mine and mine[n] != show_type(t):
@@ -645,6 +648,9 @@ class ProcChecker:
         if isinstance(e, Null):
             return "Null"
         if isinstance(e, Name):
+            if (e.n in env and not self.writing and self.null_input(e, env) and ("#入力", e.n) not in self.present):
+                self.d(ERROR, "null", f"入力「{e.n}」は無いことがあります。使う前に確かめてください"
+                       f"（let x = {e.n} else {{ return … }}、または if {e.n} is null {{ return … }}。必ず要るなら入力に required）")
             if e.n in env:
                 return env[e.n]
             if e.n in ck.variants:
@@ -681,6 +687,13 @@ class ProcChecker:
             if not (isinstance(base, Name) and base.n in self.created):
                 self.info.field_reads.add(f"{dname}.{e.n}")
             return tok_of(fld.type)
+        if isinstance(e, Pred) and e.kind == "null" and isinstance(e.e, Name):
+            if not self.null_input(e.e, env):
+                self.d(ERROR, "型", f"「is null」は、無いかもしれない入力（required でない入力）にだけ使えます（{e.e.n}）")
+            self.writing, saved = True, self.writing
+            self.ty(e.e, env)
+            self.writing = saved
+            return "Bool"
         if isinstance(e, Pred) and e.kind == "null":
             if not (isinstance(e.e, Attr) and self.null_field(e.e, env) is not None):
                 self.d(ERROR, "型", f"「is null」は、無いかもしれない項目（required でない項目）にだけ使えます（{show(e.e)}）")
@@ -756,6 +769,18 @@ class ProcChecker:
         if (isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index)
                 and c.e.e == Name(e.binder.names[0]) and e.elem == Name(e.binder.names[0])):
             self._last_exist = (c.e.d, "∈" + show(e.binder.src))
+
+    def pass_null(self, e, ft: Type) -> bool:
+        """無いかもしれない入力を、そのまま null になりうる項目へ入れる（使うのではなく渡すだけなので、確かめは要らない）"""
+        return (isinstance(e, Name) and ft.optional and self.null_input(e, self.env)
+                and ("#入力", e.n) not in self.present)
+
+    def null_input(self, e: Name, env) -> bool:
+        """e が「無いかもしれない」入力そのものか（同じ名前の let や、回す変数ではないか）"""
+        if "#範囲:" + e.n in env or e.n in self.var_iv or e.n in self.lookup_data:
+            return False
+        t = next((t for n, t in self.proc.inputs if n == e.n), None)
+        return t is not None and t.optional
 
     def null_field(self, e: Attr, env):
         """e が無いかもしれない項目なら、その項目。そうでなければ None（型の検査はしない）"""
@@ -975,6 +1000,8 @@ class ProcChecker:
                 if (isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Attr) and isinstance(c.e.e, Name)
                         and c.e.e.n in self.bindings):
                     self.present.add((self.bindings[c.e.e.n], c.e.n))
+                if isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Name):
+                    self.present.add(("#入力", c.e.n))
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
                     self.guarded.add(self.exist_sets[c.e.n])
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
@@ -1005,6 +1032,18 @@ class ProcChecker:
                 else:
                     self.check_return(st.absent)
                     self.guarded.add((st.e.d, show(st.e.e)))
+            elif st.absent is not None and isinstance(st.e, Name) and self.null_input(st.e, self.env):
+                # let x = 入力 else { return … }：入力が無ければ返す
+                self.writing = True
+                t = self.ty(st.e)
+                self.writing = False
+                self.check_return(st.absent)
+                self.present.add(("#入力", st.e.n))
+                self.env[st.name] = t
+                self.lookup_data.pop(st.name, None)
+                self.bindings.pop(st.name, None)
+                self.var_iv[st.name] = self.interval(st.e)
+                self.shortage_sets.pop(st.name, None)
             elif st.absent is not None and isinstance(st.e, Attr) and self.null_field(st.e, self.env) is not None:
                 # let x = y.項目 else { return … }：null なら返し、そうでなければ値を x に
                 self.writing = True
@@ -1020,7 +1059,7 @@ class ProcChecker:
                     self.present.add((self.bindings[st.e.e.n], st.e.n))
             else:
                 if st.absent is not None:
-                    self.d(ERROR, "型", f"let … else は、1件を引くとき（D[k]）か、無いかもしれない項目を取り出すときだけ書けます（{show(st.e)}）", st.line)
+                    self.d(ERROR, "型", f"let … else は、1件を引くとき（D[k]）か、無いかもしれない項目・入力を取り出すときだけ書けます（{show(st.e)}）", st.line)
                 self._last_exist = None
                 t = self.ty(st.e)
                 self.env[st.name] = t
@@ -1077,7 +1116,10 @@ class ProcChecker:
             if fld is None:
                 self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません", st.line)
                 return
+            passing = self.pass_null(st.e, fld.type)
+            self.writing, saved = passing, self.writing
             vt = self.ty(st.e)
+            self.writing = saved
             b = self.bindings.get(st.var, st.var)
             if vt == "Null":
                 if not fld.type.optional:
@@ -1097,7 +1139,9 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
-            self.set_null(data, st.f, b, True)
+            if passing and fld.type.kind in ("整数", "金額", "割合"):  # 入力が無ければ null になる
+                self.check_write(data, st.f, (None, None), st.line, bind=b, null=True)
+            self.set_null(data, st.f, b, not passing)
             if fld.type.kind in ("整数", "金額", "割合"):
                 iv = self.interval(st.e)
                 self.check_write(data, st.f, iv, st.line, bind=b)
@@ -1182,7 +1226,9 @@ class ProcChecker:
             if f is None:
                 self.d(ERROR, "名前", f"データ {st.data} に項目「{n}」がありません", st.line)
                 continue
+            self.writing, saved = self.pass_null(e, f.type), self.writing
             vt = self.ty(e)
+            self.writing = saved
             if vt == "Null":
                 if not f.type.optional:
                     self.d(ERROR, "null", f"{st.data}.{n} は必須（required）なので null は入れられません", st.line)
@@ -1207,6 +1253,8 @@ class ProcChecker:
                 if isinstance(e, Null):
                     self.check_write(st.data, f.name, (None, None), st.line, new_state=states, null=True)
                     continue
+                if self.pass_null(e, f.type):  # 入力が無ければ null になる
+                    self.check_write(st.data, f.name, (None, None), st.line, new_state=states, null=True)
                 iv = self.interval(e)
                 self.check_write(st.data, f.name, iv, st.line, new_state=states)
                 lows[f.name] = iv[0]

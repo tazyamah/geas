@@ -300,11 +300,23 @@ class Parser:
                 p.body.append(self.stmt())  # 宣言でなければ本体の文（body ブロックは無い）
         return p
 
+    def input_item(self):
+        """入力 名前: 型 [required]。入力も原則「無いかもしれない」（キーが無いのも null も同じ「無い」）。
+        必ず要るものは required で、無ければ処理の手前（境界）で入力不正になる"""
+        n = self.name()
+        self.expect(":")
+        t = self.type()
+        if self.is_("optional"):
+            raise self.err("入力は、書かなければ「無いかもしれない」扱いです。optional は要りません（必ず要るなら required と書きます）")
+        t.optional = not self.accept("required")
+        return n, t
+
     def decl(self, p: Process):
         kw = self.name()
-        if kw in ("input", "slot"):
-            items = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
-            (p.inputs if kw == "input" else p.refs).extend(items)
+        if kw == "input":
+            p.inputs += self.comma_list(self.input_item)
+        elif kw == "slot":
+            p.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         elif kw == "reads":
             p.reads += self.comma_list(self.access)
         elif kw == "writes":
@@ -559,20 +571,12 @@ class Parser:
         q = Query(self.name(), line=line)
         self.block_open()
 
-        def typed():
-            n = self.name()
-            self.expect(":")
-            t = self.type()
-            if self.accept("optional"):
-                t.optional = True
-            return n, t
-
         while not self.accept("}"):
             kw = self.name()
             if kw == "input":
-                q.inputs += self.comma_list(typed)
+                q.inputs += self.comma_list(self.input_item)
             elif kw == "slot":
-                q.refs += self.comma_list(typed)
+                q.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
             elif kw == "from":
                 q.target = self.name()
             elif kw == "where":
