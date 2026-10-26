@@ -330,6 +330,13 @@ class Checker:
                     for v in names:
                         if v not in [x for x, _ in rdef.variants]:
                             self.d(ERROR, "名前", where, f"「{v}」は結果 {rdef.name} にありません")
+                for v, ds in rm.items():  # par の枝は、データを書かない（排他制御を要らなくし、書き込みは応答を受ける別の処理でやる）
+                    if len(ds) > 1:
+                        for d in ds:
+                            info = self.infos.get(d)
+                            if info is not None and (info.writes or info.transitions or info.new_ids):
+                                self.d(ERROR, "並列", where, f"par の枝「{d}」は、データを書いています（{'、'.join(sorted(info.writes))}）。"
+                                       "par の枝は、読むことと外部作用の要求だけにして、書き込みは応答を受ける別の処理に回してください")
                 for v, dest in routes:
                     base = dest.split(" ", 1)[1] if dest.startswith("待つ ") else dest
                     if dest.startswith("待つ "):
