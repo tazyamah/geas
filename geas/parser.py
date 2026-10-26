@@ -21,15 +21,15 @@ def parse_labels(doc: str) -> dict:
 
 
 # 論理型の名前に使えない、組み込みの型の名前
-BUILTIN_TYPE_NAMES = {"id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref", "仮想日時"}
+BUILTIN_TYPE_NAMES = {"id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref", "vtime"}
 
 
 def virtual_datetime() -> Type:
     """組み込みの仮想日時：年・月・日・時・分・秒の成分を持つ合成型で、成分は未指定にできる（実在する日時ではない）。
     成分の範囲は構造の上限だけ（月 1..12 など）で、暦として正しいか（2月30日など）や意味は、アプリの規則で決める"""
     comp = lambda lo, hi: Type("整数", range=Range(lo, hi), optional=True)
-    return Type("合成", target="仮想日時", parts=(
-        ("年", comp(1, 9999)), ("月", comp(1, 12)), ("日", comp(1, 31)), ("時", comp(0, 23)), ("分", comp(0, 59)), ("秒", comp(0, 59))))
+    return Type("合成", target="vtime", parts=(
+        ("year", comp(1, 9999)), ("month", comp(1, 12)), ("day", comp(1, 31)), ("hour", comp(0, 23)), ("minute", comp(0, 59)), ("second", comp(0, 59))))
 
 
 # 合成型の成分に使える型の種類（値の型）
@@ -58,7 +58,7 @@ class Parser:
         self.i = 0
         self.ltypes: dict[str, Type] = {}
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
-        self.composites: set[str] = {"仮想日時"}  # 合成型の名前（Make の見分けに使う）
+        self.composites: set[str] = {"vtime"}  # 合成型の名前（Make の見分けに使う）
         self.used_builtin: set[str] = set()  # 使われた組み込みの合成型
 
     # ---- 部品 ----
@@ -165,7 +165,7 @@ class Parser:
                 p.labels[declared] = parse_labels(doc)
             self.skip_nl()
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
-        if "仮想日時" in self.used_builtin:
+        if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
         self.apply_stores(p, stores)
         self.add_sync_state(p)
@@ -352,7 +352,7 @@ class Parser:
         if tok in ("int", "ratio"):
             return Type(SIMPLE_TYPES[tok], range=self.range_opt())
         if tok == "money":
-            unit = "円"
+            unit = "JPY"
             if self.accept("("):
                 unit = self.name()
                 self.expect(")")
@@ -361,7 +361,7 @@ class Parser:
             return Type("参照", target=self.name())
         if self.accept("→"):
             return Type("写像", key=tok, value=self.type())
-        if tok == "仮想日時":
+        if tok == "vtime":
             self.used_builtin.add(tok)
             return virtual_datetime()
         if tok in self.ltypes:

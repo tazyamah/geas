@@ -27,13 +27,13 @@ impl Display for 有理 {
 pub fn 積(x: i128, r: 有理) -> 有理 {
     有理 { 分子: x * r.分子, 分母: r.分母 }
 }
-pub fn 切り捨て(x: 有理) -> i128 {
+pub fn floor(x: 有理) -> i128 {
     x.分子.div_euclid(x.分母)
 }
-pub fn 切り上げ(x: 有理) -> i128 {
+pub fn ceil(x: 有理) -> i128 {
     -((-x.分子).div_euclid(x.分母))
 }
-pub fn 四捨五入(x: 有理) -> i128 {
+pub fn half_up(x: 有理) -> i128 {
     (2 * x.分子 + x.分母).div_euclid(2 * x.分母)
 }
 pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {

@@ -64,7 +64,7 @@ def test_物理数は範囲から選ばれる():
 
 # ---- 検査が止める例（構文のスケッチ §3 の表） ----
 def test_丸めの指定が無いと問いになる():
-    ck = chk(mutate(CODE, "let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "let 合計 = 小計 + 小計 * 税率"))
+    ck = chk(mutate(CODE, "let 合計 = 小計 + round(小計 * 税率, floor, JPY)", "let 合計 = 小計 + 小計 * 税率"))
     assert any("端数をどう丸めますか" in m for m in msgs(ck, QUESTION))
 
 
@@ -616,8 +616,8 @@ nexus 引当の流れ {
 
 
 def with_for(key):
-    src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))",
-                 'effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id, 数: 数量) no_wait "試し"')
+    src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))",
+                 'effect 決済.請求(注文ID: id, 金額: money(JPY))\neffect 倉庫.引当(商品ID: id, 数: 数量) no_wait "試し"')
     return chk(src + FOR.replace("KEY", key))
 
 
@@ -722,7 +722,7 @@ def test_同じ処理を違う行き先で2つのネクサスに書くと止ま�
 
 
 def test_失敗の理由を宣言して待たないのは矛盾():
-    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", 'effect 決済.請求(注文ID: id, 金額: money(円)) failures 残高不足 no_wait "試し"'))
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))", 'effect 決済.請求(注文ID: id, 金額: money(JPY)) failures 残高不足 no_wait "試し"'))
     assert any("no_wait" in m for m in msgs(ck, ERROR))
 
 
@@ -773,7 +773,7 @@ def test_update_の書き込みは_ほかで読んだ項目を消さない():
 
 
 def test_使わない外部作用と届かない状態は警告():
-    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", "effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id) no_wait \"試し\""))
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))", "effect 決済.請求(注文ID: id, 金額: money(JPY))\neffect 倉庫.引当(商品ID: id) no_wait \"試し\""))
     assert any("どの処理からも要求されていません" in m for m in msgs(ck, "警告"))
     ck = chk(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 受付"))
     assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
@@ -806,11 +806,11 @@ def test_ホストは結果の中身を名前つきで返す(tmp_path):
 
 
 # ---- 整数と金額は違う型。そのままでは混ぜず、money( )・int( ) で変えてから計算する ----
-SUB = "  let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)\n"
+SUB = "  let 合計 = 小計 + round(小計 * 税率, floor, JPY)\n"
 
 
 def test_整数と金額はそのままでは足し引きできない():
-    ck = chk(mutate(CODE, SUB, SUB.replace("小計 + 丸め", "小計 + 合計数 + 丸め").replace("  let 合計", "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計")))
+    ck = chk(mutate(CODE, SUB, SUB.replace("小計 + round", "小計 + 合計数 + 丸め").replace("  let 合計", "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計")))
     assert any("整数と金額は、そのままでは足し引きできません" in m for m in msgs(ck, ERROR))
 
 
@@ -840,7 +840,7 @@ def test_変換の向きを取り違えると止まる():
 
 @needs_cargo
 def test_型の変換を使っても_Rust_がビルドできる(tmp_path):
-    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計 = 小計 + money(合計数) + 丸め(小計 * 税率, 切り捨て, 円)\n")
+    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計 = 小計 + money(合計数) + round(小計 * 税率, floor, JPY)\n")
     ck = chk(src)
     assert ck.ok, ck.diags
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
@@ -1201,8 +1201,8 @@ def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     assert got[2].startswith("Err(") and "倍率" in got[2], got[2]
 
 
-PART = """ltype 非負金額 = money(円) 0..
-ltype 税抜の限り = money(円) 0..1000000
+PART = """ltype 非負金額 = money(JPY) 0..
+ltype 税抜の限り = money(JPY) 0..1000000
 
 entity 品 {
   品ID: id unique
@@ -1241,7 +1241,7 @@ def test_部品の保証は_geas_の式で書き_引数と_result_だけを使�
 def test_部品の呼び出しは宣言と型が合わないと止まる():
     assert any("引数は 1 個" in m for m in msgs(chk(PART.replace("税込(税抜)", "税込(税抜, 税抜)")), ERROR))
     assert any("型が違います" in m for m in msgs(chk(PART.replace("税込(税抜)", "税込(int(税抜))")), ERROR))
-    assert any("組み込みの部品と同じ名前" in m for m in msgs(chk(PART.replace("税込", "丸め")), ERROR))
+    assert any("組み込みの部品と同じ名前" in m for m in msgs(chk(PART.replace("税込", "round")), ERROR))
 
 
 @needs_cargo
@@ -1277,7 +1277,7 @@ fn main() {
     for a in -50i128..50 {
         for b in 1i128..13 {
             let x = 有理 { 分子: a, 分母: b };
-            let (lo, up, rn) = (切り捨て(x), 切り上げ(x), 四捨五入(x));
+            let (lo, up, rn) = (floor(x), ceil(x), half_up(x));
             if !(lo * b <= a && a < (lo + 1) * b) { bad += 1; }
             if !((up - 1) * b < a && a <= up * b) { bad += 1; }
             if !(2 * (rn * b - a).abs() <= b) { bad += 1; }
@@ -1398,7 +1398,7 @@ fn main() {
 
 
 def test_問いが残っているうちは生成しない():
-    ck = chk(mutate(CODE, "let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "let 合計 = 小計 + 小計 * 税率"))
+    ck = chk(mutate(CODE, "let 合計 = 小計 + round(小計 * 税率, floor, JPY)", "let 合計 = 小計 + 小計 * 税率"))
     assert ck.ok and not ck.ready
     with pytest.raises(AssertionError, match="問い"):
         generate(ck)
@@ -1441,10 +1441,10 @@ def test_data_は_entity_に改名した():
 
 
 def test_範囲や組み合わせの直書きは止まり_名前を付けるよう案内する():
-    for ty in ("int 1..99", "text 1..20", "money(円) 0..", "set of id", "商品 → 数量"):
+    for ty in ("int 1..99", "text 1..20", "money(JPY) 0..", "set of id", "商品 → 数量"):
         with pytest.raises(ParseError, match="ltype"):
             parse(f"entity 商品 {{\n  商品ID: id unique\n  項目: {ty}\n}}\n")
-    parse("entity 商品 {\n  商品ID: id unique\n  項目: int\n  名: text\n  金: money(円)\n}\n")  # 約束のない組み込みはそのまま書ける
+    parse("entity 商品 {\n  商品ID: id unique\n  項目: int\n  名: text\n  金: money(JPY)\n}\n")  # 約束のない組み込みはそのまま書ける
 
 
 # ---- store（保存先）は entity の外に書く ----
@@ -1586,10 +1586,10 @@ def test_合成型はホストの境界で成分ごとに確かめる(tmp_path):
     assert "読んだ" in got[4] and "右寄り" in got[5], got[4:6]
 
 
-# ---- 仮想日時（成分は未指定にできる）----
+# ---- vtime（成分は未指定にできる）----
 VDT = """entity 約束 {
   約束ID: id unique
-  期日: 仮想日時 required
+  期日: vtime required
 }
 result 決めた結果 {
   決めた(約束ID: id)
@@ -1601,7 +1601,7 @@ result 月結果 {
   なし
 }
 deed 決める {
-  input 期日: 仮想日時 required
+  input 期日: vtime required
   writes 約束
   result 決めた結果
   effects none
@@ -1614,7 +1614,7 @@ deed 誕生日にする {
   result 決めた結果
   effects none
 
-  let 約束 = create 約束 { 期日: 仮想日時 { 月: 10, 日: 26 } }
+  let 約束 = create 約束 { 期日: vtime { month: 10, day: 26 } }
   return 決めた(約束.約束ID)
 }
 deed 月を見る {
@@ -1624,8 +1624,8 @@ deed 月を見る {
   effects none
 
   let 約束 = 約束[約束ID] else { return なし }
-  if 約束.期日.月 is null { return 未指定 }
-  if 約束.期日.月 > 6 { return 後半 }
+  if 約束.期日.month is null { return 未指定 }
+  if 約束.期日.month > 6 { return 後半 }
   return 前半
 }
 nexus 流れ {
@@ -1636,43 +1636,43 @@ nexus 流れ {
 """
 
 
-def test_仮想日時の成分は未指定にでき_確かめずに読むと止まる():
+def test_vtimeの成分は未指定にでき_確かめずに読むと止まる():
     ck = chk(VDT)
     assert ck.ok and ck.ready, ck.diags
     sp = build(ck)
-    assert any(r[1] == "期日" and r[2].startswith("仮想日時（年: 整数 1..9999") for r in sp["データ"]), sp["データ"]
-    ck = chk(mutate(VDT, "  if 約束.期日.月 is null { return 未指定 }\n", ""))
+    assert any(r[1] == "期日" and r[2].startswith("vtime（year: 整数 1..9999") for r in sp["データ"]), sp["データ"]
+    ck = chk(mutate(VDT, "  if 約束.期日.month is null { return 未指定 }\n", ""))
     assert any("未指定かもしれない成分" in m for m in msgs(ck, ERROR)), ck.diags
     # 必須の成分を持つ合成型では、書き漏れがエラー。null を書くのも止まる
-    ck = chk("ltype 点 {\n  x: int\n  y: int optional\n}\n" + mutate(VDT, "仮想日時 { 月: 10, 日: 26 }", "点 { y: 1 }").replace("期日: 仮想日時 required", "期日: 点 required").replace("input 期日: 仮想日時 required", "input 期日: 点 required").replace("約束.期日.月", "約束.期日.y"))
+    ck = chk("ltype 点 {\n  x: int\n  y: int optional\n}\n" + mutate(VDT, "vtime { month: 10, day: 26 }", "点 { y: 1 }").replace("期日: vtime required", "期日: 点 required").replace("input 期日: vtime required", "input 期日: 点 required").replace("約束.期日.month", "約束.期日.y"))
     assert any("成分「x」がありません" in m for m in msgs(ck, ERROR)), ck.diags
 
 
-def test_仮想日時の成分の範囲は構造の上限だけ():
-    ck = chk(mutate(VDT, "仮想日時 { 月: 10, 日: 26 }", "仮想日時 { 月: 13, 日: 26 }"))
+def test_vtimeの成分の範囲は構造の上限だけ():
+    ck = chk(mutate(VDT, "vtime { month: 10, day: 26 }", "vtime { month: 13, day: 26 }"))
     assert any("成分の範囲に収まると示せません" in m for m in msgs(ck, ERROR)), ck.diags
 
 
 @needs_cargo
-def test_仮想日時はホストの境界で成分ごとに確かめ_未指定はnull(tmp_path):
+def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(tmp_path):
     ck = chk(VDT)
     call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::呼ぶ(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
     rec = lambda body: '{"約束":{"A1":{"約束ID":"A1","期日":' + body + '}}}'
     main = "fn main() {\n" + "".join([
-        call("決める", '{"新約束ID":"A1"}', '{"期日":{"年":2026,"月":10}}', "{}"),
-        call("決める", '{"新約束ID":"A1"}', '{"期日":{"月":13}}', "{}"),
+        call("決める", '{"新約束ID":"A1"}', '{"期日":{"year":2026,"month":10}}', "{}"),
+        call("決める", '{"新約束ID":"A1"}', '{"期日":{"month":13}}', "{}"),
         call("誕生日にする", '{"新約束ID":"A1"}', "{}", "{}"),
-        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":null}')),
-        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":3}')),
-        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":9}')),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":null}')),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":3}')),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":9}')),
     ]) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     got = r.stdout.splitlines()
-    assert '\\"月\\":10' in got[0] and '\\"日\\":null' in got[0] and '\\"年\\":2026' in got[0], got[0]
-    assert "範囲外" in got[1] and "期日.月" in got[1], got[1]
-    assert '\\"月\\":10' in got[2] and '\\"日\\":26' in got[2] and '\\"年\\":null' in got[2], got[2]
+    assert '\\"month\\":10' in got[0] and '\\"day\\":null' in got[0] and '\\"year\\":2026' in got[0], got[0]
+    assert "範囲外" in got[1] and "期日.month" in got[1], got[1]
+    assert '\\"month\\":10' in got[2] and '\\"day\\":26' in got[2] and '\\"year\\":null' in got[2], got[2]
     assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]
 
 
@@ -1724,7 +1724,7 @@ def test_整数の割り算は正の定数で切り捨て_範囲は端を割っ�
         parse(DIVIDE.replace("d / 7", "d / 0", 1))
     with pytest.raises(ParseError, match="正の整数の定数"):
         parse(DIVIDE.replace("d / 7", "d / d", 1))
-    assert any("割り算できるのは整数だけ" in m for m in msgs(chk(DIVIDE.replace("ltype 日数 = int 0..", "ltype 日数 = money(円) 0..").replace("convert 端(d: 日数) -> 余り日 = d % 7\n", "")), ERROR))
+    assert any("割り算できるのは整数だけ" in m for m in msgs(chk(DIVIDE.replace("ltype 日数 = int 0..", "ltype 日数 = money(JPY) 0..").replace("convert 端(d: 日数) -> 余り日 = d % 7\n", "")), ERROR))
 
 
 def test_余りの範囲は静的に示せる():
@@ -1741,10 +1741,10 @@ def test_割り算と余りは生成コードで動く(tmp_path):
     assert r.returncode == 0, r.stderr[-1500:]
 
 
-UTC = """convert 実在日時(v: 仮想日時 fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0, 秒: 0 }) -> time = time(
-  (v.日 + (153 * (v.月 + 12 * ((14 - v.月) / 12) - 3) + 2) / 5 + 365 * (v.年 + 4800 - (14 - v.月) / 12)
-   + (v.年 + 4800 - (14 - v.月) / 12) / 4 - (v.年 + 4800 - (14 - v.月) / 12) / 100
-   + (v.年 + 4800 - (14 - v.月) / 12) / 400 - 32045 - 2440588) * 86400 + v.時 * 3600 + v.分 * 60 + v.秒)
+UTC = """convert 実在日時(v: vtime fill { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 }) -> time = time(
+  (v.day + (153 * (v.month + 12 * ((14 - v.month) / 12) - 3) + 2) / 5 + 365 * (v.year + 4800 - (14 - v.month) / 12)
+   + (v.year + 4800 - (14 - v.month) / 12) / 4 - (v.year + 4800 - (14 - v.month) / 12) / 100
+   + (v.year + 4800 - (14 - v.month) / 12) / 400 - 32045 - 2440588) * 86400 + v.hour * 3600 + v.minute * 60 + v.second)
 
 entity 予定 {
   予定ID: id unique
@@ -1754,7 +1754,7 @@ result 予約結果 {
   予約済(予定ID: id)
 }
 deed 予約 {
-  input 日時: 仮想日時 required
+  input 日時: vtime required
   writes 予定
   result 予約結果
   effects none
@@ -1768,20 +1768,20 @@ nexus 流れ {
 """
 
 
-def test_仮想日時を補うルールつきで実在日時へ変える():
+def test_vtimeを補うルールつきで実在日時へ変える():
     ck = chk(UTC)
     assert ck.ready, ck.diags
 
 
 def test_補うルールが無い成分を読むと違反になる():
-    bad = UTC.replace("fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0, 秒: 0 }", "fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0 }")
+    bad = UTC.replace("fill { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 }", "fill { year: 1970, month: 1, day: 1, hour: 0, minute: 0 }")
     assert any("未指定かもしれない成分" in m for m in msgs(chk(bad), ERROR))
-    bad2 = UTC.replace("時: 0,", "時: 99,")
+    bad2 = UTC.replace("hour: 0,", "hour: 99,")
     assert any("収まりません" in m for m in msgs(chk(bad2), ERROR))
 
 
 @needs_cargo
-def test_仮想日時の変換は生成コードで動く(tmp_path):
+def test_vtimeの変換は生成コードで動く(tmp_path):
     ck = chk(UTC)
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1789,18 +1789,18 @@ def test_仮想日時の変換は生成コードで動く(tmp_path):
 
 
 @needs_cargo
-def test_仮想日時の変換は暦どおりの秒になり_未指定は補うルールの値になる(tmp_path):
+def test_vtimeの変換は暦どおりの秒になり_未指定は補うルールの値になる(tmp_path):
     ck = chk(UTC)
     main = """use geas_app::*;
-fn t(日時: 仮想日時) -> i64 {
+fn t(日時: vtime) -> i64 {
     let ctx = 予約文脈 { 新予定ID: "e1".to_string() };
     let o = 予約(&ctx, &保存::default(), &予約入力 { 日時 });
     match &o.書込[0] { 書込::予定_新規(r) => r.時刻 }
 }
 fn main() {
-    println!("{}", t(仮想日時 { 年: Some(2026), 月: Some(10), 日: Some(26), 時: Some(3), 分: Some(4), 秒: Some(5) }));
-    println!("{}", t(仮想日時 { 年: Some(2000), 月: None, 日: None, 時: None, 分: None, 秒: None }));
-    println!("{}", t(仮想日時 { 年: None, 月: None, 日: None, 時: None, 分: None, 秒: None }));
+    println!("{}", t(vtime { year: Some(2026), month: Some(10), day: Some(26), hour: Some(3), minute: Some(4), second: Some(5) }));
+    println!("{}", t(vtime { year: Some(2000), month: None, day: None, hour: None, minute: None, second: None }));
+    println!("{}", t(vtime { year: None, month: None, day: None, hour: None, minute: None, second: None }));
 }
 """
     write_crate(ck, generate(ck), main, tmp_path)
