@@ -1384,3 +1384,34 @@ def test_範囲や組み合わせの直書きは止まり_名前を付けるよ�
         with pytest.raises(ParseError, match="ltype"):
             parse(f"entity 商品 {{\n  商品ID: id unique\n  項目: {ty}\n}}\n")
     parse("entity 商品 {\n  商品ID: id unique\n  項目: int\n  名: text\n  金: money(円)\n}\n")  # 約束のない組み込みはそのまま書ける
+
+
+# ---- store（保存先）は entity の外に書く ----
+STORE = """entity メモ {
+  メモID: id unique
+  本文: text required
+}
+store メモ in Dropbox
+"""
+
+
+def test_store_を書くと_未同期の状態が足される():
+    p = parse(STORE)
+    assert p.data[0].store == "Dropbox"
+    assert any(s.name == "記録状態" for s in p.states)
+    assert any(f.name == "記録" for f in p.data[0].fields)
+
+
+def test_store_が無ければ_保存の状態は足されない():
+    p = parse(STORE.replace("store メモ in Dropbox\n", ""))
+    assert p.data[0].store is None
+    assert not any(s.name == "記録状態" for s in p.states)
+
+
+def test_store_の誤りは止まる():
+    with pytest.raises(ParseError, match="entity がありません"):
+        parse(STORE.replace("store メモ", "store 謎"))
+    with pytest.raises(ParseError, match="2つ以上"):
+        parse(STORE + "store メモ in 端末\n")
+    with pytest.raises(ParseError, match="別の行"):
+        parse(STORE.replace("entity メモ {", "entity メモ store Dropbox {").replace("store メモ in Dropbox\n", ""))
