@@ -143,9 +143,9 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
     cmp_map("処理", a, b, out, str)
     # 問い合わせ（読むだけの処理）
     a = {r["問い合わせ"]: {"入力": items(r.get("入力", "")), "読む": items(r.get("読む", "")), "条件": items(r.get("条件", "")),
-                           "並び": n(r.get("並び", "")), "先頭": n(r.get("先頭", ""))} for r in sect("問い合わせ")}
+                           "並び": n(r.get("並び", "")), "先頭": n(r.get("先頭", "")), "列": items(r.get("列", ""))} for r in sect("問い合わせ")}
     b = {x["問い合わせ"]: {"入力": items(",".join(x["入力"])), "読む": items(",".join(x["読む"])), "条件": items(",".join(x["条件"])),
-                           "並び": n(x["並び"]), "先頭": n(x["先頭"])} for x in spec["問い合わせ"]}
+                           "並び": n(x["並び"]), "先頭": n(x["先頭"]), "列": items(",".join(x["列"]))} for x in spec["問い合わせ"]}
     cmp_map("問い合わせ", a, b, out, str)
     # トリガ（要因ごとの行き先）
     a = {(r["トリガ"], n(r["要因"])): {"行き先": n(r["行き先"])} for r in sect("トリガ")}

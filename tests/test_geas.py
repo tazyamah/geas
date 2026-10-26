@@ -370,3 +370,30 @@ def test_問い合わせの条件は_Rust_で_or_になる():
     src = generate(chk(QUERY))
     assert "if !(r.状態 == メモ状態::公開 || r.状態 == メモ状態::下書き) { return false; }" in src
     assert "if !((r.重さ as i128) >= 10) { return false; }" in src
+
+
+# ---- 問い合わせの select（結合と集計） ----
+def test_selectで参照先の項目と集計を返せる():
+    spec = build(chk(CODE))
+    row = next(q for q in spec["問い合わせ"] if q["問い合わせ"] == "注文一覧")
+    assert row["列"] == ["注文ID", "顧客", "点数"]
+
+
+def test_selectの参照先が参照でないと止まる():
+    ck = chk(mutate(CODE, "顧客.顧客ID as 顧客", "合計.顧客ID as 顧客"))
+    assert any("参照（ref）ではありません" in m for m in msgs(ck, ERROR))
+
+
+def test_sumはキーつきの集まりにだけ使える():
+    ck = chk(mutate(CODE, "sum(明細) as 点数", "sum(合計) as 点数"))
+    assert any("集計できません" in m for m in msgs(ck, ERROR))
+
+
+def test_selectに書いた参照先は読むの宣言に要る():
+    ck = chk(mutate(CODE, "注文.顧客, 顧客.顧客ID, 注文.明細\n}", "注文.顧客, 注文.明細\n}"))
+    assert any("顧客.顧客ID" in m for m in msgs(ck, ERROR))
+
+
+def test_selectのある問い合わせは_each_に使えない():
+    ck = chk(mutate(CODE, "invariant 商品: 在庫 >= 0", "event 開いた {\n  each 注文一覧 → 決済要求\n}\n\ninvariant 商品: 在庫 >= 0"))
+    assert any("select" in m for m in msgs(ck, ERROR))

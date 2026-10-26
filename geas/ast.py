@@ -108,6 +108,15 @@ class Process:
 
 
 @dataclass
+class Column:
+    """問い合わせの結果の列。種類は 項目（自分の項目）／参照先（参照の先の項目）／合計・件数（写像の項目の集計）"""
+    name: str
+    kind: str
+    field: str
+    via: Optional[str] = None  # 参照先のとき、参照の項目名
+
+
+@dataclass
 class Query:
     """読むだけの処理（問い合わせ）。対象のデータの一覧を、条件・絞り込み・並びで返す。"""
     name: str
@@ -118,6 +127,7 @@ class Query:
     filters: list[tuple[str, str, str]] = field(default_factory=list)  # (項目, 以上／以下／含む／直近, 入力名／秒数)
     order: Optional[tuple[str, str]] = None  # (項目, 新しい順／古い順)
     limit: Optional[str] = None  # 先頭 N 件の N を持つ入力名
+    select: list[Column] = field(default_factory=list)  # 空なら、対象のIDの列を返す
     reads: list[str] = field(default_factory=list)
     line: int = 0
 

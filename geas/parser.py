@@ -596,12 +596,31 @@ class Parser:
                 q.order = (f, self.ORDERS[d])
             elif kw == "limit":
                 q.limit = self.name()
+            elif kw == "select":
+                q.select += self.comma_list(self.column)
             elif kw == "reads":
                 q.reads += self.comma_list(self.access)
             else:
                 raise self.err(f"query の中に「{kw}」は書けません")
             self.end_line()
         return q
+
+    def column(self) -> Column:
+        """select の1列：項目／参照の項目.先の項目／sum(写像の項目)／count(写像の項目)（as 名前 で列名を決める）"""
+        first = self.name()
+        if first in ("sum", "count") and self.is_("("):
+            self.next()
+            f = self.name()
+            self.expect(")")
+            col = Column(f + ("合計" if first == "sum" else "件数"), "合計" if first == "sum" else "件数", f)
+        elif self.accept("."):
+            f = self.name()
+            col = Column(f"{first}_{f}", "参照先", f, first)
+        else:
+            col = Column(first, "項目", first)
+        if self.accept("as"):
+            col.name = self.name()
+        return col
 
     # ---- 出来事（外の出来事をきっかけに処理を起こす） ----
     def event(self, line) -> Event:

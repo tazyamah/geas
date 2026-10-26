@@ -428,6 +428,37 @@ pub fn 決済の期限切れ(ctx: &決済の期限切れ文脈, 保存: &保存,
     return 決済の期限切れ出力 { 結果: 待ち解除結果::反映済, 書込: 書込列, 外部: 外部列 };
 }
 
+// ---- 問い合わせ 注文一覧（読むだけ） ----
+pub struct 注文一覧入力 {
+}
+impl 注文一覧入力 {
+    pub fn 検査(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+pub struct 注文一覧文脈 {
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct 注文一覧行 {
+    pub 注文ID: String,
+    pub 顧客: String,
+    pub 点数: i128,
+}
+impl 注文一覧行 {
+    pub fn 表示(&self) -> String { format!("注文ID={}/顧客={}/点数={}", self.注文ID, self.顧客, self.点数) }
+}
+pub fn 注文一覧(ctx: &注文一覧文脈, 保存: &保存, 入力: &注文一覧入力) -> Vec<注文一覧行> {
+    let mut 行: Vec<&注文> = 保存.注文.values().filter(|r| {
+        if !(r.状態 != 注文状態::キャンセル) { return false; }
+        true
+    }).collect();
+    行.sort_by(|a, b| a.注文ID.cmp(&b.注文ID));
+    行.into_iter().filter_map(|r| {
+        let j_顧客 = 保存.顧客.get(&r.顧客)?;  // 参照先が無い行は出さない
+        Some(注文一覧行 { 注文ID: r.注文ID.clone(), 顧客: j_顧客.顧客ID.clone(), 点数: r.明細.values().map(|v| *v as i128).sum::<i128>() })
+    }).collect()
+}
+
 // 【フロー】：結果の種類ごとの行き先。match の網羅は Rust が検査する。
 pub fn 注文受付_受注(r: &受注結果) -> 行き先 {
     match r {

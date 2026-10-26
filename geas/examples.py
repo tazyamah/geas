@@ -124,7 +124,7 @@ def example_code(ck: Checker, row: dict) -> str:
         L += [
             "        match 入力.検査() {",
             f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
-            f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &保存, &入力).join(",")),',
+            f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &保存, &入力){".iter().map(|x| x.表示()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
             "        }",
             "    }",
         ]

@@ -23,7 +23,8 @@ def fmt_secs(s: int) -> str:
 def query_rows(q) -> dict:
     conds = [" または ".join(f"{f} {op} {st}" for f, op, st in group) for group in q.conds]
     conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}" for f, op, a in q.filters]
-    return {"問い合わせ": q.name, "入力": [n for n, _ in q.inputs], "読む": sorted(q.reads), "条件": conds,
+    cols = [c.name for c in q.select]
+    return {"問い合わせ": q.name, "入力": [n for n, _ in q.inputs], "読む": sorted(q.reads), "条件": conds, "列": cols,
             "並び": f"{q.order[0]} {q.order[1]}" if q.order else "", "先頭": q.limit or ""}
 
 

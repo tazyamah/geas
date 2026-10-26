@@ -90,6 +90,21 @@ class ProcInfo:
         return set(self.field_reads) | {d for d in self.exist_reads if d not in data_with_fields}
 
 
+SELECT_KINDS = ("ID", "整数", "金額", "日時", "文字列", "名前", "参照")
+
+
+def column_type(ck, q, c) -> Type:
+    """問い合わせの1列の型（検査済みの前提）"""
+    own = {f.name: f for f in ck.data[q.target].fields}
+    if c.kind == "参照先":
+        tdt = ck.data[own[c.via].type.target]
+        return next(x.type for x in tdt.fields if x.name == c.field)
+    if c.kind == "件数":
+        return Type("整数")
+    f = own[c.field]
+    return Type("整数") if c.kind == "合計" else f.type
+
+
 class Checker:
     def __init__(self, prog: Program):
         self.p = prog
@@ -262,6 +277,36 @@ class Checker:
                     self.d(ERROR, "型", where, f"「{fn} 含む {arg}」は文字列どうしにだけ使えます")
                 if op in ("以上", "以下") and not (f.type.kind == t.kind and f.type.kind in ("日時", "整数", "金額")):
                     self.d(ERROR, "型", where, f"「{fn} {op} {arg}」は同じ種類の数・日時どうしにだけ使えます")
+            seen_cols = set()
+            for c in q.select:
+                if c.name in seen_cols:
+                    self.d(ERROR, "名前", where, f"select の列名「{c.name}」が重なっています（as で別の名前にしてください）")
+                seen_cols.add(c.name)
+                if c.kind == "参照先":
+                    rf = field_of(c.via)
+                    if rf is None:
+                        continue
+                    if rf.type.kind != "参照" or rf.type.target not in self.data:
+                        self.d(ERROR, "型", where, f"「{c.via}.{c.field}」: {c.via} は他のデータへの参照（ref）ではありません")
+                        continue
+                    tdt = self.data[rf.type.target]
+                    tf = next((x for x in tdt.fields if x.name == c.field), None)
+                    if tf is None:
+                        self.d(ERROR, "名前", where, f"データ {tdt.name} に項目「{c.field}」がありません")
+                        continue
+                    used.add(f"{tdt.name}.{c.field}")
+                    if tf.type.kind not in SELECT_KINDS:
+                        self.d(ERROR, "型", where, f"「{c.via}.{c.field}」は select に書けない型です（{tf.type.kind}）")
+                    continue
+                f = field_of(c.field)
+                if f is None:
+                    continue
+                if c.kind == "項目" and f.type.kind not in SELECT_KINDS:
+                    self.d(ERROR, "型", where, f"「{c.field}」は select に書けない型です（{f.type.kind}）。集まりは sum( ) か count( ) にしてください")
+                if c.kind in ("合計", "件数") and f.type.kind != "写像":
+                    self.d(ERROR, "型", where, f"「{c.field}」は集計できません（sum と count は、キーつきの集まり 〈データ → 値〉 の項目にだけ使えます）")
+                if c.kind == "合計" and f.type.kind == "写像" and f.type.value.kind not in ("整数", "金額"):
+                    self.d(ERROR, "型", where, f"sum({c.field}) は、値が整数か金額の集まりにだけ使えます")
             if q.order:
                 f = field_of(q.order[0])
                 if f is not None and f.type.kind not in ("日時", "整数", "金額"):
@@ -345,6 +390,9 @@ class Checker:
                 q = self.queries.get(qn)
                 if q is None:
                     self.d(ERROR, "出来事", where, f"問い合わせ「{qn}」が未定義です")
+                    continue
+                if q.select:
+                    self.d(ERROR, "出来事", where, f"問い合わせ {qn} は select で列を返すので、出来事の「each」には使えません（IDの列を返す問い合わせにしてください）")
                     continue
                 if any(not t.optional for _, t in q.inputs):
                     self.d(ERROR, "出来事", where, f"問い合わせ {qn} は入力が要るので、出来事からは呼べません（任意の入力だけにしてください）")

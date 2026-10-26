@@ -209,8 +209,9 @@ def host_source(ck: Checker) -> str:
             if t.optional:
                 e = f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(t, "v")}), None => None }}'
             inf.append(f"{x}: {e}")
+        shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
-        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i), vec![], 保存))\n        }}')
+        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, vec![], 保存))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
     w("pub fn 呼ぶ(要求: &str) -> Result<String, String> {\n"
       '    let r = parse(要求)?;\n    let mut s = 保存を読む(r.get("保存")?)?;\n'
