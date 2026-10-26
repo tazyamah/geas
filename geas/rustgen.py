@@ -454,7 +454,10 @@ class ProcGen:
             self.L(f"return {self.ret_expr(st)};")
         elif isinstance(st, If):
             self.L(f"if {self.rx(st.cond)} {{")
-            self.L(f"    return {self.ret_expr(st.ret)};")
+            self.ind += 1
+            for inner in st.body:
+                self.stmt(inner)
+            self.ind -= 1
             self.L("}")
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):

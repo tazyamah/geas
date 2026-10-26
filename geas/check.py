@@ -654,16 +654,27 @@ class ProcChecker:
             self.check_return(st)
         elif isinstance(st, If):
             self.ty(st.cond)
-            self.check_return(st.ret)
             c = st.cond
-            if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
-                self.guarded.add(self.exist_sets[c.e.n])
-            if (isinstance(c, Bin) and c.op == "!=" and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
-                    and c.l.e.n in self.lookup_data and isinstance(c.r, Name)):
-                self.state_guards.add((self.lookup_data[c.l.e.n], c.l.n, c.r.n))
-            if (isinstance(c, Bin) and c.op in ("<=", "<", "==") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
-                    and c.l.e.n in self.lookup_data and isinstance(c.r, Num)):
-                info.value_guards.append((self.lookup_data[c.l.e.n], c.l.n, c.op, c.r.v, pos))
+            state_cmp = (isinstance(c, Bin) and c.op in ("==", "!=") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
+                         and c.l.e.n in self.lookup_data and isinstance(c.r, Name))
+            # 「x.項目 == 状態」が成り立つ分岐の中では、その状態の確認が済んでいる。分岐の外へは持ち出さない
+            inside = self.state_guards | ({(self.lookup_data[c.l.e.n], c.l.n, c.r.n)} if state_cmp and c.op == "==" else set())
+            outer, self.state_guards = self.state_guards, inside
+            for inner in st.body:
+                if not isinstance(inner, (Return, If, SetField, Update, Request)):
+                    self.d(ERROR, "型", "if の中に書けるのは、return・項目の更新・update・request・if だけです（let は外に書いてください）", st.line)
+                    continue
+                self.stmt(inner, pos)
+            self.state_guards = outer
+            # 分岐がかならず return で終わるなら、成り立たなかったときだけ先へ進む。その確認は、あとの文へ引き継ぐ
+            if isinstance(st.body[-1], Return):
+                if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
+                    self.guarded.add(self.exist_sets[c.e.n])
+                if state_cmp and c.op == "!=":
+                    self.state_guards.add((self.lookup_data[c.l.e.n], c.l.n, c.r.n))
+                if (isinstance(c, Bin) and c.op in ("<=", "<", "==") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
+                        and c.l.e.n in self.lookup_data and isinstance(c.r, Num)):
+                    info.value_guards.append((self.lookup_data[c.l.e.n], c.l.n, c.op, c.r.v, pos))
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):
                 t = self.ty(st.e)
@@ -737,7 +748,7 @@ class ProcChecker:
         for a, b in decl:
             self.info.transitions.add((data, a, b))
             if a != "(新規)" and (data, fname, a) not in self.state_guards:
-                self.d(ERROR, "遷移", f"{data} が「{a}」であることの確認（if … != {a} {{ return … }}）が、遷移の前にありません", line)
+                self.d(ERROR, "遷移", f"{data} が「{a}」であることの確認（if … != {a} {{ return … }}、または if … == {a} {{ … }} の中）が、遷移の前にありません", line)
         for x, y, why in self.ck.states[sname].rejects:
             if y == dst and any(a == x for a, _ in decl):
                 self.d(ERROR, "遷移", f"拒否された遷移 {x} → {y}（{why}）を行っています", line)

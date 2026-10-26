@@ -242,7 +242,7 @@ class Create:
 @dataclass
 class If:
     cond: object
-    ret: Return
+    body: list  # 条件が成り立つときの文（return・項目の更新・update・request・入れ子の if）
     line: int = 0
 
 

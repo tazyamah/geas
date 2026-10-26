@@ -338,6 +338,21 @@ class Parser:
         self.expect("}")
         return r
 
+    def end_stmt(self):
+        """文の終わり。1行に書いた「{ … }」の中では、} の手前で終わってよい"""
+        if not self.is_("}"):
+            self.end_line()
+
+    def if_block(self) -> list:
+        """「{ 文… }」。1行でも、改行して書いてもよい"""
+        self.expect("{")
+        self.skip_nl()
+        body = []
+        while not self.accept("}"):
+            body.append(self.stmt())
+            self.skip_nl()
+        return body
+
     def binder(self) -> Binder:
         if self.accept("("):
             names = self.comma_list(self.name)
@@ -353,7 +368,7 @@ class Parser:
             s = self.ret()
         elif self.accept("if"):
             cond = self.expr()
-            s = If(cond, self.ret_block(), line)
+            s = If(cond, self.if_block(), line)
         elif self.accept("update"):
             self.expect("{")
             target = self.postfix()
@@ -410,7 +425,7 @@ class Parser:
             f = self.name()
             self.expect("=")
             s = SetField(n, f, self.expr(), line)
-        self.end_line()
+        self.end_stmt()
         return s
 
     # ---- 式 ----

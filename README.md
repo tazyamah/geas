@@ -51,6 +51,8 @@ nexus 注文受付 { 受注: 受付 → 決済要求, 顧客なし → reply, ..
 trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now + 30 min → ... }
 ```
 
+`if` の中には、`return`・項目の更新・`update`・`request`・入れ子の `if` を書けます（`let` は外に書きます）。検査は、状態を変える文ごとに「その分岐で元の状態を確かめているか」を追います。
+
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## 状態
