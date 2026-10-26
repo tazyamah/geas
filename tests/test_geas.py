@@ -1196,6 +1196,60 @@ fn main() {
     assert n == "1"  # 重さが null のものは絞り込みを満たさない
 
 
+PAGEQ = """data メモ {
+  メモID: id unique
+  重さ: int 0..
+}
+query 一覧 {
+  input 件数: int 1..100
+  from メモ
+  order 重さ newest
+  page 件数
+  reads メモ.重さ
+}
+query 先頭 {
+  from メモ
+  order 重さ oldest
+  page 2
+  reads メモ.重さ
+}
+"""
+
+
+def test_page_は_order_が無いとエラーで_limit_は使えない():
+    assert chk(PAGEQ).ok, chk(PAGEQ).diags
+    ck = chk(mutate(PAGEQ, "  order 重さ oldest\n  page 2", "  page 2"))
+    assert any("order が要ります" in m for m in msgs(ck, ERROR)), ck.diags
+    with pytest.raises(ParseError, match="page に替わりました"):
+        chk(mutate(PAGEQ, "page 2", "limit 2"))
+    with pytest.raises(ParseError):
+        chk(mutate(PAGEQ, "page 2", "page 0"))
+
+
+def test_page_の件数は仕様書に出る():
+    from geas.spec import query_rows
+    rows = {q.name: query_rows(q) for q in chk(PAGEQ).p.queries}
+    assert rows["先頭"]["ページ"] == "2件" and rows["一覧"]["ページ"] == "件数（件数が無ければ全件）"
+
+
+@needs_cargo
+def test_page_は並びのうえで先頭の1ページを返す(tmp_path):
+    ck = chk(PAGEQ)
+    main = """use geas_app::*;
+fn main() {
+    let mut s = 保存::default();
+    for (id, w) in [("A", 1i64), ("B", 5), ("C", 3)] { s.メモ.insert(id.into(), メモ { メモID: id.into(), 重さ: Some(w as _) }); }
+    println!("{:?}", 先頭(&先頭文脈 {}, &s, &先頭入力 {}));
+    println!("{:?}", 一覧(&一覧文脈 {}, &s, &一覧入力 { 件数: Some(2) }));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    a, b = r.stdout.splitlines()
+    assert a == '["A", "C"]' and b == '["B", "C"]', (a, b)  # oldest の先頭2件／newest の先頭2件
+
+
 def test_問いが残っているうちは生成しない():
     ck = chk(mutate(CODE, "let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "let 合計 = 小計 + 小計 * 税率"))
     assert ck.ok and not ck.ready

@@ -39,7 +39,7 @@ def query_rows(q) -> dict:
     cols = [c.name for c in q.select]
     return {"問い合わせ": q.name, "入力": input_names(q.inputs), "読む": sorted(q.reads), "条件": conds, "列": cols,
             "並び": f"{q.order[0]} {q.order[1]}" if q.order else "",
-            "先頭": f"{q.limit}{absent(q.limit, '全件')}" if q.limit else ""}
+            "ページ": f"{q.page_n}件" if q.page_n else f"{q.page}{absent(q.page, '全件')}" if q.page else ""}
 
 
 def build(ck: Checker) -> dict:
@@ -116,9 +116,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
     if spec["問い合わせ"]:
-        out += ["", "## 問い合わせ（読むだけの処理）", "", "| 問い合わせ | ◆入力 | ◆読む | ◆条件 | ◆並び | ◆先頭 |", "|---|---|---|---|---|---|"]
+        out += ["", "## 問い合わせ（読むだけの処理）", "", "| 問い合わせ | ◆入力 | ◆読む | ◆条件 | ◆並び | ◆ページ |", "|---|---|---|---|---|---|"]
         for x in spec["問い合わせ"]:
-            out.append(f"| {x['問い合わせ']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['条件'])} | {x['並び']} | {x['先頭']} |")
+            out.append(f"| {x['問い合わせ']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['条件'])} | {x['並び']} | {x['ページ']} |")
     out += ["", "## トリガ", "", "| トリガ | ◆要因 | ◆行き先 |", "|---|---|---|"]
     out += [f"| {a} | {b} | {c} |" for a, b, c in spec["トリガ"]]
     if spec["外部作用"]:

@@ -278,10 +278,13 @@ class Gen:
             self.w(f"    行.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
         else:
             self.w(f"    行.sort_by(|a, b| a.{key}.cmp(&b.{key}));")
-        if q.limit:
-            t = ins[q.limit]
-            n_expr = f"入力.{q.limit}.map_or(行.len(), |x| x as usize)" if t.optional else f"入力.{q.limit} as usize"
-            self.w(f"    行.truncate({n_expr});")
+        if q.page or q.page_n:
+            if q.page_n:
+                n_expr = str(q.page_n)
+            else:
+                t = ins[q.page]
+                n_expr = f"入力.{q.page}.map_or(行.len(), |x| x as usize)" if t.optional else f"入力.{q.page} as usize"
+            self.w(f"    行.truncate({n_expr});  // 1ページ分（並びは上で決めてある）")
         if not q.select:
             self.w(f"    行.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
             return
