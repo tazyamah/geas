@@ -19,6 +19,7 @@ class Type:
     value: Optional["Type"] = None
     unit: Optional[str] = None
     optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
+    chars: Optional[tuple] = None  # 文字列の使える文字。(下限, 上限) のコードポイントの組を、小さい順につないだもの
 
 
 @dataclass
@@ -313,10 +314,17 @@ def show_range(r: Optional[Range]) -> str:
     return f" {'' if r.lo is None else r.lo}..{'' if r.hi is None else r.hi}"
 
 
+def show_chars(cs: tuple) -> str:
+    esc = lambda c: ("\\" + chr(c)) if chr(c) in "\\-]" else chr(c)
+    return "".join(esc(a) if a == b else f"{esc(a)}-{esc(b)}" for a, b in cs)
+
+
 def show_type(t: Type) -> str:
     k = t.kind
-    if k in ("ID", "文字列", "日時"):
+    if k in ("ID", "日時"):
         return k
+    if k == "文字列":
+        return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]")
     if k == "バイト列":
         return "バイト列" + show_range(t.range)
     if k == "整数":

@@ -167,6 +167,43 @@ class Parser:
             return Range(None, self.num())
         return None
 
+    def chars_opt(self):
+        """of "a-z0-9_"：- でつないだ範囲と、\\ で逃がした文字。小さい順につないで返す"""
+        if not self.accept("of"):
+            return None
+        t = self.next()
+        if t.kind != "STR" or not t.val:
+            raise self.err('of のあとには、使える文字を "a-z0-9_" の形で書きます')
+        s, out, i = t.val, [], 0
+        def one():
+            nonlocal i
+            if s[i] == "\\":
+                i += 1
+                if i >= len(s):
+                    raise self.err("文字種の末尾の「\\」のあとに文字がありません")
+            c = ord(s[i])
+            i += 1
+            if 0xD800 <= c <= 0xDFFF:
+                raise self.err("文字種に使えない文字です")
+            return c
+        while i < len(s):
+            a = one()
+            b = a
+            if i + 1 < len(s) and s[i] == "-":
+                i += 1
+                b = one()
+                if b < a:
+                    raise self.err(f"文字種の範囲の向きが逆です（{chr(a)}-{chr(b)}）")
+            out.append((a, b))
+        out.sort()
+        merged = [out[0]]
+        for a, b in out[1:]:
+            if a <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        return tuple(merged)
+
     def type(self) -> Type:
         tok = self.name()
         if tok == "id":
@@ -175,7 +212,9 @@ class Parser:
             self.expect("of")
             self.expect("id")
             return Type("集合", value=Type("ID"))
-        if tok in ("text", "time"):
+        if tok == "text":  # 範囲は長さ（文字数）。of "a-z0-9_" は使える文字
+            return Type("文字列", range=self.range_opt(), chars=self.chars_opt())
+        if tok == "time":
             return Type(SIMPLE_TYPES[tok])
         if tok == "bytes":  # 範囲は長さ（バイト数）
             return Type("バイト列", range=self.range_opt())

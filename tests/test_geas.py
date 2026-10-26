@@ -964,6 +964,68 @@ def test_ホストは宣言にない入力の項目を無いものとして扱�
     assert got[0] == got[1] and '\\"結果\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
 
 
+TEXT = """data 利用者 {
+  利用者ID: id unique
+  名: text 1..20 of "a-z0-9_" required
+}
+result 登録結果 {
+  登録した(利用者ID: id)
+}
+deed 登録する {
+  input 名: text 1..20 of "a-z0-9_" required
+  writes 利用者
+  result 登録結果
+  effects none
+
+  let 利用者 = create 利用者 { 名: 名 }
+  return 登録した(利用者.利用者ID)
+}
+nexus 流れ {
+  登録する: 登録した → reply
+}
+"""
+
+
+def test_文字列の長さと使える文字は仕様書の型に出る():
+    from geas.ast import show_type
+    ck = chk(TEXT)
+    assert ck.ok, ck.diags
+    t = ck.data["利用者"].fields[1].type
+    assert show_type(t) == "文字列 1..20 文字種 [0-9_a-z]"
+
+
+def test_長さや文字が広い入力を項目へ入れると止まる():
+    assert not msgs(chk(mutate(TEXT, "input 名: text 1..20", "input 名: text 1..10")), ERROR)  # 狭いのはよい
+    ck = chk(mutate(TEXT, "input 名: text 1..20", "input 名: text 1..30"))
+    assert any("長さ" in m and "収まる" in m for m in msgs(ck, ERROR)), ck.diags
+    ck = chk(mutate(TEXT, "input 名: text 1..20", "input 名: text"))
+    assert any("長さ" in m for m in msgs(ck, ERROR)), ck.diags
+    ck = chk(mutate(TEXT, 'input 名: text 1..20 of "a-z0-9_"', 'input 名: text 1..20 of "a-z0-9_A-Z"'))
+    assert any("文字" in m and "収まる" in m for m in msgs(ck, ERROR)), ck.diags
+    ck = chk(mutate(TEXT, 'input 名: text 1..20 of "a-z0-9_"', "input 名: text 1..20"))
+    assert any("文字" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+def test_文字種の書き方の誤りは止まる():
+    for bad in ('of "z-a"', 'of ""', 'of "a\\"'):
+        with pytest.raises(ParseError):
+            chk(mutate(TEXT, 'of "a-z0-9_" required\n}', bad + " required\n}"))
+
+
+def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
+    ck = chk(TEXT)
+    calls = ['{"名":"abc_09"}', '{"名":""}', '{"名":"' + "a" * 21 + '"}', '{"名":"ABC"}', '{"名":"あ"}', '{"名":"' + "a" * 20 + '"}']
+    main = "fn main() {\n" + "".join(
+        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"登録する","文脈":{{"新利用者ID":"U1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        for i in calls) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert '登録した' in got[0] and '登録した' in got[5], (got[0], got[5])
+    assert all(g.startswith("Err(") for g in got[1:5]), got[1:5]  # 空・長すぎ・使えない文字は入力不正
+
+
 SLOT = """data 品 {
   品ID: id unique
   数: int 0..1000 required
