@@ -102,7 +102,7 @@ class Parser:
                 p.invariants.append(self.invariant(line))
             elif kw == "deed":
                 p.processes.append(self.process(line))
-            elif kw in ("braid", "flow"):  # flow は braid の別名（糖衣構文）
+            elif kw in ("nexus", "flow"):  # flow は nexus の別名（糖衣構文）
                 p.flows.append(self.flow(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
@@ -548,7 +548,7 @@ class Parser:
             return Name(t.val)
         raise self.err(f"式のはずが「{t.val or '行末'}」があります")
 
-    # ---- ブレイド（braid。flow は別名） ----
+    # ---- ネクサス（nexus。flow は別名） ----
     def flow(self, line) -> Flow:
         name = self.name()
         self.block_open()

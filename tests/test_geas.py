@@ -295,8 +295,8 @@ def test_台帳から出したplanの表は突合の対象にならない():
 
 
 # ---- 構文（英語キーワード・Rust 風の本体） ----
-def test_flowはbraidの別名():
-    ck = chk(mutate(CODE, "braid 注文受付", "flow 注文受付"))
+def test_flowはnexusの別名():
+    ck = chk(mutate(CODE, "nexus 注文受付", "flow 注文受付"))
     assert not msgs(ck, ERROR)
 
 
@@ -605,7 +605,7 @@ deed 引当 {
   return 反映済
 }
 
-braid 引当の流れ {
+nexus 引当の流れ {
   引当: 反映済 → reply, 注文なし → reply, 状態違い → reply
 }
 """
@@ -652,8 +652,8 @@ def test_同じ結果に行き先を2つ書くと止まる():
     assert any("行き先が2つ以上" in m for m in msgs(ck, ERROR))
 
 
-def test_同じ処理を違う行き先で2つのブレイドに書くと止まる():
-    ck = chk(CODE + "\nbraid 二重 {\n  受注: 受付 → reply, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply\n}\n")
+def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():
+    ck = chk(CODE + "\nnexus 二重 {\n  受注: 受付 → reply, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply\n}\n")
     assert any("違う行き先" in m for m in msgs(ck, ERROR))
 
 
@@ -715,7 +715,7 @@ def test_使わない外部作用と届かない状態は警告():
     assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
 
 
-# ---- ブレイドで次の処理へは、結果の中身を名前と型で渡す ----
+# ---- ネクサスで次の処理へは、結果の中身を名前と型で渡す ----
 def test_結果の中身には名前が要る():
     with pytest.raises(ParseError, match="名前を付けて"):
         parse(mutate(CODE, "  受付(注文ID: id)\n", "  受付(id)\n"))
@@ -818,7 +818,7 @@ deed 題を見る {
   let 題 = メモ.題 else { return 題なし }
   return 題あり(題)
 }
-braid 流れ {
+nexus 流れ {
   書く: 書いた → 題を見る
   題を見る: 題あり → reply, 無し → reply, 題なし → reply
 }
@@ -911,7 +911,7 @@ deed 下書き {
   let メモ = create メモ { 本文: 本文, 題: 題 }
   return 書いた(メモ.メモID)
 }
-braid 流れ {
+nexus 流れ {
   書く: 書いた → reply, 無題 → reply
   下書き: 書いた → reply, 無題 → reply
 }
@@ -968,7 +968,7 @@ deed 置く {
   let 品 = create 品 { 数: 数 * 倍率 }
   return 置いた(品.品ID)
 }
-braid 流れ {
+nexus 流れ {
   置く: 置いた → reply
 }
 """
@@ -1006,7 +1006,7 @@ deed 置く {
   let 品 = create 品 { 価格: 税込(税抜) }
   return 置いた(品.品ID)
 }
-braid 流れ {
+nexus 流れ {
   置く: 置いた → reply
 }
 """

@@ -222,7 +222,7 @@ class Checker:
 
     def check_defs(self):
         p = self.p
-        # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ブレイド・出来事は同じ名前の空間に並ぶ
+        # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ネクサス・出来事は同じ名前の空間に並ぶ
         tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events, p.parts) for x in xs]
         self.check_unique(tops, "全体", "定義の名前")
         self.check_unique([e.name for e in p.effects], "全体", "外部作用")
@@ -321,7 +321,7 @@ class Checker:
                 if decl is None or decl.no_wait is not None:
                     continue
                 if proc not in waits:
-                    self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の扱いが決まっていません（ブレイドで「wait」へ進めるか、外部作用の宣言に no_wait \"人が決めた理由\" を書いてください）")
+                    self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の扱いが決まっていません（ネクサスで「wait」へ進めるか、外部作用の宣言に no_wait \"人が決めた理由\" を書いてください）")
                     continue
                 for tname in sorted(waits[proc]):
                     tg = triggers.get(tname)
@@ -488,7 +488,7 @@ class Checker:
                 elif [(n, show_type(t)) for n, t in proc.inputs] != [(n, show_type(t)) for n, t in tg.params]:
                     self.d(ERROR, "トリガ", where, f"行き先の処理 {dest} の入力（名前と型）が、トリガの引数と合いません")
             if tg.name not in waited:
-                self.d(WARN, "トリガ", where, "どのブレイドからも「wait」で作られていません")
+                self.d(WARN, "トリガ", where, "どのネクサスからも「wait」で作られていません")
 
     def check_events(self):
         """出来事の検査。「各」は、問い合わせが返すデータ1件ずつに、その識別子だけを入力にもつ処理を起こす。"""
