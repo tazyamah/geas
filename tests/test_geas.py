@@ -1523,3 +1523,93 @@ def test_合成型はホストの境界で成分ごとに確かめる(tmp_path):
     assert got[2].startswith("Err(") and "y" in got[2], got[2]
     assert got[3].startswith("Ok(") and "置いた" in got[3]  # 宣言にない成分は来ていないものとして扱う
     assert "読んだ" in got[4] and "右寄り" in got[5], got[4:6]
+
+
+# ---- 仮想日時（成分は未指定にできる）----
+VDT = """entity 約束 {
+  約束ID: id unique
+  期日: 仮想日時 required
+}
+result 決めた結果 {
+  決めた(約束ID: id)
+}
+result 月結果 {
+  未指定
+  前半
+  後半
+  なし
+}
+deed 決める {
+  input 期日: 仮想日時 required
+  writes 約束
+  result 決めた結果
+  effects none
+
+  let 約束 = create 約束 { 期日: 期日 }
+  return 決めた(約束.約束ID)
+}
+deed 誕生日にする {
+  writes 約束
+  result 決めた結果
+  effects none
+
+  let 約束 = create 約束 { 期日: 仮想日時 { 月: 10, 日: 26 } }
+  return 決めた(約束.約束ID)
+}
+deed 月を見る {
+  input 約束ID: id required
+  reads 約束.期日
+  result 月結果
+  effects none
+
+  let 約束 = 約束[約束ID] else { return なし }
+  if 約束.期日.月 is null { return 未指定 }
+  if 約束.期日.月 > 6 { return 後半 }
+  return 前半
+}
+nexus 流れ {
+  決める: 決めた → reply
+  誕生日にする: 決めた → reply
+  月を見る: 前半 → reply, 後半 → reply, 未指定 → reply, なし → reply
+}
+"""
+
+
+def test_仮想日時の成分は未指定にでき_確かめずに読むと止まる():
+    ck = chk(VDT)
+    assert ck.ok and ck.ready, ck.diags
+    sp = build(ck)
+    assert any(r[1] == "期日" and r[2].startswith("仮想日時（年: 整数 1..9999") for r in sp["データ"]), sp["データ"]
+    ck = chk(mutate(VDT, "  if 約束.期日.月 is null { return 未指定 }\n", ""))
+    assert any("未指定かもしれない成分" in m for m in msgs(ck, ERROR)), ck.diags
+    # 必須の成分を持つ合成型では、書き漏れがエラー。null を書くのも止まる
+    ck = chk("ltype 点 {\n  x: int\n  y: int optional\n}\n" + mutate(VDT, "仮想日時 { 月: 10, 日: 26 }", "点 { y: 1 }").replace("期日: 仮想日時 required", "期日: 点 required").replace("input 期日: 仮想日時 required", "input 期日: 点 required").replace("約束.期日.月", "約束.期日.y"))
+    assert any("成分「x」がありません" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+def test_仮想日時の成分の範囲は構造の上限だけ():
+    ck = chk(mutate(VDT, "仮想日時 { 月: 10, 日: 26 }", "仮想日時 { 月: 13, 日: 26 }"))
+    assert any("成分の範囲に収まると示せません" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+@needs_cargo
+def test_仮想日時はホストの境界で成分ごとに確かめ_未指定はnull(tmp_path):
+    ck = chk(VDT)
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::呼ぶ(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    rec = lambda body: '{"約束":{"A1":{"約束ID":"A1","期日":' + body + '}}}'
+    main = "fn main() {\n" + "".join([
+        call("決める", '{"新約束ID":"A1"}', '{"期日":{"年":2026,"月":10}}', "{}"),
+        call("決める", '{"新約束ID":"A1"}', '{"期日":{"月":13}}', "{}"),
+        call("誕生日にする", '{"新約束ID":"A1"}', "{}", "{}"),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":null}')),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":3}')),
+        call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"月":9}')),
+    ]) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert '\\"月\\":10' in got[0] and '\\"日\\":null' in got[0] and '\\"年\\":2026' in got[0], got[0]
+    assert "範囲外" in got[1] and "期日.月" in got[1], got[1]
+    assert '\\"月\\":10' in got[2] and '\\"日\\":26' in got[2] and '\\"年\\":null' in got[2], got[2]
+    assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]

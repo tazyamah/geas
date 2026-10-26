@@ -142,7 +142,11 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'for v in {x}.values() {{ 範囲検査("{label}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
     if t.kind == "合成":
         for pn, pt in t.parts:
-            chk += value_checks(f"{label}.{pn}", pt, f"{x}.{pn}", False)
+            if pt.optional:  # 未指定にできる成分は、あるときだけ確かめる
+                inner = value_checks(f"{label}.{pn}", replace(pt, optional=False), "v", True)
+                chk += [f"if let Some(v) = &{x}.{pn} {{ {c} }}" for c in inner]
+            else:
+                chk += value_checks(f"{label}.{pn}", pt, f"{x}.{pn}", False)
     return chk
 
 
@@ -354,7 +358,7 @@ class Gen:
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {c.target} {{")
             for pn, pt in c.parts:
-                self.w(f"    pub {pn}: {rust_type(pt)},")
+                self.w(f"    pub {pn}: {field_rust(pt)},")
             self.w("}\n")
         for d in self.p.data:
             self.w("#[derive(Clone, Debug, PartialEq)]")
@@ -524,6 +528,8 @@ class ProcGen:
 
     def nullable(self, e: Attr) -> bool:
         bt = self.tok(e.e)
+        if bt.startswith("Comp:"):  # 未指定にできる成分。読むのは、検査で未指定でないと確かめてある所だけ
+            return next(t for n, t in self.ck.comps[bt[5:]].parts if n == e.n).optional
         if not bt.startswith("Rec:"):
             return False
         return next(f for f in self.ck.data[bt[4:]].fields if f.name == e.n).type.optional
@@ -603,7 +609,12 @@ class ProcGen:
             for n, x in e.fields:
                 pt = next(t for pn, t in ct.parts if pn == n)
                 num = pt.kind in ("整数", "金額")
-                vals.append(f"{n}: {self.conv(pt, self.rx(x), f'{e.n}.{n}', proven=True) if num else self.rx(x)}")
+                if isinstance(x, Null):
+                    vals.append(f"{n}: None")
+                    continue
+                v = self.conv(pt, self.rx(x), f"{e.n}.{n}", proven=True) if num else self.rx(x)
+                vals.append(f"{n}: Some({v})" if pt.optional else f"{n}: {v}")
+            vals += [f"{pn}: None" for pn, pt in ct.parts if pt.optional and pn not in dict(e.fields)]
             return f"{e.n} {{ {', '.join(vals)} }}"
         if isinstance(e, Pred) and e.kind == "null":
             return f"{self.place(e.e)}.is_none()"
