@@ -449,3 +449,56 @@ def test_外部作用の無いアプリでも生成した_crate_がビルドで�
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path, host=True)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+# ---- 確認は「どのキーで引いたものか」に効く（データ名には効かない） ----
+PAY = "  let 注文 = 注文[注文ID] else { return 注文なし }\n  if 注文.状態 != 受付 { return 状態違い }\n"
+TWO = "deed 決済要求 {\n  input 注文ID: id, 別ID: id\n"
+
+
+def two_orders(body):
+    return mutate(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id\n", TWO), PAY, body)
+
+
+def test_別の注文の状態を確かめても_こちらは遷移できない():
+    ck = chk(two_orders("  let 別 = 注文[別ID] else { return 注文なし }\n  let 注文 = 注文[注文ID] else { return 注文なし }\n  if 別.状態 != 受付 { return 状態違い }\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_同じ名前で引き直すと確認は消える():
+    ck = chk(two_orders(PAY + "  let 注文 = 注文[別ID] else { return 注文なし }\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_存在の確認は同じキーにだけ効く():
+    ck = chk(two_orders(PAY + "  if 注文[別ID].合計 <= 0 { return 合計ゼロ }\n"))
+    assert any("注文[別ID]" in d.msg for d in ck.diags if d.level == QUESTION)
+    ck = chk(two_orders(PAY + "  if 注文[別ID] is absent { return 注文なし }\n  if 注文[別ID].合計 <= 0 { return 合計ゼロ }\n"))
+    assert not any("注文[別ID]" in d.msg for d in ck.diags if d.level == QUESTION)
+
+
+BULK = """
+deed 一括完了 {
+  input 他: set of id
+  writes 注文.状態
+  result 待ち解除結果
+  effects none
+
+  update { 注文[k].状態 = 完了 | k in 他 }
+  return 反映済
+}
+"""
+
+
+def test_updateで状態の項目は変えられない():
+    assert any("update で状態の項目" in m for m in msgs(chk(CODE + BULK), ERROR))
+
+
+def test_状態は状態名で変える():
+    ck = chk(two_orders(PAY + "  let 別 = 注文[別ID] else { return 注文なし }\n").replace("  注文.状態 = 決済要求済\n", "  注文.状態 = 別.状態\n", 1))
+    assert any("状態名で書いてください" in m for m in msgs(ck, ERROR))
+
+
+def test_新規作成の状態は状態名で書く():
+    ck = chk(mutate(CODE, "状態: 受付 }", "状態: 顧客ID }"))
+    assert any("状態名で書いてください" in m for m in msgs(ck, ERROR))

@@ -80,9 +80,9 @@ class ProcInfo:
     decrements: list = field(default_factory=list)  # (D, f, Update, 本体の位置)
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
-    setfields: list = field(default_factory=list)  # (データ, 項目, 値, 位置, 変数)
+    setfields: list = field(default_factory=list)  # (データ, 項目, 値, 位置, 束縛)
     creates: list = field(default_factory=list)  # (データ, {項目: 値の名前})
-    value_guards: list = field(default_factory=list)  # (データ, 項目, 演算子, 数, 位置)
+    value_guards: list = field(default_factory=list)  # (データ, 項目, 演算子, 数, 位置, 束縛)
 
     @property
     def reads(self) -> set:
@@ -462,8 +462,8 @@ class Checker:
         for (dname, ff, val, pos, var) in info.setfields:
             if dname != inv.data or ff != f or val != state:
                 continue
-            ok = any(gd == (dname, g) and op == "<=" and k == n and gp < pos
-                     for (gd0, gd1, op, k, gp) in info.value_guards for gd in [(gd0, gd1)])
+            ok = any((gd, gf) == (dname, g) and op == "<=" and k == n and gp < pos and gb == var
+                     for (gd, gf, op, k, gp, gb) in info.value_guards)
             if not ok:
                 self.d(ERROR, "不変条件", f"処理 {info.name}", f"不変条件「{text}」が成り立つ保証がありません"
                        f"（{dname}を「{state}」にする前に「{g} > {n}」の確認がありません。反例: {g} が {n} 以下の{dname}）")
@@ -511,9 +511,11 @@ class ProcChecker:
         self.info = ProcInfo(proc.name)
         self.env: dict[str, str] = {}
         self.where = f"処理 {proc.name}"
-        self.exist_sets: dict[str, str] = {}
-        self.guarded: set[str] = set()
-        self.state_guards: set[tuple[str, str, str]] = set()  # (データ, 項目, 元)
+        self.exist_sets: dict[str, tuple[str, str]] = {}  # 集合の変数 → (データ, 回した元)
+        # 確認はデータ名でなく「どのキーで引いたものか」に効く。別のキーで引いたものには効かない
+        self.guarded: set[tuple[str, str]] = set()  # 存在を確かめた (データ, キーの式) か (データ, "∈" + 回した元)
+        self.state_guards: set[tuple[str, str, str]] = set()  # (束縛, 項目, 元の状態)
+        self.bindings: dict[str, str] = {}  # 変数 → 束縛（同じ名前で引き直すと別の束縛になる）
         self.accessed_vars: set[str] = set()
         self.created: set[str] = set()
         self.pos = 0
@@ -558,7 +560,7 @@ class ProcChecker:
             if fld is None:
                 self.d(ERROR, "名前", f"データ {dname} に項目「{e.n}」がありません")
                 return "?"
-            if isinstance(base, Index) and dname not in self.guarded:
+            if isinstance(base, Index) and not self.exists_known(base, env):
                 self.d(QUESTION, "存在", f"{show(base)} が存在しないとき、どうしますか"
                        f"（{dname}の存在を確かめて返す処理が、使う前にありません）")
             if isinstance(base, Name):
@@ -614,9 +616,23 @@ class ProcChecker:
         raise ValueError(e)
 
     def note_exist_set(self, e):
+        """{ k | (k, v) in 元, D[k] is absent } の形なら、「元のキーがすべて D にあるか」を表す集合として覚える"""
         c = e.cond
-        if isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index):
-            self._last_exist = c.e.d
+        if (isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index)
+                and c.e.e == Name(e.binder.names[0]) and e.elem == Name(e.binder.names[0])):
+            self._last_exist = (c.e.d, "∈" + show(e.binder.src))
+
+    def exists_known(self, ix: Index, env) -> bool:
+        """D[k] の存在が確かめ済みか。同じキーの式で確かめたか、確かめた集まりを回している変数か"""
+        if (ix.d, show(ix.e)) in self.guarded:
+            return True
+        src = env.get("#元:" + ix.e.n) if isinstance(ix.e, Name) else None
+        return src is not None and (ix.d, "∈" + src) in self.guarded
+
+    def bind_var(self, name: str) -> str:
+        self.bind_count = getattr(self, "bind_count", 0) + 1
+        self.bindings[name] = f"{name}#{self.bind_count}"
+        return self.bindings[name]
 
     def bind(self, b: Binder, env=None):
         env = self.env if env is None else env
@@ -626,8 +642,10 @@ class ProcChecker:
             _, _, vt = st.split(":", 2)
             env2[b.names[0]] = "ID"
             env2[b.names[1]] = vt
+            env2["#元:" + b.names[0]] = show(b.src)
         elif st == "Set" and len(b.names) == 1:
             env2[b.names[0]] = "ID"
+            env2["#元:" + b.names[0]] = show(b.src)
         else:
             self.d(ERROR, "型", f"「{show(b.src)}」を (k, v) in … で回せません")
             for n in b.names:
@@ -710,40 +728,47 @@ class ProcChecker:
             self.ty(st.cond)
             c = st.cond
             state_cmp = (isinstance(c, Bin) and c.op in ("==", "!=") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
-                         and c.l.e.n in self.lookup_data and isinstance(c.r, Name))
-            # 「x.項目 == 状態」が成り立つ分岐の中では、その状態の確認が済んでいる。分岐の外へは持ち出さない
-            inside = self.state_guards | ({(self.lookup_data[c.l.e.n], c.l.n, c.r.n)} if state_cmp and c.op == "==" else set())
+                         and c.l.e.n in self.bindings and isinstance(c.r, Name))
+            fact = (self.bindings[c.l.e.n], c.l.n, c.r.n) if state_cmp else None
+            # 「x.項目 == 状態」が成り立つ分岐の中では、その x の状態の確認が済んでいる。分岐の外へは持ち出さない
+            inside = self.state_guards | ({fact} if state_cmp and c.op == "==" else set())
             outer, self.state_guards = self.state_guards, inside
+            outer_guarded, self.guarded = self.guarded, set(self.guarded)
             for inner in st.body:
                 if not isinstance(inner, (Return, If, SetField, Update, Request)):
                     self.d(ERROR, "型", "if の中に書けるのは、return・項目の更新・update・request・if だけです（let は外に書いてください）", st.line)
                     continue
                 self.stmt(inner, pos)
-            self.state_guards = outer
+            self.state_guards, self.guarded = outer, outer_guarded
             # 分岐がかならず return で終わるなら、成り立たなかったときだけ先へ進む。その確認は、あとの文へ引き継ぐ
-            if isinstance(st.body[-1], Return):
+            if st.body and isinstance(st.body[-1], Return):
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
                     self.guarded.add(self.exist_sets[c.e.n])
+                if isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index):
+                    self.guarded.add((c.e.d, show(c.e.e)))
                 if state_cmp and c.op == "!=":
-                    self.state_guards.add((self.lookup_data[c.l.e.n], c.l.n, c.r.n))
+                    self.state_guards.add(fact)
                 if (isinstance(c, Bin) and c.op in ("<=", "<", "==") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
-                        and c.l.e.n in self.lookup_data and isinstance(c.r, Num)):
-                    info.value_guards.append((self.lookup_data[c.l.e.n], c.l.n, c.op, c.r.v, pos))
+                        and c.l.e.n in self.bindings and isinstance(c.r, Num)):
+                    info.value_guards.append((self.lookup_data[c.l.e.n], c.l.n, c.op, c.r.v, pos, self.bindings[c.l.e.n]))
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):
                 t = self.ty(st.e)
                 self.env[st.name] = t
                 self.lookup_data[st.name] = st.e.d
+                self.bind_var(st.name)
                 info.exist_reads.add(st.e.d)
                 if st.absent is None:
                     self.d(QUESTION, "存在", f"{show(st.e)} が存在しないとき、どうしますか（else {{ return … }} が必要です）", st.line)
                 else:
                     self.check_return(st.absent)
-                    self.guarded.add(st.e.d)
+                    self.guarded.add((st.e.d, show(st.e.e)))
             else:
                 self._last_exist = None
                 t = self.ty(st.e)
                 self.env[st.name] = t
+                self.lookup_data.pop(st.name, None)
+                self.bindings.pop(st.name, None)
                 if isinstance(st.e, SetB) and self._last_exist:
                     self.exist_sets[st.name] = self._last_exist
         elif isinstance(st, Update):
@@ -757,6 +782,10 @@ class ProcChecker:
                 return
             self.ty(tgt, env2)
             info.field_reads.discard(f"{tgt.e.d}.{tgt.n}") if st.op == "=" else None
+            tf = next((f for f in self.ck.data[tgt.e.d].fields if f.name == tgt.n), None) if tgt.e.d in self.ck.data else None
+            if tf is not None and tf.type.kind == "名前":
+                self.d(ERROR, "遷移", f"update で状態の項目「{tgt.e.d}.{tgt.n}」は変えられません（遷移の確認ができないため。"
+                       "1件ずつ let で引き、元の状態を確かめてから変えてください）", st.line)
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             info.writes.add(f"{tgt.e.d}.{tgt.n}")
@@ -775,9 +804,12 @@ class ProcChecker:
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
-            if fld.type.kind == "名前" and isinstance(st.e, Name):
-                self.check_transition(data, st.f, st.e.n, st.line)
-                info.setfields.append((data, st.f, st.e.n, pos, st.var))
+            if fld.type.kind == "名前":
+                if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
+                    self.d(ERROR, "遷移", f"{data}.{st.f} は状態名で書いてください（「{show(st.e)}」では、どの遷移か確かめられません）", st.line)
+                    return
+                self.check_transition(data, st.f, st.e.n, st.line, st.var)
+                info.setfields.append((data, st.f, st.e.n, pos, self.bindings.get(st.var, st.var)))
         elif isinstance(st, Create):
             self.create(st)
         elif isinstance(st, Request):
@@ -793,7 +825,7 @@ class ProcChecker:
                     self.d(ERROR, "型", "for … { } の中に書けるのは、データを引く文と、要求だけです", st.line)
             self.env = saved
 
-    def check_transition(self, data, fname, dst, line):
+    def check_transition(self, data, fname, dst, line, var):
         sname = next(f.type.target for f in self.ck.data[data].fields if f.name == fname)
         decl = [(a, b) for (d, a, b) in self.proc.transitions if d == data and b == dst]
         if not decl:
@@ -801,7 +833,7 @@ class ProcChecker:
             return
         for a, b in decl:
             self.info.transitions.add((data, a, b))
-            if a != "(新規)" and (data, fname, a) not in self.state_guards:
+            if a != "(新規)" and (self.bindings.get(var, var), fname, a) not in self.state_guards:
                 self.d(ERROR, "遷移", f"{data} が「{a}」であることの確認（if … != {a} {{ return … }}、または if … == {a} {{ … }} の中）が、遷移の前にありません", line)
         for x, y, why in self.ck.states[sname].rejects:
             if y == dst and any(a == x for a, _ in decl):
@@ -847,15 +879,18 @@ class ProcChecker:
             elif vt != tok_of(f.type) and not (vt in ("Int", "Money") and tok_of(f.type) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{st.data}.{n} に型の違う値（{vt}）を入れています", st.line)
             self.check_range_fit(e, f.type, f"{st.data}.{n}", st.line)
-            if f.type.kind == "名前" and isinstance(e, Name):
-                self.check_transition_new(st.data, n, e.n, st.line)
+            if f.type.kind == "名前":
+                if isinstance(e, Name) and e.n in self.ck.variants and e.n not in self.env:
+                    self.check_transition_new(st.data, n, e.n, st.line)
+                else:
+                    self.d(ERROR, "遷移", f"{st.data} の新規作成の「{n}」は状態名で書いてください（「{show(e)}」では、どの遷移か確かめられません）", st.line)
         info.writes.add(st.data)
         info.new_ids.append(st.data)
         info.creates.append((st.data, {n: e.n for n, e in st.fields if isinstance(e, Name)}))
         self.created.add(st.name)
         self.env[st.name] = f"Rec:{st.data}"
         self.lookup_data[st.name] = st.data
-        self.guarded.add(st.data)
+        self.bind_var(st.name)
 
     def check_transition_new(self, data, fname, dst, line):
         decl = [x for x in self.proc.transitions if x[0] == data and x[1] == "(新規)" and x[2] == dst]
