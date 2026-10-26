@@ -20,6 +20,7 @@ class Type:
     unit: Optional[str] = None
     optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
     chars: Optional[tuple] = None  # 文字列の使える文字。(下限, 上限) のコードポイントの組を、小さい順につないだもの
+    parts: Optional[tuple] = None  # 合成型の成分。((名前, 型), …)。target は論理型の名前
 
 
 @dataclass
@@ -163,6 +164,7 @@ class Program:
     triggers: list[Trigger] = field(default_factory=list)
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
+    composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
 
 
 # ---- 式 ----
@@ -210,6 +212,14 @@ class Index:
 class Call:
     n: str
     args: list
+
+
+@dataclass
+class Make:
+    """合成型の値を、型名と成分をまとめて作る式（点 { x: 1, y: 2 }）"""
+    n: str
+    fields: list  # [(成分名, 式)]
+    line: int = 0
 
 
 @dataclass
@@ -345,6 +355,8 @@ def show_type(t: Type) -> str:
         return f"{t.target} を参照"
     if k == "名前":
         return t.target
+    if k == "合成":
+        return f"{t.target}（{'、'.join(f'{n}: {show_type(pt)}' for n, pt in t.parts)}）"
     if k == "写像":
         return f"{t.key} → {show_type(t.value)}"
     if k == "集合":
@@ -369,6 +381,8 @@ def show(e) -> str:
         return f"{e.d}[{show(e.e)}]"
     if isinstance(e, Call):
         return f"{e.n}({', '.join(show(a) for a in e.args)})"
+    if isinstance(e, Make):
+        return f"{e.n} {{ {', '.join(f'{n}: {show(x)}' for n, x in e.fields)} }}"
     if isinstance(e, Bin):
         return f"{show(e.l)} {e.op} {show(e.r)}"
     if isinstance(e, Pred):

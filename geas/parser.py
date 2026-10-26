@@ -11,6 +11,10 @@ from .lexer import Tok, lex
 BUILTIN_TYPE_NAMES = {"id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref"}
 
 
+# 合成型の成分に使える型の種類（値の型）
+COMPONENT_KINDS = ("ID", "整数", "金額", "割合", "文字列", "日時", "バイト列", "合成")
+
+
 class ParseError(Exception):
     def __init__(self, msg: str, line: int):
         super().__init__(f"{line}行目: {msg}")
@@ -33,6 +37,7 @@ class Parser:
         self.i = 0
         self.ltypes: dict[str, Type] = {}
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
+        self.composites: set[str] = set()  # 合成型の名前（Make の見分けに使う）
 
     # ---- 部品 ----
     def peek(self, k=0) -> Tok:
@@ -131,6 +136,7 @@ class Parser:
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
+        p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         self.apply_stores(p, stores)
         self.add_sync_state(p)
         return p
@@ -177,12 +183,45 @@ class Parser:
             raise ParseError(f"「{name}」は組み込みの型の名前なので、論理型の名前には使えません", line)
         if name in self.ltypes:
             raise ParseError(f"論理型「{name}」が2つ以上あります", line)
+        if self.is_("{"):
+            self.ltypes[name] = self.composite(name, line)
+            self.composites.add(name)
+            return
         self.expect("=")
         self.in_ltype = True
         t = self.type()
         self.in_ltype = False
         self.end_line()
         self.ltypes[name] = t
+
+    def composite(self, name, line) -> Type:
+        """ltype 名前 { 成分: 型 … }：成分は、名前をつけた論理型か約束のない組み込みの型。成分はすべて必須"""
+        self.expect("{")
+        parts = []
+
+        def one():
+            cl = self.peek().line
+            pn = self.name()
+            self.expect(":")
+            pt = self.type()
+            if pt.kind not in COMPONENT_KINDS:
+                raise ParseError(f"合成型「{name}」の成分「{pn}」に、この型は使えません（使えるのは値の型：{'・'.join(COMPONENT_KINDS)}）", cl)
+            if any(pn == x for x, _ in parts):
+                raise ParseError(f"合成型「{name}」に成分「{pn}」が2つ以上あります", cl)
+            parts.append((pn, pt))
+
+        if self.peek().kind == "NL":  # 1行ずつ書く形
+            self.end_line()
+            while not self.accept("}"):
+                one()
+                self.end_line()
+        else:  # { 成分: 型, 成分: 型 } と1行で書く形
+            self.comma_list(one)
+            self.expect("}")
+            self.end_line()
+        if not parts:
+            raise ParseError(f"合成型「{name}」に成分がありません", line)
+        return Type("合成", target=name, parts=tuple(parts))
 
     # ---- データ ----
     def data(self, line) -> Data:
@@ -649,6 +688,12 @@ class Parser:
         if t.kind == "NAME" and t.val == "null":
             self.next()
             return Null()
+        if t.kind == "NAME" and t.val in self.composites and self.is_("{", 1) and self.peek(2).kind == "NAME" and self.is_(":", 3):
+            self.next()
+            self.next()
+            fields = self.comma_list(lambda: (self.name(), (self.expect(":"), self.expr())[1]))
+            self.expect("}")
+            return Make(t.val, fields, t.line)
         if t.kind == "NAME":
             self.next()
             if self.accept("("):

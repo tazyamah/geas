@@ -41,6 +41,8 @@ def tok_of(t: Type) -> str:
         return "Ratio"
     if k == "名前":
         return f"State:{t.target}"
+    if k == "合成":
+        return f"Comp:{t.target}"
     if k == "写像":
         return f"Map:{t.key}:{tok_of(t.value)}"
     if k == "集合":
@@ -129,6 +131,7 @@ class Checker:
         self.results = {r.name: r for r in prog.results}
         self.effects = {e.name: e for e in prog.effects}
         self.parts = {x.name: x for x in prog.parts}
+        self.comps = {c.target: c for c in prog.composites}
         self.part_types: dict[int, str] = {}  # 保証の式 → 型トークン（生成で使う）
         self.procs = {x.name: x for x in prog.processes}
         self.triggers = {x.name: x for x in prog.triggers}
@@ -182,8 +185,10 @@ class Checker:
         """生成してよいか。問いが残っている（仕様が決まっていない）うちは生成しない"""
         return not any(x.level in (ERROR, QUESTION) for x in self.diags)
 
-    def check_type(self, t: Type, where: str):
-        """型に出てくる名前（参照先・状態・写像のキー）が定義されているか"""
+    def check_type(self, t: Type, where: str, comp_ok: bool = False):
+        """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
+        if t.kind == "合成" and not comp_ok:
+            self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目と処理の入力・slot にだけ使えます")
         if t.kind == "参照" and t.target not in self.data:
             self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です")
         if t.kind == "名前" and t.target not in self.states:
@@ -224,6 +229,7 @@ class Checker:
         p = self.p
         # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ネクサス・出来事は同じ名前の空間に並ぶ
         tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events, p.parts) for x in xs]
+        tops += [c.target for c in p.composites]
         self.check_unique(tops, "全体", "定義の名前")
         self.check_unique([e.name for e in p.effects], "全体", "外部作用")
         self.check_unique([v for s in p.states for v in [s.initial, *s.middle, *s.final] if v], "全体", "状態名")
@@ -243,7 +249,7 @@ class Checker:
             kind = "処理" if isinstance(x, Process) else "問い合わせ"
             self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
             for n, t in [*x.inputs, *x.refs]:
-                self.check_type(t, f"{kind} {x.name} / {n}")
+                self.check_type(t, f"{kind} {x.name} / {n}", comp_ok=isinstance(x, Process))
         for tg in p.triggers:
             for n, t in tg.params:
                 self.check_type(t, f"トリガ {tg.name} / {n}")
@@ -252,7 +258,7 @@ class Checker:
                 self.d(ERROR, "データ", f"データ {dt.name}", "「ID 一意」の項目（キー）がありません")
             self.check_unique([f.name for f in dt.fields], f"データ {dt.name}", "項目")
             for f in dt.fields:
-                self.check_type(f.type, f"{dt.name}.{f.name}")
+                self.check_type(f.type, f"{dt.name}.{f.name}", comp_ok=True)
         for s in self.p.states:
             if not s.initial or not (s.final or s.endless):
                 self.d(ERROR, "状態", f"状態 {s.name}", "初期と終了の状態は必須です（行き来を繰り返す状態は「終了 なし」と書きます）")
@@ -605,6 +611,8 @@ def names_in(e) -> set:
         return names_in(e.l) | names_in(e.r)
     if isinstance(e, Tuple):
         return set().union(*map(names_in, e.items))
+    if isinstance(e, Make):
+        return set().union(*(names_in(x) for _, x in e.fields)) if e.fields else set()
     return set()
 
 
@@ -699,9 +707,17 @@ class ProcChecker:
             if self.ty(e.e, env) != "ID":
                 self.d(ERROR, "型", f"{e.d}[ ] の中は ID である必要があります")
             return f"Rec:{e.d}"
+        if isinstance(e, Make):
+            return self.make(e, env)
         if isinstance(e, Attr):
             base = e.e
             bt = self.ty(base, env)
+            if bt.startswith("Comp:"):  # 合成型の成分。入れ子でも、成分は平らに読める
+                pt = next((t for n, t in ck.comps[bt[5:]].parts if n == e.n), None)
+                if pt is None:
+                    self.d(ERROR, "名前", f"合成型 {bt[5:]} に成分「{e.n}」がありません")
+                    return "?"
+                return tok_of(pt)
             if not bt.startswith("Rec:"):
                 self.d(ERROR, "型", f"「{show(e)}」: 「.{e.n}」はデータにしか使えません")
                 return "?"
@@ -809,6 +825,47 @@ class ProcChecker:
             return "Bool"
         raise ValueError(e)
 
+    def make(self, e: Make, env) -> str:
+        """合成型の値を作る式。成分はすべて、過不足なく、型と範囲が合う値で書く"""
+        ct = self.ck.comps[e.n]
+        given = dict(e.fields)
+        for n, _ in e.fields:
+            if sum(1 for x, _ in e.fields if x == n) > 1:
+                self.d(ERROR, "名前", f"{e.n} の成分「{n}」が2つ以上あります", e.line)
+        for pn, _ in ct.parts:
+            if pn not in given:
+                self.d(ERROR, "項目", f"{e.n} の成分「{pn}」がありません（成分はすべて書きます）", e.line)
+        for n, x in e.fields:
+            pt = next((t for pn, t in ct.parts if pn == n), None)
+            if pt is None:
+                self.d(ERROR, "名前", f"合成型 {e.n} に成分「{n}」がありません", e.line)
+                self.ty(x, env)
+                continue
+            vt = self.ty(x, env)
+            if vt == "Rational":
+                self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", e.line)
+            elif vt != tok_of(pt) and not (isinstance(x, Num) and tok_of(pt) in ("Int", "Money")) and vt != "?":
+                self.d(ERROR, "型", f"{e.n}.{n} に型の違う値（{vt}）を入れています", e.line)
+            else:
+                self.check_component_fit(x, pt, f"{e.n}.{n}", e.line)
+        return f"Comp:{e.n}"
+
+    def check_component_fit(self, x, pt: Type, where: str, line: int):
+        """成分の範囲・長さ・文字に、書く値が収まると示せるか。示せるのは、数の区間と、宣言のある入力・項目・部品の戻り値"""
+        if pt.kind in ("整数", "金額") and pt.range:
+            iv, r = self.interval(x), pt.range
+            if (r.lo is not None and (iv[0] is None or iv[0] < r.lo)) or (r.hi is not None and (iv[1] is None or iv[1] > r.hi)):
+                self.d(ERROR, "範囲", f"{where} に書く値の範囲が、成分の範囲に収まると示せません"
+                       f"（書く値 {iv_show(iv)} ／ 成分 {show_range(r).strip()}）", line)
+        elif pt.kind == "文字列":
+            self.check_text_fit(x, pt, where, line)
+        elif pt.kind in ("割合", "バイト列") and pt.range:
+            src = self.decl_type(x, self.env)
+            if src is None or src.kind != pt.kind or src.range is None or not (
+                    (pt.range.lo is None or (src.range.lo is not None and src.range.lo >= pt.range.lo))
+                    and (pt.range.hi is None or (src.range.hi is not None and src.range.hi <= pt.range.hi))):
+                self.d(ERROR, "範囲", f"{where} は範囲が決まっているので、同じ範囲に収まる宣言のある入力・項目を、そのまま書いてください", line)
+
     def note_exist_set(self, e):
         """{ k | (k, v) in 元, D[k] is absent } の形なら、「元のキーがすべて D にあるか」を表す集合として覚える"""
         c = e.cond
@@ -867,6 +924,9 @@ class ProcChecker:
                     else e.e.d if isinstance(e.e, Index) else None)
             if data in self.ck.data:
                 return next((f.type for f in self.ck.data[data].fields if f.name == e.n), None)
+            bt = self.decl_type(e.e, env) if isinstance(e.e, (Name, Attr)) else None
+            if bt is not None and bt.kind == "合成":
+                return next((t for n, t in bt.parts if n == e.n), None)
         return None
 
     def range_env(self, b: Binder, env):
@@ -894,6 +954,9 @@ class ProcChecker:
         if isinstance(e, Attr):
             data = (self.lookup_data.get(e.e.n) if isinstance(e.e, Name)
                     else e.e.d if isinstance(e.e, Index) else None)
+            if data not in self.ck.data:  # 合成型の成分：宣言の範囲
+                t = self.decl_type(e, env)
+                return (None, None) if t is None else iv_of(t)
             lo, hi = self.field_iv(data, e.n)
             if isinstance(e.e, Name) and e.e.n in self.bindings:
                 known = self.facts.get((self.bindings[e.e.n], e.n))
