@@ -217,6 +217,12 @@ class Checker:
                 self.d(ERROR, "型", where, f"部品の引数と戻り値に使えるのは数・割合・ID・文字列・日時です（{n}）")
         pc = ProcChecker(self, Process(pt.name))
         pc.where = where
+        if pt.body is not None:  # convert：式が定義。式の型が戻り値の型と合うことを確かめる（範囲は呼ぶたびに生成コードで確かめる）
+            b = pc.ty(pt.body, {n: tok_of(t) for n, t in pt.params})
+            if b not in (tok_of(pt.ret), "?") and not (isinstance(pt.body, Num) and tok_of(pt.ret) in ("Int", "Money")):
+                self.d(ERROR, "型", where, f"変換の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
+            self.part_types.update(pc.info.types)
+            return
         env = {n: tok_of(t) for n, t in [*pt.params, ("result", pt.ret)]}
         g = pc.ty(pt.guarantee, env)
         if g not in ("Bool", "?"):
@@ -798,7 +804,8 @@ class ProcChecker:
                 at = self.ty(a, env)
                 if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
                     self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
-            self.info.parts.add(e.n)
+            if pt.body is None:  # convert は生成コードの中で計算するので、外の部品は要らない
+                self.info.parts.add(e.n)
             return tok_of(pt.ret)
         if isinstance(e, Call):
             if e.n != "丸め" or len(e.args) != 3:

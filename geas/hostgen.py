@@ -251,7 +251,7 @@ def host_source(ck: Checker) -> str:
     # 処理の呼び出し
     w("fn 結果を書く(名前: &str, 引数: Vec<String>, 中身: String, 外部: Vec<String>, 保存: &保存) -> String {\n"
       '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 中身, 外部.join(","), 保存を書く(保存))\n}')
-    has_parts = bool(p.parts)
+    has_parts = any(pt.body is None for pt in p.parts)
     w(f"fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存{', 部品: &dyn 部品群' if has_parts else ''}) -> Result<String, String> {{\n    match 名前 {{")
     for proc in p.processes:
         info = ck.infos[proc.name]

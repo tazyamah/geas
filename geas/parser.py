@@ -130,6 +130,8 @@ class Parser:
                 p.effects.append(self.effect_decl(line))
             elif kw == "part":
                 p.parts.append(self.part(line))
+            elif kw == "convert":
+                p.parts.append(self.convert(line))
             elif kw == "invariant":
                 p.invariants.append(self.invariant(line))
             elif kw == "deed":
@@ -436,6 +438,19 @@ class Parser:
         g = self.expr()
         self.end_line()
         return Part(name, params, ret, g, line)
+
+    def convert(self, line) -> Part:
+        """convert 名前(引数: 型) -> 型 = 式：論理型どうしの一方通行の変換。定義が geas の式なので、外の実装も保証も要らない"""
+        name = self.name()
+        self.expect("(")
+        params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
+        self.expect(")")
+        self.expect("→")
+        ret = self.type()
+        self.expect("=")
+        body = self.expr()
+        self.end_line()
+        return Part(name, params, ret, None, line, body)
 
     def invariant(self, line) -> Invariant:
         d = self.name()

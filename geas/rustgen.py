@@ -424,8 +424,12 @@ class Gen:
         self.w("/// 部品の保証に違反した。処理は書込を返す前に止まり、保存は変わらない\n"
                "pub fn 保証違反(部品: &str, 保証: &str) -> ! {\n"
                '    panic!("部品「{}」が保証に違反しました: {}", 部品, 保証)\n}')
+        if all(pt.body is not None for pt in self.p.parts):
+            return
         self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait 部品群 {")
         for pt in self.p.parts:
+            if pt.body is not None:
+                continue
             ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
             self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
         self.w("}")
@@ -552,7 +556,15 @@ class ProcGen:
         for (n, t), a in zip(pt.params, e.args):
             lines.append(f"let {n}: {local(t)} = {self.rx(a)};")
             args.append(self.conv(t, n, f"{e.n}の{n}") if t.kind in ("整数", "金額") else f"{n}.clone()")
-        call = f"部品.{e.n}({', '.join(args)})"
+        self.info.types.update(self.ck.part_types)
+        if pt.body is not None:  # convert：引数を局所に束ねて、定義の式をその場で計算する
+            saved = dict(self.scope)
+            for n, t in pt.params:
+                self.scope[n] = ("local", tok_of(t))
+            call = self.rx(pt.body)
+            self.scope = saved
+        else:
+            call = f"部品.{e.n}({', '.join(args)})"
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
@@ -562,6 +574,8 @@ class ProcGen:
             lines.append(f'if let Err(m) = 範囲検査("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
             lines.append(f'if let Err(m) = 文字種検査("result", &result, {chars_rust(pt.ret.chars)}) {{ 保証違反("{e.n}", &m) }}')
+        if pt.body is not None:
+            return "{ " + " ".join(lines) + " result }"
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))
