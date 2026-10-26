@@ -25,17 +25,14 @@
 ## 使い方（試作の Python 版。最終的にはすべて Rust にする）
 
 ```
-python -m geas check examples/shop.geas                          # 検査
-python -m geas spec examples/shop.geas                           # 仕様書を生成
-python -m geas rust examples/shop.geas -o examples/shop_rust     # Rust を生成
-python -m geas compare examples/shop.geas examples/shop_plan.md  # 計画書と突合（具体例も実行）
-python -m pytest tests                                           # テスト
+python -m geas check アプリ.geas                  # 検査
+python -m geas spec アプリ.geas                   # 仕様書を生成
+python -m geas rust アプリ.geas -o 出力先          # Rust を生成
+python -m geas compare アプリ.geas 計画書.md       # 計画書と突合（具体例も実行）
+python -m pytest tests                            # テスト
 ```
 
-## 例
-
-- [お店](examples/shop.geas)：短い見本です（計画書は [examples/shop_plan.md](examples/shop_plan.md)）。
-- ひとり用つぶやき：会話から計画書を作り、コード、Rust/WASM、画面まで試した例です。[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
+ひとり用つぶやきの例（会話から計画書を作り、コード、Rust/WASM、画面まで試したもの）は、[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
 
 ## 状態
 

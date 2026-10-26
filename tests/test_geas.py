@@ -15,7 +15,7 @@ from geas.rustgen import generate
 from geas.spec import build
 
 ROOT = Path(__file__).parent.parent
-EX = ROOT / "examples"
+EX = ROOT / "tests" / "fixtures" / "shop"
 CODE = (EX / "shop.geas").read_text()
 PLAN = (EX / "shop_plan.md").read_text()
 needs_cargo = pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo が無い")
