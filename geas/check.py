@@ -732,6 +732,8 @@ class ProcChecker:
             fact = (self.bindings[c.l.e.n], c.l.n, c.r.n) if state_cmp else None
             # 「x.項目 == 状態」が成り立つ分岐の中では、その x の状態の確認が済んでいる。分岐の外へは持ち出さない
             inside = self.state_guards | ({fact} if state_cmp and c.op == "==" else set())
+            if not st.body:
+                self.d(ERROR, "型", "if の中が空です", st.line)
             outer, self.state_guards = self.state_guards, inside
             outer_guarded, self.guarded = self.guarded, set(self.guarded)
             for inner in st.body:

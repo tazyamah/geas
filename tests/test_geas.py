@@ -502,3 +502,8 @@ def test_状態は状態名で変える():
 def test_新規作成の状態は状態名で書く():
     ck = chk(mutate(CODE, "状態: 受付 }", "状態: 顧客ID }"))
     assert any("状態名で書いてください" in m for m in msgs(ck, ERROR))
+
+
+def test_空の_if_はエラーで止まる():
+    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n"))
+    assert any("if の中が空" in m for m in msgs(ck, ERROR))
