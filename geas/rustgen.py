@@ -172,6 +172,7 @@ class Gen:
         self.records()
         self.writes_enum()
         self.effects()
+        self.parts()
         self.results()
         for proc in self.p.processes:
             ProcGen(self, proc).emit()
@@ -371,6 +372,19 @@ class Gen:
                 self.w(f"    {d}_{f}(String, {field_rust(t)}),")
         self.w("}\n")
 
+    def parts(self):
+        """外から足す部品。保証は呼んだ直後に確かめる（ProcGen.rx）。違反は、保存へ書く前に処理を止める"""
+        if not self.p.parts:
+            return
+        self.w("/// 部品の保証に違反した。処理は書込を返す前に止まり、保存は変わらない\n"
+               "pub fn 保証違反(部品: &str, 保証: &str) -> ! {\n"
+               '    panic!("部品「{}」が保証に違反しました: {}", 部品, 保証)\n}')
+        self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait 部品群 {")
+        for pt in self.p.parts:
+            ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
+            self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
+        self.w("}")
+
     def effects(self):
         self.w("#[derive(Clone, Debug, PartialEq)]\npub enum 外部作用 {")
         for e in self.p.effects:
@@ -483,6 +497,28 @@ class ProcGen:
             return f"保存.{e.d}[&({self.rx(e.e)})]"
         raise ValueError(e)
 
+    def part_call(self, e: Call) -> str:
+        """部品を呼び、戻り値が型の範囲と保証に合うかをその場で確かめる。違反は保証違反（処理を止める）"""
+        pt = self.ck.parts[e.n]
+        local = lambda t: "i128" if t.kind in ("整数", "金額") else rust_type(t)
+        lines, args = [], []
+        for (n, t), a in zip(pt.params, e.args):
+            lines.append(f"let {n}: {local(t)} = {self.rx(a)};")
+            args.append(self.conv(t, n, f"{e.n}の{n}") if t.kind in ("整数", "金額") else f"{n}.clone()")
+        call = f"部品.{e.n}({', '.join(args)})"
+        lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
+        if pt.ret.kind in ("整数", "金額") and pt.ret.range:
+            r = pt.ret.range
+            lines.append(f'if let Err(m) = 範囲検査("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
+        saved = dict(self.scope)
+        for n, t in [*pt.params, ("result", pt.ret)]:
+            self.scope[n] = ("local", tok_of(t))
+        self.info.types.update(self.ck.part_types)
+        cond = self.rx(pt.guarantee)
+        self.scope = saved
+        lines.append(f'if !({cond}) {{ 保証違反("{e.n}", "{show(pt.guarantee)}") }}')
+        return "{ " + " ".join(lines) + " result }"
+
     def src(self, e) -> str:
         """読むだけの場所。無いかもしれない入力は、検査で確かめてあるので中身を借りる"""
         if isinstance(e, Name) and e.n in self.null_inputs and self.scope.get(e.n, ("",))[0] == "input":
@@ -526,6 +562,8 @@ class ProcGen:
         if isinstance(e, Call):
             if e.n in CONVERSIONS:  # 整数 ⇄ 金額 の変換は、意味の型を変えるだけ（物理の値はそのまま）
                 return self.rx(e.args[0])
+            if e.n in self.ck.parts:
+                return self.part_call(e)
             return f"{e.args[1].n}({self.rx(e.args[0])})"
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
@@ -730,7 +768,8 @@ class ProcGen:
             g.w(line)
         g.w("        Ok(())\n    }\n}")
         g.w(f"pub struct {n}出力 {{\n    pub 結果: {self.rdef.name},\n    pub 書込: Vec<書込>,\n    pub 外部: Vec<外部作用>,\n}}")
-        g.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> {n}出力 {{")
+        extra = ", 部品: &dyn 部品群" if info.parts else ""
+        g.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力{extra}) -> {n}出力 {{")
         g.w("    let mut 書込列: Vec<書込> = Vec::new();\n    let mut 外部列: Vec<外部作用> = Vec::new();")
         self.null_inputs = {name for name, t in proc.inputs if t.optional}
         for name, t in proc.inputs:

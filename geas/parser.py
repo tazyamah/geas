@@ -269,11 +269,16 @@ class Parser:
 
     def part(self, line) -> Part:
         name = self.name()
-        raw = []
-        while self.peek().kind not in ("NL", "EOF"):
-            raw.append(self.next().val)
+        self.expect("(")
+        params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
+        self.expect(")")
+        self.expect("→")
+        ret = self.type()
+        if not self.accept("guarantee"):
+            raise self.err(f"部品 {name} に保証がありません（guarantee 式 を書きます。例：guarantee result >= x）")
+        g = self.expr()
         self.end_line()
-        return Part(name, " ".join(raw), line)
+        return Part(name, params, ret, g, line)
 
     def invariant(self, line) -> Invariant:
         d = self.name()

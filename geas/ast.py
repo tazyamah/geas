@@ -67,8 +67,11 @@ class EffectDecl:
 
 @dataclass
 class Part:
+    """外から足す部品。保証は、呼んだ直後に戻り値（result）と引数を使って確かめる式"""
     name: str
-    raw: str
+    params: list  # [(名前, 型)]
+    ret: "Type"
+    guarantee: object
     line: int = 0
 
 

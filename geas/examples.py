@@ -111,6 +111,8 @@ def example_code(ck: Checker, row: dict) -> str:
         if f"新{d}ID" not in ctx:
             raise ExampleError(f"前提に 採番「新{d}ID」がありません")
         fields.append(f'新{d}ID: "{ctx[f"新{d}ID"]}".to_string()')
+    if info and info.parts:
+        raise ExampleError(f"処理 {proc.name} は部品（{', '.join(sorted(info.parts))}）を呼ぶので、具体例では動かせません（部品の実装はアプリが持つため）")
     L.append(f"        let ctx = {proc.name}文脈 {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
     ins = []
