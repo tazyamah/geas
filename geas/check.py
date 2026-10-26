@@ -1007,6 +1007,11 @@ class ProcChecker:
                 if known is not None and (lo is None or known > lo):
                     lo = known
             return (lo, hi)
+        if isinstance(e, Bin) and e.op == "%":  # 負でも 0 以上 n 未満（rem_euclid）
+            return (0, e.r.v - 1)
+        if isinstance(e, Bin) and e.op == "/":  # 正の定数で割る切り捨て：区間の端をそのまま割る
+            lo, hi = self.interval(e.l, env)
+            return (None if lo is None else lo // e.r.v, None if hi is None else hi // e.r.v)
         if isinstance(e, Bin) and e.op in ("+", "-", "*"):
             a, b = self.interval(e.l, env), self.interval(e.r, env)
             return iv_add(a, b) if e.op == "+" else iv_add(a, iv_neg(b)) if e.op == "-" else iv_mul(a, b)
@@ -1087,6 +1092,11 @@ class ProcChecker:
             self.d(ERROR, "型", f"「{show(e)}」: 同じ種類の数どうしで計算してください"
                    + ("（整数と金額は、そのままでは足し引きできません）" if mixed else ""))
             return "?"
+        if e.op in ("/", "%"):
+            if a != "Int":
+                self.d(ERROR, "型", f"「{show(e)}」: 割り算できるのは整数だけです（{a}）")
+                return "?"
+            return "Int"
         if e.op == "*":
             if a == "Money" and b == "Money":
                 self.d(ERROR, "型", f"「{show(e)}」: 金額どうしは掛けられません（金額 × 整数 か 金額 × 割合 にしてください）")
