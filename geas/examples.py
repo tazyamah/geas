@@ -44,7 +44,9 @@ def lit(t: Type, text: str, ck: Checker) -> str:
             raise ExampleError(f"割合は 分子/分母 で書きます（「{text}」）")
         return f"有理 {{ 分子: {a.strip()}, 分母: {b.strip()} }}"
     if k == "名前":
-        if text not in [x for s in ck.p.states if s.name == t.target for x in [s.initial, *s.middle, *s.final]]:
+        states = [x for s in ck.p.states if s.name == t.target for x in [s.initial, *s.middle, *s.final]]
+        text = ck.p.resolve(text, states)
+        if text not in states:
             raise ExampleError(f"状態 {t.target} に「{text}」はありません")
         return f"{t.target}::{text}"
     if k == "写像":
@@ -71,8 +73,9 @@ def kv(text: str) -> dict[str, str]:
 
 
 def example_code(ck: Checker, row: dict) -> str:
-    q = ck.queries.get(row["処理"].strip())
-    proc = q or ck.procs.get(row["処理"].strip())
+    pname = ck.p.resolve(row["処理"], [*ck.queries, *ck.procs])
+    q = ck.queries.get(pname)
+    proc = q or ck.procs.get(pname)
     if proc is None:
         raise ExampleError(f"処理「{row['処理']}」がコードにありません")
     info = ck.infos[proc.name] if q is None else None
@@ -81,13 +84,14 @@ def example_code(ck: Checker, row: dict) -> str:
     for item in split_top(row.get("前提", ""), ";"):
         if "(" in item.split("=")[0]:  # データ(ID, 項目=値, …)
             dname, _, rest = item.partition("(")
-            dname = dname.strip()
+            dname = ck.p.resolve(dname, ck.data)
             if dname not in ck.data:
                 raise ExampleError(f"前提のデータ「{dname}」がコードにありません")
             args = split_top(rest.rstrip().rstrip(")"), ",")
             key = ck.key_field(dname)
+            fnames = [f.name for f in ck.data[dname].fields]
             vals = {key.name: args[0]}
-            vals.update(kv(",".join(args[1:])) if len(args) > 1 else {})
+            vals.update({ck.p.resolve(k, fnames): v for k, v in kv(",".join(args[1:])).items()} if len(args) > 1 else {})
             fields = []
             for f in ck.data[dname].fields:
                 if f.type.optional and vals.get(f.name, "null").strip() == "null":  # 書かないか null なら null
@@ -103,19 +107,22 @@ def example_code(ck: Checker, row: dict) -> str:
             L.append(f'        保存.{dname}.insert("{args[0]}".to_string(), {dname} {{ {", ".join(fields)} }});')
         elif item:
             ctx.update(kv(item))
+    ctx = {ck.p.resolve(k, [n for n, _ in proc.refs]): v for k, v in ctx.items()}
     fields = []
     for name, t in proc.refs:
         if name not in ctx:
             raise ExampleError(f"前提に 参照「{name}」がありません")
         fields.append(f"{name}: {lit(t, ctx[name], ck)}")
     for d in sorted(set(info.new_ids)) if info else []:
-        if f"新{d}ID" not in ctx:
-            raise ExampleError(f"前提に 採番「新{d}ID」がありません")
-        fields.append(f'新{d}ID: "{ctx[f"新{d}ID"]}".to_string()')
+        key = next((k for k in (f"新{d}ID", f"新{ck.p.show_names(d)}ID") if k in ctx), None)
+        if key is None:
+            raise ExampleError(f"前提に 採番「新{ck.p.show_names(d)}ID」がありません")
+        fields.append(f'新{d}ID: "{ctx[key]}".to_string()')
     if info and info.parts:
         raise ExampleError(f"処理 {proc.name} は部品（{', '.join(sorted(info.parts))}）を呼ぶので、具体例では動かせません（部品の実装はアプリが持つため）")
     L.append(f"        let ctx = {proc.name}文脈 {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
+    given = {ck.p.resolve(k, [n for n, _ in proc.inputs]): v for k, v in given.items()}
     ins = []
     for name, t in proc.inputs:
         if name not in given:
@@ -180,7 +187,8 @@ def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bo
     (dest / "src" / "bin" / "plan_examples.rs").write_text(runner_src)
 
 
-def run_crate(dest: Path) -> dict[str, tuple[str, str, str]]:
+def run_crate(dest: Path, show=lambda s: s) -> dict[str, tuple[str, str, str]]:
+    """実行して結果を集める。show は、コードの名前を人の書く名前（表示名）にそろえる（計画と比べるため）"""
     if shutil.which("cargo") is None:
         raise ExampleError("cargo が無いので具体例を実行できません")
     r = subprocess.run(["cargo", "run", "--quiet", "--offline", "--bin", "plan_examples"], cwd=dest,
@@ -191,7 +199,7 @@ def run_crate(dest: Path) -> dict[str, tuple[str, str, str]]:
     for line in r.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) == 4:
-            out[parts[0]] = (parts[1], parts[2], parts[3])
+            out[parts[0]] = (show(parts[1]), show(parts[2]), show(parts[3]))
     return out
 
 

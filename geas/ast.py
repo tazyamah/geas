@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """構文木。"""
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -171,7 +172,27 @@ class Program:
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
+    ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
+
+    def resolve(self, text: str, names) -> str:
+        """人が書いた名前（表示名でも、コードの名前でもよい）を、候補の中のコードの名前にする。無ければそのまま返す"""
+        names = list(names)
+        text = text.strip()
+        if text in names:
+            return text
+        for n in names:
+            ls = self.labels.get(n, {})
+            if text in (ls.get("ja"), ls.get("")):
+                return n
+        return text
+
+    def show_names(self, text: str) -> str:
+        """人に見せる文字列の中の名前を表示名（日本語、無ければ既定）に置き換える。生成する Rust には使わない"""
+        if not self.labels:
+            return text
+        table = {n: ls.get("ja") or ls.get("") for n, ls in self.labels.items() if ls.get("ja") or ls.get("")}
+        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", lambda m: table.get(m.group(0), m.group(0)), text)
 
 
 # ---- 式 ----

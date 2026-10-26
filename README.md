@@ -34,7 +34,9 @@ python -m pytest tests                            # テスト
 
 ひとり用つぶやきの例（会話から計画書を作り、コード、Rust/WASM、画面まで試したもの）は、[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
 
-## 書き方（キーワードは英語、名前は日本語のまま）
+## 書き方（キーワードと名前は半角英数。日本語の表示名は `///` で付ける）
+
+名前の規則は [docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) の「名前の書き方」。以下の例は、書き方の説明のため日本語の名前を使っている（実際の検査は通らない）。お店の例は `tests/fixtures/shop/shop.geas`。
 
 ```
 ltype 数量 = int 1..99                                    // 論理型：範囲や組み合わせは、必ず名前を付けてから使う（使う場所より前に書く）

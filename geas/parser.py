@@ -126,9 +126,7 @@ class Parser:
         self.skip_nl()
         while self.peek().kind != "EOF":
             line = self.peek().line
-            doc = self.peek().doc
             kw = self.name()
-            declared = self.peek().val
             if kw == "entity":
                 p.data.append(self.data(line))
             elif kw == "data":
@@ -161,9 +159,8 @@ class Parser:
                 p.events.append(self.event(line))
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
-            if doc:
-                p.labels[declared] = parse_labels(doc)
             self.skip_nl()
+        p.ltype_names = list(self.ltypes)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
@@ -961,5 +958,30 @@ class Parser:
         return Trigger(name, params, causes, line)
 
 
+# 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
+DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow",
+                 "trigger", "query", "event", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
+
+
+def collect_labels(toks: list[Tok]) -> dict:
+    """説明コメント（///）の付いた名前の表示名。宣言のキーワードに付いたものは次の名前に、それ以外は付いた名前そのものに付く。
+    同じ名前に別の表示名を付けると、仕様書でどちらか分からなくなるので、エラーにする"""
+    labels: dict[str, dict] = {}
+    for i, t in enumerate(toks):
+        if not t.doc:
+            continue
+        target = toks[i + 1] if t.kind == "NAME" and t.val in DECL_KEYWORDS and i + 1 < len(toks) else t
+        if target.kind != "NAME":
+            raise ParseError("説明コメント（///）は名前の前に書きます", t.line)
+        new = parse_labels(t.doc)
+        old = labels.setdefault(target.val, new)
+        if old != new:
+            raise ParseError(f"名前「{target.val}」に別の表示名が付いています（同じ名前の表示名は1つにします）", t.line)
+    return labels
+
+
 def parse(src: str) -> Program:
-    return Parser(lex(src)).program()
+    toks = lex(src)
+    p = Parser(toks).program()
+    p.labels = collect_labels(toks)
+    return p

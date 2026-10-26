@@ -31,6 +31,7 @@ def lex(src: str) -> list[Tok]:
             docs.clear()
         toks.append(tok)
 
+    join_next = False
     depth = 0  # ( ) の中の改行は式の続き（長い式を折り返せる）
 
     def nl():
@@ -40,7 +41,10 @@ def lex(src: str) -> list[Tok]:
     while i < n:
         c = src[i]
         if c == "\n":
-            nl()
+            if join_next:
+                join_next = False
+            else:
+                nl()
             line += 1
             i += 1
         elif c in SPACE:
@@ -51,6 +55,8 @@ def lex(src: str) -> list[Tok]:
                 j += 1
             if src.startswith("///", i):  # 説明コメント。コンパイラは読み飛ばし、仕様書の生成だけが使う
                 docs.append(src[i + 3 : j].strip())
+                if toks and toks[-1].kind != "NL":  # 行の途中に書いた説明は、次の行の名前に付く（その改行は文の区切りにしない）
+                    join_next = True
             i = j
         elif c == '"':
             j = src.find('"', i + 1)
