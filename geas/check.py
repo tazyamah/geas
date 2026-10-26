@@ -265,7 +265,10 @@ class Checker:
                     if d.startswith("待つ "):
                         waits.setdefault(proc, set()).add(d.split(" ", 1)[1])
         triggers = {t.name: t for t in self.p.triggers}
+        used = {e for info in self.infos.values() for e, _ in info.effects}
         for e in self.p.effects:
+            if e.name not in used:
+                self.d(WARN, "外部作用", f"外部作用 {e.name}", "どの処理からも要求されていません")
             if e.failures and e.no_wait is not None:
                 self.d(ERROR, "失敗", f"外部作用 {e.name}", "失敗の理由を宣言しながら no_wait（待たない）にしています。"
                        "待たないと、理由ごとの応答を受ける先がありません（どちらかにしてください）")
@@ -465,6 +468,18 @@ class Checker:
                 for dt, a, b in info.transitions:
                     if dt in self.data and any(f.type.target == s.name for f in self.data[dt].fields):
                         edges.setdefault(a, set()).add(b)
+            def reach(starts):
+                seen, todo = set(), list(starts)
+                while todo:
+                    y = todo.pop()
+                    if y not in seen:
+                        seen.add(y)
+                        todo += edges.get(y, set())
+                return seen
+            got = reach([s.initial, *edges.get("(新規)", set())])
+            for x in [*s.middle, *s.final]:
+                if x not in got:
+                    self.d(WARN, "状態", f"状態 {s.name}", f"「{x}」には、初期からも新規作成からも進む処理が宣言されていません")
             for x in [s.initial, *s.middle]:
                 seen, todo = set(), [x]
                 while todo:
@@ -921,8 +936,11 @@ class ProcChecker:
             if not (isinstance(tgt, Attr) and isinstance(tgt.e, Index)):
                 self.d(ERROR, "型", "更新の対象は D[k].項目 の形です", st.line)
                 return
+            # = で書くだけなら、対象の項目は読まない（ほかの所で読んでいれば、読んだまま）
+            was_read = f"{tgt.e.d}.{tgt.n}" in info.field_reads
             self.ty(tgt, env2)
-            info.field_reads.discard(f"{tgt.e.d}.{tgt.n}") if st.op == "=" else None
+            if st.op == "=" and not was_read:
+                info.field_reads.discard(f"{tgt.e.d}.{tgt.n}")
             tf = next((f for f in self.ck.data[tgt.e.d].fields if f.name == tgt.n), None) if tgt.e.d in self.ck.data else None
             if tf is not None and tf.type.kind == "名前":
                 self.d(ERROR, "遷移", f"update で状態の項目「{tgt.e.d}.{tgt.n}」は変えられません（遷移の確認ができないため。"

@@ -668,3 +668,18 @@ def test_割合の参照があってもホストつきでビルドできる(tmp_
                 "    assert_eq!(r.to_string(), \"1/10\");\n    assert!(geas_app::host::有理を読む(\"3/2\", Some(0), Some(1)).is_err());\n}\n", tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+# ---- 誤検出と警告の漏れ ----
+def test_update_の書き込みは_ほかで読んだ項目を消さない():
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "reads 注文.合計\n  writes 注文.合計").replace(
+        "  update { 注文[k].状態 = 完了 | k in 他 }\n", "  update { 注文[k].合計 = 1 | k in 他, 注文[k].合計 > 0 }\n")
+    ck = chk(src)
+    assert not any("注文.合計" in m and "使っていません" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+def test_使わない外部作用と届かない状態は警告():
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", "effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id) no_wait \"試し\""))
+    assert any("どの処理からも要求されていません" in m for m in msgs(ck, "警告"))
+    ck = chk(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 受付"))
+    assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
