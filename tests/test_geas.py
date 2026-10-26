@@ -425,9 +425,11 @@ def test_containsの同一視する軸は書いたものだけ():
     ck = chk(MEMO)
     assert not msgs(ck, ERROR)
     row = build(ck)["問い合わせ"][0]
-    assert row["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語"]
+    assert row["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語（単語が無ければ絞らない）"]
     plain = build(chk(MEMO.replace(" ignore_case ignore_kana ignore_width", "")))["問い合わせ"][0]
-    assert plain["条件"] == ["本文 含む 単語"]
+    assert plain["条件"] == ["本文 含む 単語（単語が無ければ絞らない）"]
+    req = build(chk(MEMO.replace("input 単語: text", "input 単語: text required")))["問い合わせ"][0]
+    assert req["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語"]  # 必須の入力なら、無いときの動きは無い
 
 
 def test_生成した照合は大小_かな_幅をそろえる(tmp_path):

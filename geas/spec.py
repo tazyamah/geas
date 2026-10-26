@@ -27,10 +27,18 @@ def input_names(inputs) -> list[str]:
 
 def query_rows(q) -> dict:
     conds = [" または ".join(f"{f} {op} {st}" for f, op, st in group) for group in q.conds]
-    conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}" for f, op, a in q.filters]
+    ins = dict(q.inputs)
+
+    def absent(x, what):  # 無いかもしれない入力が実際に無いときの動きも、仕様として出す
+        t = ins.get(x)
+        return f"（{x}が無ければ{what}）" if t is not None and t.optional else ""
+
+    conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}{absent(a, '絞らない')}"
+              for f, op, a in q.filters]
     cols = [c.name for c in q.select]
     return {"問い合わせ": q.name, "入力": input_names(q.inputs), "読む": sorted(q.reads), "条件": conds, "列": cols,
-            "並び": f"{q.order[0]} {q.order[1]}" if q.order else "", "先頭": q.limit or ""}
+            "並び": f"{q.order[0]} {q.order[1]}" if q.order else "",
+            "先頭": f"{q.limit}{absent(q.limit, '全件')}" if q.limit else ""}
 
 
 def build(ck: Checker) -> dict:
