@@ -55,6 +55,8 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 `query` の `where` は、1行が `or` でつないだ組、行どうしが `and` です（`where 状態 == 公開 or 状態 == 下書き`、`where 重さ >= 10`）。
 
+`query` に `select 注文ID, 顧客.顧客ID as 顧客, sum(明細) as 点数` と書くと、IDの列でなく列つきの行を返します（参照の先の項目は結合、`sum` と `count` はキーつきの集まりの集計）。
+
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## 状態

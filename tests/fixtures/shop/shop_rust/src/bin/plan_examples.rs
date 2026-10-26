@@ -188,4 +188,16 @@ fn main() {
             }
         }
     }
+    {
+        let mut 保存 = 保存::default();
+        保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
+        保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8), ("B".to_string(), 1u8)]), 合計: 300i64, 状態: 注文状態::受付 });
+        保存.注文.insert("N2".to_string(), 注文 { 注文ID: "N2".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 1u8)]), 合計: 100i64, 状態: 注文状態::キャンセル });
+        let ctx = 注文一覧文脈 {  };
+        let 入力 = 注文一覧入力 {  };
+        match 入力.検査() {
+            Err(e) => println!("EX14\t入力不正({})\t\t", e),
+            Ok(()) => println!("EX14\t一覧({})\t\t", 注文一覧(&ctx, &保存, &入力).iter().map(|x| x.表示()).collect::<Vec<_>>().join(",")),
+        }
+    }
 }

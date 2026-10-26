@@ -1,7 +1,7 @@
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
 from .ast import *  # noqa: F401,F403
-from .check import Checker, phys, tok_of
+from .check import Checker, column_type, phys, tok_of
 
 PRELUDE = r'''// 自動生成。手で編集しない（コードから geas が毎回生成する）。
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, dead_code, unused_variables, unused_mut)]
@@ -155,7 +155,18 @@ class Gen:
         for name, t in q.refs:
             self.w(f"    pub {name}: {rust_type(t)},")
         self.w("}")
-        self.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> Vec<String> {{")
+        if q.select:
+            cols = [(c, column_type(self.ck, q, c)) for c in q.select]
+            self.w("#[derive(Clone, Debug, PartialEq)]")
+            self.w(f"pub struct {n}行 {{")
+            for c, t in cols:
+                self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else rust_type(t)},")  # 集計は桁あふれしない広い整数
+            self.w("}")
+            fmt = "/".join(f"{c.name}={{}}" for c, _ in cols)
+            vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
+            self.w(f'impl {n}行 {{\n    pub fn 表示(&self) -> String {{ format!("{fmt}", {vals}) }}\n}}')
+        out_ty = f"{n}行" if q.select else "String"
+        self.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> Vec<{out_ty}> {{")
         self.w(f"    let mut 行: Vec<&{q.target}> = 保存.{q.target}.values().filter(|r| {{")
         for group in q.conds:
             atoms = [f"(r.{f} as i128) {op} {st}" if st.isdigit() else f"r.{f} {op} {fields[f].type.target}::{st}" for f, op, st in group]
@@ -181,7 +192,24 @@ class Gen:
             t = ins[q.limit]
             n_expr = f"入力.{q.limit}.map_or(行.len(), |x| x as usize)" if t.optional else f"入力.{q.limit} as usize"
             self.w(f"    行.truncate({n_expr});")
-        self.w(f"    行.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
+        if not q.select:
+            self.w(f"    行.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
+            return
+        self.w("    行.into_iter().filter_map(|r| {")
+        for via in dict.fromkeys(c.via for c in q.select if c.kind == "参照先"):
+            self.w(f"        let j_{via} = 保存.{fields[via].type.target}.get(&r.{via})?;  // 参照先が無い行は出さない")
+        parts = []
+        for c, _ in cols:
+            if c.kind == "参照先":
+                parts.append(f"{c.name}: j_{c.via}.{c.field}.clone()")
+            elif c.kind == "合計":
+                parts.append(f"{c.name}: r.{c.field}.values().map(|v| *v as i128).sum::<i128>()")
+            elif c.kind == "件数":
+                parts.append(f"{c.name}: r.{c.field}.len() as i128")
+            else:
+                parts.append(f"{c.name}: r.{c.field}.clone()")
+        self.w(f"        Some({n}行 {{ {', '.join(parts)} }})")
+        self.w("    }).collect()\n}\n")
 
     def states(self):
         for s in self.p.states:
