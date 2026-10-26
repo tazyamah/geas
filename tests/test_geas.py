@@ -425,9 +425,11 @@ def test_containsの同一視する軸は書いたものだけ():
     ck = chk(MEMO)
     assert not msgs(ck, ERROR)
     row = build(ck)["問い合わせ"][0]
-    assert row["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語"]
+    assert row["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語（単語が無ければ絞らない）"]
     plain = build(chk(MEMO.replace(" ignore_case ignore_kana ignore_width", "")))["問い合わせ"][0]
-    assert plain["条件"] == ["本文 含む 単語"]
+    assert plain["条件"] == ["本文 含む 単語（単語が無ければ絞らない）"]
+    req = build(chk(MEMO.replace("input 単語: text", "input 単語: text required")))["問い合わせ"][0]
+    assert req["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語"]  # 必須の入力なら、無いときの動きは無い
 
 
 def test_生成した照合は大小_かな_幅をそろえる(tmp_path):
@@ -985,6 +987,94 @@ def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     assert got[0].startswith("Ok(") and '\\"数\\":1000' in got[0], got[0]  # 範囲の端は通る
     assert got[1].startswith("Err(") and "倍率" in got[1], got[1]  # 宣言の外は処理を走らせない
     assert got[2].startswith("Err(") and "倍率" in got[2], got[2]
+
+
+PART = """data 品 {
+  品ID: id unique
+  価格: money(円) 0.. required
+}
+result 置いた結果 {
+  置いた(品ID: id)
+}
+part 税込(x: money(円) 0..) -> money(円) 0.. guarantee result >= x
+deed 置く {
+  input 税抜: money(円) 0..1000000 required
+  writes 品
+  result 置いた結果
+  effects none
+
+  let 品 = create 品 { 価格: 税込(税抜) }
+  return 置いた(品.品ID)
+}
+nexus 流れ {
+  置く: 置いた → reply
+}
+"""
+
+
+def test_部品の保証は_geas_の式で書き_引数と_result_だけを使う():
+    ck = chk(PART)
+    assert ck.ready, ck.diags
+    assert build(ck)["部品"] == [("税込", "x: 金額(円) 0..", "金額(円) 0..", "result >= x")]
+    with pytest.raises(ParseError, match="保証がありません"):
+        parse(PART.replace(" guarantee result >= x", ""))
+    assert any("戻り値（result）を使っていません" in m for m in msgs(chk(PART.replace("result >= x", "x >= 0")), ERROR))
+    assert any("真偽の式" in m for m in msgs(chk(PART.replace("result >= x", "result + x")), ERROR))
+    assert any("定義されていません" in m for m in msgs(chk(PART.replace("result >= x", "result >= y")), ERROR))
+
+
+def test_部品の呼び出しは宣言と型が合わないと止まる():
+    assert any("引数は 1 個" in m for m in msgs(chk(PART.replace("税込(税抜)", "税込(税抜, 税抜)")), ERROR))
+    assert any("型が違います" in m for m in msgs(chk(PART.replace("税込(税抜)", "税込(int(税抜))")), ERROR))
+    assert any("組み込みの部品と同じ名前" in m for m in msgs(chk(PART.replace("税込", "丸め")), ERROR))
+
+
+@needs_cargo
+def test_部品の保証は呼ぶたびに確かめ_違反は保存を変えずに止まる(tmp_path):
+    ck = chk(PART)
+    main = """use geas_app::*;
+use geas_app::host::呼ぶ;
+struct 良い;
+impl 部品群 for 良い { fn 税込(&self, x: i64) -> i64 { x + x / 10 } }
+struct 悪い;
+impl 部品群 for 悪い { fn 税込(&self, x: i64) -> i64 { x - 1 } }
+fn main() {
+    let req = r#"{"名前":"置く","文脈":{"新品ID":"A"},"入力":{"税抜":1000},"保存":{}}"#;
+    println!("{:?}", 呼ぶ(req, &良い));
+    println!("{:?}", 呼ぶ(req, &悪い));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    ok, ng = r.stdout.splitlines()
+    assert ok.startswith("Ok(") and '\\"価格\\":1100' in ok, ok
+    assert ng.startswith("Err(") and "税込" in ng and "result >= x" in ng, ng
+
+
+@needs_cargo
+def test_組み込みの丸めは単位より近い値を返す(tmp_path):
+    """組み込みの部品の保証は、宣言せず、ここで確かめる（切り捨て・切り上げは差が 1 未満、四捨五入は 1/2 以下）"""
+    ck = chk(PART)
+    main = """use geas_app::*;
+fn main() {
+    let mut bad = 0;
+    for a in -50i128..50 {
+        for b in 1i128..13 {
+            let x = 有理 { 分子: a, 分母: b };
+            let (lo, up, rn) = (切り捨て(x), 切り上げ(x), 四捨五入(x));
+            if !(lo * b <= a && a < (lo + 1) * b) { bad += 1; }
+            if !((up - 1) * b < a && a <= up * b) { bad += 1; }
+            if !(2 * (rn * b - a).abs() <= b) { bad += 1; }
+        }
+    }
+    println!("{}", bad);
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout.strip() == "0"
 
 
 NULLQ = """data 人 {

@@ -27,10 +27,18 @@ def input_names(inputs) -> list[str]:
 
 def query_rows(q) -> dict:
     conds = [" または ".join(f"{f} {op} {st}" for f, op, st in group) for group in q.conds]
-    conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}" for f, op, a in q.filters]
+    ins = dict(q.inputs)
+
+    def absent(x, what):  # 無いかもしれない入力が実際に無いときの動きも、仕様として出す
+        t = ins.get(x)
+        return f"（{x}が無ければ{what}）" if t is not None and t.optional else ""
+
+    conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}{absent(a, '絞らない')}"
+              for f, op, a in q.filters]
     cols = [c.name for c in q.select]
     return {"問い合わせ": q.name, "入力": input_names(q.inputs), "読む": sorted(q.reads), "条件": conds, "列": cols,
-            "並び": f"{q.order[0]} {q.order[1]}" if q.order else "", "先頭": q.limit or ""}
+            "並び": f"{q.order[0]} {q.order[1]}" if q.order else "",
+            "先頭": f"{q.limit}{absent(q.limit, '全件')}" if q.limit else ""}
 
 
 def build(ck: Checker) -> dict:
@@ -85,6 +93,8 @@ def build(ck: Checker) -> dict:
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     spec["出来事"] = [(ev.name, (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
+    spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee))
+                  for pt in p.parts]
     spec["指定"] = [(f"{x['処理']}.丸め", f"{m}({u})") for x in procs for m, u in x["丸め"]]
     spec["実現"] = [(f"{d.name}.{f.name}", phys(f.type)) for d in p.data for f in d.fields if f.type.kind in ("整数", "金額")]
     return spec
@@ -119,6 +129,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")
+    if spec["部品"]:
+        out += ["", "## 部品（外から足す。呼ぶたびに、戻り値が保証に合うかを確かめる）", "", "| 部品 | ◆引数 | ◆戻り値 | ◆保証 |", "|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["部品"]]
     out += ["", "## 指定事項（コードに書かれた、既定でない指定）", "", "| 項目 | ◆指定 |", "|---|---|"]
     out += [f"| {a} | {b} |" for a, b in spec["指定"]]
     out += ["", "## 実現の報告（振る舞いの仕様には含めない）", ""]

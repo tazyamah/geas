@@ -48,8 +48,6 @@ result 待ち解除結果 {
 
 effect 決済.請求(注文ID: id, 金額: money(円))
 
-part 丸め(x: 有理, 方式, 単位) -> 整数 保証 "|結果 - x| < 単位"
-
 deed 受注 {
   input 顧客ID: id required, 明細: 商品 → int 1..99 required
   slot 税率: ratio 0..1

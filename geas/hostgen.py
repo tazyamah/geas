@@ -169,6 +169,14 @@ def to_j(t: Type, x: str) -> str:
     raise ValueError(f"JSON への対応がない型: {k}")
 
 
+CALL_WASM = r'''#[no_mangle]
+pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
+    let s = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
+    返す(match 呼ぶ(s) { Ok(x) => x, Err(e) => format!("{{\"エラー\":{}}}", js_str(&e)) })
+}
+'''
+
+
 def definitions(ck: Checker) -> dict:
     p = ck.p
     flows: dict[str, dict[str, str]] = {}
@@ -232,14 +240,20 @@ def host_source(ck: Checker) -> str:
     # 処理の呼び出し
     w("fn 結果を書く(名前: &str, 引数: Vec<String>, 中身: String, 外部: Vec<String>, 保存: &保存) -> String {\n"
       '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 中身, 外部.join(","), 保存を書く(保存))\n}')
-    w("fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存) -> Result<String, String> {\n    match 名前 {")
+    has_parts = bool(p.parts)
+    w(f"fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存{', 部品: &dyn 部品群' if has_parts else ''}) -> Result<String, String> {{\n    match 名前 {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'新{d}ID: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
-        w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
+        if info.parts:  # 部品の保証違反は panic で処理を止める。書込を適用する前なので、保存は変わらない
+            w(f"            let o = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {n}(&c, 保存, &i, 部品))).map_err(|e| {{\n"
+              '                e.downcast_ref::<String>().cloned().unwrap_or_else(|| "部品の保証に違反しました".to_string())\n            })?;\n'
+              "            保存.適用(o.書込.clone());")
+        else:
+            w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
         w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
         n = q.name
@@ -249,9 +263,9 @@ def host_source(ck: Checker) -> str:
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
         w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
-    w("pub fn 呼ぶ(要求: &str) -> Result<String, String> {\n"
+    w(f"pub fn 呼ぶ(要求: &str{', 部品: &dyn 部品群' if has_parts else ''}) -> Result<String, String> {{\n"
       '    let r = parse(要求)?;\n    let mut s = 保存を読む(r.get("保存")?)?;\n'
-      '    呼ぶ内部(r.get("名前")?.as_str()?, r.get("文脈")?, r.get("入力")?, &mut s)\n}')
+      f'    呼ぶ内部(r.get("名前")?.as_str()?, r.get("文脈")?, r.get("入力")?, &mut s{", 部品" if has_parts else ""})\n}}')
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
     w(f'pub const 定義JSON: &str = r####"{defs}"####;')
     w(r'''
@@ -265,12 +279,7 @@ fn 返す(s: String) -> u64 {
 pub extern "C" fn alloc(n: usize) -> *mut u8 { let mut v = Vec::<u8>::with_capacity(n); let p = v.as_mut_ptr(); std::mem::forget(v); p }
 #[no_mangle]
 pub extern "C" fn dealloc(p: *mut u8, n: usize) { unsafe { drop(Vec::from_raw_parts(p, 0, n)); } }
-#[no_mangle]
-pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
-    let s = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
-    返す(match 呼ぶ(s) { Ok(x) => x, Err(e) => format!("{{\"エラー\":{}}}", js_str(&e)) })
-}
-#[no_mangle]
+@@CALL@@#[no_mangle]
 pub extern "C" fn geas_defs() -> u64 { 返す(定義JSON.to_string()) }
-''')
+'''.replace("@@CALL@@", "" if has_parts else CALL_WASM))
     return "\n".join(out) + "\n"

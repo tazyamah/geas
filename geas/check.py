@@ -79,6 +79,7 @@ class ProcInfo:
     effects: list = field(default_factory=list)  # (名前, 冪等キー)
     returns: set = field(default_factory=set)
     roundings: list = field(default_factory=list)  # (方式, 単位)
+    parts: set = field(default_factory=set)  # 呼んだ宣言済みの部品
     new_ids: list = field(default_factory=list)  # 採番するデータ名
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
@@ -126,6 +127,8 @@ class Checker:
         self.states = {s.name: s for s in prog.states}
         self.results = {r.name: r for r in prog.results}
         self.effects = {e.name: e for e in prog.effects}
+        self.parts = {x.name: x for x in prog.parts}
+        self.part_types: dict[int, str] = {}  # 保証の式 → 型トークン（生成で使う）
         self.procs = {x.name: x for x in prog.processes}
         self.triggers = {x.name: x for x in prog.triggers}
         self.queries = {x.name: x for x in prog.queries}
@@ -193,10 +196,33 @@ class Checker:
         for n in dict.fromkeys(n for n in names if names.count(n) > 1):
             self.d(ERROR, "名前", where, f"{what}「{n}」が2つ以上あります")
 
+    def check_part(self, pt: Part):
+        """部品の宣言。保証の式は、引数と result だけを使う、真偽の式"""
+        where = f"部品 {pt.name}"
+        if pt.name in ("丸め", *CONVERSIONS):
+            self.d(ERROR, "名前", where, "組み込みの部品と同じ名前は使えません")
+        names = [n for n, _ in pt.params]
+        self.check_unique(names, where, "引数")
+        if "result" in names:
+            self.d(ERROR, "名前", where, "引数の名前に result は使えません（戻り値の名前です）")
+        for n, t in [*pt.params, ("result", pt.ret)]:
+            self.check_type(t, f"{where} / {n}")
+            if t.kind not in ("整数", "金額", "割合", "ID", "文字列", "日時"):
+                self.d(ERROR, "型", where, f"部品の引数と戻り値に使えるのは数・割合・ID・文字列・日時です（{n}）")
+        pc = ProcChecker(self, Process(pt.name))
+        pc.where = where
+        env = {n: tok_of(t) for n, t in [*pt.params, ("result", pt.ret)]}
+        g = pc.ty(pt.guarantee, env)
+        if g not in ("Bool", "?"):
+            self.d(ERROR, "型", where, f"保証は真偽の式にしてください（{g}）")
+        if "result" not in names_in(pt.guarantee):
+            self.d(ERROR, "保証", where, "保証が戻り値（result）を使っていません。何も確かめない保証は書けません")
+        self.part_types.update(pc.info.types)
+
     def check_defs(self):
         p = self.p
         # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ネクサス・出来事は同じ名前の空間に並ぶ
-        tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events) for x in xs]
+        tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events, p.parts) for x in xs]
         self.check_unique(tops, "全体", "定義の名前")
         self.check_unique([e.name for e in p.effects], "全体", "外部作用")
         self.check_unique([v for s in p.states for v in [s.initial, *s.middle, *s.final] if v], "全体", "状態名")
@@ -206,6 +232,8 @@ class Checker:
                 self.check_unique([n for n, _ in ps], f"結果 {r.name} / {v}", "中身の名前")
                 for n, t in ps:
                     self.check_type(t, f"結果 {r.name} / {v} / {n}")
+        for pt in p.parts:
+            self.check_part(pt)
         for e in p.effects:
             self.check_unique([n for n, _ in e.params], f"外部作用 {e.name}", "引数")
             for n, t in e.params:
@@ -727,9 +755,20 @@ class ProcChecker:
             if x not in (src, "?"):
                 self.d(ERROR, "型", f"{e.n}( ) で変えられるのは{'整数' if src == 'Int' else '金額'}だけです（{x}）")
             return dst
+        if isinstance(e, Call) and e.n in ck.parts:
+            pt = ck.parts[e.n]
+            if len(e.args) != len(pt.params):
+                self.d(ERROR, "型", f"部品 {e.n} の引数は {len(pt.params)} 個です")
+                return tok_of(pt.ret)
+            for a, (n, t) in zip(e.args, pt.params):
+                at = self.ty(a, env)
+                if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
+                    self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
+            self.info.parts.add(e.n)
+            return tok_of(pt.ret)
         if isinstance(e, Call):
             if e.n != "丸め" or len(e.args) != 3:
-                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（丸め(値, 方式, 単位) と、型の変換 money( )・int( ) だけ）")
+                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（宣言した部品と、丸め(値, 方式, 単位)、型の変換 money( )・int( ) だけ）")
                 return "?"
             x = self.ty(e.args[0], env)
             m, u = e.args[1], e.args[2]
@@ -861,6 +900,8 @@ class ProcChecker:
             return iv_add(a, b) if e.op == "+" else iv_add(a, iv_neg(b)) if e.op == "-" else iv_mul(a, b)
         if isinstance(e, Call) and e.n in CONVERSIONS and len(e.args) == 1:
             return self.interval(e.args[0], env)
+        if isinstance(e, Call) and e.n in self.ck.parts:  # 戻り値の範囲は、呼ぶたびに確かめる（生成コード）ので、宣言をそのまま信じてよい
+            return iv_of(self.ck.parts[e.n].ret)
         if isinstance(e, Call) and e.n == "丸め" and len(e.args) == 3:
             lo, hi = self.interval(e.args[0], env)
             how = getattr(e.args[1], "n", "")
