@@ -1645,3 +1645,36 @@ def test_convert_の結果が範囲に収まると示せなければ検査で止
     ok = CONVERT.replace("convert 税込(x: 非負金額) -> 非負金額 = x + x", "convert 税込(x: 税抜の限り) -> 非負金額 = x + x")
     assert chk(ok).ready
     assert "保証違反(\"税込\"" not in generate(chk(ok))
+
+
+DIVIDE = """ltype 日数 = int 0..
+ltype 週数 = int 0..
+ltype 余り日 = int 0..6
+
+convert 週(d: 日数) -> 週数 = d / 7
+convert 端(d: 日数) -> 余り日 = d % 7
+"""
+
+
+def test_整数の割り算は正の定数で切り捨て_範囲は端を割って示す():
+    ck = chk(DIVIDE.replace("convert 端(d: 日数) -> 余り日 = d % 7\n", ""))
+    assert ck.ready, ck.diags
+    with pytest.raises(ParseError, match="正の整数の定数"):
+        parse(DIVIDE.replace("d / 7", "d / 0", 1))
+    with pytest.raises(ParseError, match="正の整数の定数"):
+        parse(DIVIDE.replace("d / 7", "d / d", 1))
+    assert any("割り算できるのは整数だけ" in m for m in msgs(chk(DIVIDE.replace("ltype 日数 = int 0..", "ltype 日数 = money(円) 0..").replace("convert 端(d: 日数) -> 余り日 = d % 7\n", "")), ERROR))
+
+
+def test_余りの範囲は静的に示せる():
+    assert chk(DIVIDE).ready
+    bad = DIVIDE.replace("ltype 余り日 = int 0..6", "ltype 余り日 = int 0..5")
+    assert any("収まると示せません" in m for m in msgs(chk(bad), ERROR))
+
+
+@needs_cargo
+def test_割り算と余りは生成コードで動く(tmp_path):
+    ck = chk(DIVIDE)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]

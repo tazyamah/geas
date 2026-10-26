@@ -649,6 +649,8 @@ class ProcGen:
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
             l, r = self.rx(e.l), self.rx(e.r)
+            if e.op in ("/", "%"):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
+                return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
             if e.op == "*" and "Ratio" in (lt, rt):
                 return f"積({r}, {l})" if lt == "Ratio" else f"積({l}, {r})"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）

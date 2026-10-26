@@ -654,9 +654,18 @@ class Parser:
 
     def mul(self):
         l = self.postfix()
-        while self.accept("*"):
-            l = Bin("*", l, self.postfix())
-        return l
+        while True:
+            if self.accept("*"):
+                l = Bin("*", l, self.postfix())
+            elif self.is_("/") or self.is_("%"):  # 整数の割り算（切り捨て）と余り。割る数は正の整数の定数だけ（0で割る道を作らない）
+                op = self.next().val
+                t = self.peek()
+                if t.kind != "NUM" or int(t.val) <= 0:
+                    raise self.err(f"「{op}」の右は、正の整数の定数だけです（割る数が0になる道を作らないため）")
+                self.next()
+                l = Bin(op, l, Num(int(t.val)))
+            else:
+                return l
 
     def postfix(self):
         e = self.primary()
