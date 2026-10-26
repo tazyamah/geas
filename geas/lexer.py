@@ -23,8 +23,10 @@ def lex(src: str) -> list[Tok]:
     toks: list[Tok] = []
     i, line, n = 0, 1, len(src)
 
+    depth = 0  # ( ) の中の改行は式の続き（長い式を折り返せる）
+
     def nl():
-        if toks and toks[-1].kind != "NL":
+        if depth == 0 and toks and toks[-1].kind != "NL":
             toks.append(Tok("NL", "\n", line))
 
     while i < n:
@@ -49,6 +51,7 @@ def lex(src: str) -> list[Tok]:
             toks.append(Tok("OP", "→" if v == "->" else v, line))
             i += 2
         elif c in PUNCT:
+            depth = max(0, depth + (c == "(") - (c == ")"))
             toks.append(Tok("OP", c, line))
             i += 1
         else:

@@ -443,7 +443,19 @@ class Parser:
         """convert 名前(引数: 型) -> 型 = 式：論理型どうしの一方通行の変換。定義が geas の式なので、外の実装も保証も要らない"""
         name = self.name()
         self.expect("(")
-        params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
+
+        def param():
+            n = self.name()
+            self.expect(":")
+            t = self.type()
+            if self.accept("fill"):  # fill { 成分: 数, … }：未指定の成分を補うルール。補った成分は指定されている扱い
+                self.expect("{")
+                fs = self.comma_list(lambda: (self.name(), (self.expect(":"), self.fill_value())[1]))
+                self.expect("}")
+                t.fills = tuple(fs)
+            return n, t
+
+        params = self.comma_list(param)
         self.expect(")")
         self.expect("→")
         ret = self.type()
@@ -451,6 +463,12 @@ class Parser:
         body = self.expr()
         self.end_line()
         return Part(name, params, ret, None, line, body)
+
+    def fill_value(self) -> int:
+        t = self.next()
+        if t.kind != "NUM":
+            raise self.err("fill の値は整数です")
+        return int(t.val)
 
     def invariant(self, line) -> Invariant:
         d = self.name()

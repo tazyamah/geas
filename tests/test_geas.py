@@ -1678,3 +1678,71 @@ def test_割り算と余りは生成コードで動く(tmp_path):
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+UTC = """convert 実在日時(v: 仮想日時 fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0, 秒: 0 }) -> time = time(
+  (v.日 + (153 * (v.月 + 12 * ((14 - v.月) / 12) - 3) + 2) / 5 + 365 * (v.年 + 4800 - (14 - v.月) / 12)
+   + (v.年 + 4800 - (14 - v.月) / 12) / 4 - (v.年 + 4800 - (14 - v.月) / 12) / 100
+   + (v.年 + 4800 - (14 - v.月) / 12) / 400 - 32045 - 2440588) * 86400 + v.時 * 3600 + v.分 * 60 + v.秒)
+
+entity 予定 {
+  予定ID: id unique
+  時刻: time required
+}
+result 予約結果 {
+  予約済(予定ID: id)
+}
+deed 予約 {
+  input 日時: 仮想日時 required
+  writes 予定
+  result 予約結果
+  effects none
+
+  let 予定 = create 予定 { 時刻: 実在日時(日時) }
+  return 予約済(予定.予定ID)
+}
+nexus 流れ {
+  予約: 予約済 → reply
+}
+"""
+
+
+def test_仮想日時を補うルールつきで実在日時へ変える():
+    ck = chk(UTC)
+    assert ck.ready, ck.diags
+
+
+def test_補うルールが無い成分を読むと違反になる():
+    bad = UTC.replace("fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0, 秒: 0 }", "fill { 年: 1970, 月: 1, 日: 1, 時: 0, 分: 0 }")
+    assert any("未指定かもしれない成分" in m for m in msgs(chk(bad), ERROR))
+    bad2 = UTC.replace("時: 0,", "時: 99,")
+    assert any("収まりません" in m for m in msgs(chk(bad2), ERROR))
+
+
+@needs_cargo
+def test_仮想日時の変換は生成コードで動く(tmp_path):
+    ck = chk(UTC)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+@needs_cargo
+def test_仮想日時の変換は暦どおりの秒になり_未指定は補うルールの値になる(tmp_path):
+    ck = chk(UTC)
+    main = """use geas_app::*;
+fn t(日時: 仮想日時) -> i64 {
+    let ctx = 予約文脈 { 新予定ID: "e1".to_string() };
+    let o = 予約(&ctx, &保存::default(), &予約入力 { 日時 });
+    match &o.書込[0] { 書込::予定_新規(r) => r.時刻 }
+}
+fn main() {
+    println!("{}", t(仮想日時 { 年: Some(2026), 月: Some(10), 日: Some(26), 時: Some(3), 分: Some(4), 秒: Some(5) }));
+    println!("{}", t(仮想日時 { 年: Some(2000), 月: None, 日: None, 時: None, 分: None, 秒: None }));
+    println!("{}", t(仮想日時 { 年: None, 月: None, 日: None, 時: None, 分: None, 秒: None }));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout.split() == ["1792983845", "946684800", "0"], r.stdout
