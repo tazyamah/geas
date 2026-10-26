@@ -97,6 +97,7 @@ def build(ck: Checker) -> dict:
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee) if pt.body is None else "= " + show(pt.body))
                   for pt in p.parts]
     spec["指定"] = [(f"{x['処理']}.丸め", f"{m}({u})") for x in procs for m, u in x["丸め"]]
+    spec["名前"] = [(n, " / ".join(f"{k or '既定'}: {v}" for k, v in ls.items())) for n, ls in p.labels.items()]
     spec["実現"] = [(f"{d.name}.{f.name}", phys(f.type)) for d in p.data for f in d.fields if f.type.kind in ("整数", "金額")]
     return spec
 
@@ -175,6 +176,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["部品"]]
     out += ["", "## 指定事項（コードに書かれた、既定でない指定）", "", "| 項目 | ◆指定 |", "|---|---|"]
     out += [f"| {a} | {b} |" for a, b in spec["指定"]]
+    if spec["名前"]:
+        out += ["", "## 名前と表示名（説明コメント /// から）", "", "| 名前 | 表示名 |", "|---|---|"]
+        out += [f"| {a} | {b} |" for a, b in spec["名前"]]
     out += ["", "## 実現の報告（振る舞いの仕様には含めない）", ""]
     out += [f"- 物理数 {a}: {b}" for a, b in spec["実現"]]
     for x in spec["処理"]:
