@@ -122,8 +122,8 @@ query 注文一覧 {
   reads 注文.状態, 注文.注文ID, 注文.顧客, 顧客.顧客ID, 注文.明細
 }
 
-// 結果の種類ごとの行き先。reply＝そこでネクサスを終え、結果を呼び出し元へ返す
-nexus 注文受付 {
+// 結果の種類ごとの行き先。reply＝そこでブレイドを終え、結果を呼び出し元へ返す
+braid 注文受付 {
   受注: 受付 → 決済要求, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply
   決済要求: 要求済 → wait 決済待ち, 注文なし → reply, 状態違い → reply, 合計ゼロ → reply
 }
@@ -134,7 +134,7 @@ trigger 決済待ち(注文ID: id) {
   deadline now + 30 min → 決済の期限切れ
 }
 
-nexus 決済待ち解除 {
+braid 決済待ち解除 {
   決済結果の反映: 反映済 → reply, 注文なし → reply, 状態違い → reply
   決済の期限切れ: 反映済 → reply, 注文なし → reply, 状態違い → reply
 }

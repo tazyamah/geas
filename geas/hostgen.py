@@ -227,7 +227,7 @@ def host_source(ck: Checker) -> str:
         vals = ", ".join(f'js_str("{n}"), {to_j(t, n)}' for n, t in e.params)
         w(f'        外部作用::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"冪等キー\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(冪等キー)),')
     w("    }\n}")
-    # 結果の中身（名前つき）。ネクサスの次の処理へは、これをそのまま入力として渡す
+    # 結果の中身（名前つき）。ブレイドの次の処理へは、これをそのまま入力として渡す
     for r in p.results:
         w(f"fn {r.name}_中身(r: &{r.name}) -> String {{\n    match r {{")
         for v, ps in r.variants:
