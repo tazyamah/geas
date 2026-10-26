@@ -1059,6 +1059,11 @@ def test_時刻に期間を足し引きでき_時刻の差は秒数になる():
         assert msgs(ck, ERROR), bad
     ck = chk(mutate(TIMEC, "待ち秒: 現在 - 開始", "待ち秒: 24 hour - 現在"))
     assert msgs(ck, ERROR)
+    for unit in ("day", "week", "month", "year"):  # 暦で数え方が変わる単位は、まだ書けない
+        with pytest.raises(ParseError, match="暦で数え方が変わる"):
+            chk(mutate(TIMEC, "24 hour", f"1 {unit}"))
+    with pytest.raises(ParseError, match="暦で数え方が変わる"):  # 絞り込み・期限の単位も同じ
+        chk(mutate(CODE, "deadline now + 30 min", "deadline now + 1 day"))
     with pytest.raises(ParseError, match="長すぎます"):
         chk(mutate(TIMEC, "24 hour", "99999999999 sec"))
 
