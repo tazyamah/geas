@@ -709,3 +709,46 @@ def test_ホストは結果の中身を名前つきで返す(tmp_path):
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     assert '"中身":{"注文ID":"N1"}' in r.stdout, r.stdout
+
+
+# ---- 整数と金額は違う型。そのままでは混ぜず、money( )・int( ) で変えてから計算する ----
+SUB = "  let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)\n"
+
+
+def test_整数と金額はそのままでは足し引きできない():
+    ck = chk(mutate(CODE, SUB, SUB.replace("小計 + 丸め", "小計 + 合計数 + 丸め").replace("  let 合計", "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計")))
+    assert any("整数と金額は、そのままでは足し引きできません" in m for m in msgs(ck, ERROR))
+
+
+def test_金額どうしは掛けられない():
+    ck = chk(mutate(CODE, "商品[k].単価 * v |", "商品[k].単価 * 商品[k].単価 |"))
+    assert any("金額どうしは掛けられません" in m for m in msgs(ck, ERROR))
+
+
+def test_整数の変数は金額の項目へそのまま入れられない():
+    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n" + SUB)
+    ck = chk(mutate(src, "合計: 合計, 状態: 受付 }", "合計: 合計数, 状態: 受付 }"))
+    assert any("型の違う値（Int）" in m for m in msgs(ck, ERROR))
+    ck = chk(mutate(src, "合計: 合計, 状態: 受付 }", "合計: money(合計数), 状態: 受付 }"))
+    assert ck.ok, ck.diags
+
+
+def test_数字はどちらの型としても使える():
+    assert chk(CODE).ok  # 合計 <= 0、在庫 < v など
+    ck = chk(mutate(CODE, SUB, "  let 合計 = 小計 + 100\n"))
+    assert ck.ok, ck.diags
+
+
+def test_変換の向きを取り違えると止まる():
+    ck = chk(mutate(CODE, SUB, "  let 合計 = money(小計)\n"))
+    assert any("money( ) で変えられるのは整数だけ" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_型の変換を使っても_Rust_がビルドできる(tmp_path):
+    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計 = 小計 + money(合計数) + 丸め(小計 * 税率, 切り捨て, 円)\n")
+    ck = chk(src)
+    assert ck.ok, ck.diags
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]

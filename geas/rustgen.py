@@ -107,6 +107,9 @@ def show_expr(t: Type, x: str) -> str:
     return x
 
 
+CONVERSIONS = ("money", "int")
+
+
 def opt(v):
     return "None" if v is None else f"Some({v})"
 
@@ -431,6 +434,8 @@ class ProcGen:
             c = f"{self.place(e.e)}.is_empty()"
             return c if e.kind == "空" else f"!{c}"
         if isinstance(e, Call):
+            if e.n in CONVERSIONS:  # 整数 ⇄ 金額 の変換は、意味の型を変えるだけ（物理の値はそのまま）
+                return self.rx(e.args[0])
             return f"{e.args[1].n}({self.rx(e.args[0])})"
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)

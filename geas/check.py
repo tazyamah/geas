@@ -8,6 +8,7 @@ from .ast import *  # noqa: F401,F403
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("切り捨て", "切り上げ", "四捨五入")
+CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int")}  # 名前 → (変える前, 変えた後)
 
 
 @dataclass
@@ -675,9 +676,19 @@ class ProcChecker:
             return "Bool"
         if isinstance(e, Bin):
             return self.binop(e, env)
+        if isinstance(e, Call) and e.n in CONVERSIONS:
+            # 型を変えてから計算する：money(整数) は金額、int(金額) は整数
+            src, dst = CONVERSIONS[e.n]
+            if len(e.args) != 1:
+                self.d(ERROR, "型", f"{e.n}( ) の引数は1つです")
+                return "?"
+            x = self.ty(e.args[0], env)
+            if x not in (src, "?"):
+                self.d(ERROR, "型", f"{e.n}( ) で変えられるのは{'整数' if src == 'Int' else '金額'}だけです（{x}）")
+            return dst
         if isinstance(e, Call):
             if e.n != "丸め" or len(e.args) != 3:
-                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（丸め(値, 方式, 単位) だけ）")
+                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（丸め(値, 方式, 単位) と、型の変換 money( )・int( ) だけ）")
                 return "?"
             x = self.ty(e.args[0], env)
             m, u = e.args[1], e.args[2]
@@ -689,6 +700,10 @@ class ProcChecker:
                 self.d(ERROR, "型", "丸めの単位が必要です")
             else:
                 self.info.roundings.append((getattr(m, "n", "?"), u.n))
+            # 丸めた結果は、端数の元になった数の型（金額 × 割合 なら金額、整数 × 割合 なら整数）
+            inner = e.args[0]
+            if isinstance(inner, Bin) and "Money" not in (self.info.types.get(id(inner.l)), self.info.types.get(id(inner.r))):
+                return "Int"
             return "Money"
         if isinstance(e, (SetB, SumE)):
             env2 = self.bind(e.binder, env)
@@ -776,6 +791,8 @@ class ProcChecker:
         if isinstance(e, Bin) and e.op in ("+", "-", "*"):
             a, b = self.interval(e.l, env), self.interval(e.r, env)
             return iv_add(a, b) if e.op == "+" else iv_add(a, iv_neg(b)) if e.op == "-" else iv_mul(a, b)
+        if isinstance(e, Call) and e.n in CONVERSIONS and len(e.args) == 1:
+            return self.interval(e.args[0], env)
         if isinstance(e, Call) and e.n == "丸め" and len(e.args) == 3:
             lo, hi = self.interval(e.args[0], env)
             how = getattr(e.args[1], "n", "")
@@ -812,16 +829,21 @@ class ProcChecker:
         if "?" in (a, b):
             return "?"
         num = ("Int", "Money")
+        # 整数と金額は違う型で、そのままでは混ぜられない。数字をそのまま書いたもの（0 など）だけは、どちらとしても使える
+        if a in num and b in num and a != b and (isinstance(e.l, Num) or isinstance(e.r, Num)):
+            a = b = "Money"
+        mixed = a in num and b in num and a != b
         if e.op == "かつ":
             if a != "Bool" or b != "Bool":
                 self.d(ERROR, "型", f"「{show(e)}」: かつ の両側は条件である必要があります")
             return "Bool"
         if e.op in ("<", ">", "<=", ">="):
-            if not ((a in num and b in num) or (a == "Time" and b == "Time")):
-                self.d(ERROR, "型", f"「{show(e)}」: 数どうし（または日時どうし）で比べてください")
+            if not ((a in num and b in num and not mixed) or (a == "Time" and b == "Time")):
+                self.d(ERROR, "型", f"「{show(e)}」: 同じ種類の数どうし（または日時どうし）で比べてください"
+                       + ("（整数と金額は比べられません）" if mixed else ""))
             return "Bool"
         if e.op in ("==", "!="):
-            if a != b and not (a in num and b in num):
+            if a != b:
                 self.d(ERROR, "型", f"「{show(e)}」: 違う型を比べています")
             return "Bool"
         if e.op in ("+", "-"):
@@ -829,12 +851,16 @@ class ProcChecker:
                 self.d(QUESTION, "丸め", f"「{show(e)}」: 端数が出る計算の丸め（切り捨て・切り上げ・四捨五入）と単位が"
                        "指定されていません。端数をどう丸めますか")
                 return "Money"
-            if a in num and b in num:
-                return "Money" if "Money" in (a, b) else "Int"
-            self.d(ERROR, "型", f"「{show(e)}」: 数どうしで計算してください")
+            if a in num and b in num and not mixed:
+                return a
+            self.d(ERROR, "型", f"「{show(e)}」: 同じ種類の数どうしで計算してください"
+                   + ("（整数と金額は、そのままでは足し引きできません）" if mixed else ""))
             return "?"
         if e.op == "*":
-            if a in num and b in num:
+            if a == "Money" and b == "Money":
+                self.d(ERROR, "型", f"「{show(e)}」: 金額どうしは掛けられません（金額 × 整数 か 金額 × 割合 にしてください）")
+                return "?"
+            if a in num and b in num:  # 金額 × 整数（数量ぶん）は金額
                 return "Money" if "Money" in (a, b) else "Int"
             if {a, b} <= {"Ratio", "Int", "Money"} and "Ratio" in (a, b) and "Ratio" not in (a if b == "Ratio" else b):
                 return "Rational"
@@ -857,7 +883,7 @@ class ProcChecker:
             return
         for (_, t), a in zip(v[1], r.args):
             at = self.ty(a)
-            if at != tok_of(t) and at != "?":
+            if at != tok_of(t) and at != "?" and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")):
                 self.d(ERROR, "型", f"結果「{r.variant}」の引数の型が違います（{at}）", r.line)
 
     def run(self) -> ProcInfo:
@@ -966,7 +992,7 @@ class ProcChecker:
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif (tf is not None and tf.type.kind != "名前" and vt not in (tok_of(tf.type), "?")
-                  and not (vt in ("Int", "Money") and tok_of(tf.type) in ("Int", "Money"))):
+                  and not (isinstance(st.value, Num) and tok_of(tf.type) in ("Int", "Money"))):
                 self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} に型の違う値（{vt}）を入れています", st.line)
             elif tf is not None and st.op != "=" and tf.type.kind not in ("整数", "金額", "割合"):
                 self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} は数ではないので {st.op} できません", st.line)
@@ -988,7 +1014,7 @@ class ProcChecker:
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif (vt != tok_of(fld.type) and vt != "?" and fld.type.kind != "名前"
-                  and not (vt in ("Int", "Money") and tok_of(fld.type) in ("Int", "Money"))):
+                  and not (isinstance(st.e, Num) and tok_of(fld.type) in ("Int", "Money"))):
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
@@ -1080,7 +1106,7 @@ class ProcChecker:
             vt = self.ty(e)
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
-            elif vt != tok_of(f.type) and not (vt in ("Int", "Money") and tok_of(f.type) in ("Int", "Money")) and vt != "?":
+            elif vt != tok_of(f.type) and not (isinstance(e, Num) and tok_of(f.type) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{st.data}.{n} に型の違う値（{vt}）を入れています", st.line)
             self.check_range_fit(e, f.type, f"{st.data}.{n}", st.line)
             if f.type.kind == "名前":
@@ -1246,7 +1272,7 @@ class ProcChecker:
             self.d(ERROR, "型", f"外部作用 {st.effect} の引数は {len(eff.params)} 個です", st.line)
         for a, (_, t) in zip(st.args, eff.params):
             at = self.ty(a)
-            if at != tok_of(t) and not (at in ("Int", "Money") and tok_of(t) in ("Int", "Money")) and at != "?":
+            if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
                 self.d(ERROR, "型", f"外部作用 {st.effect} の引数の型が違います（{at}）", st.line)
         if st.idem is None:
             self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（idempotency_key = … が必須です）", st.line)
