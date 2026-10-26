@@ -34,6 +34,25 @@ python -m pytest tests                            # テスト
 
 ひとり用つぶやきの例（会話から計画書を作り、コード、Rust/WASM、画面まで試したもの）は、[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
 
+## 書き方（キーワードは英語、名前は日本語のまま）
+
+```
+data 注文 { 注文ID: id unique, 状態: 注文状態 ... }      // 型：id set of id text time bytes int ratio money(円) ref X
+deed 決済要求 {
+  input 注文ID: id                                      // 宣言：input slot reads writes transition result effects
+  reads 注文.状態
+  ...
+  let 注文 = 注文[注文ID] else { return 注文なし }        // 本体は Rust 風（body も then もない）
+  if 注文.状態 != 受付 { return 状態違い }
+  for k in 注文.明細 { request 決済.請求(k, idempotency_key = k) }
+  return 要求済
+}
+nexus 注文受付 { 受注: 受付 → 決済要求, 顧客なし → reply, ... }   // flow は nexus の別名。行き先は reply か wait トリガ名
+trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now + 30 min → ... }
+```
+
+他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
+
 ## 状態
 
-試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。言語のキーワードは、今は日本語の仮のままです（英語化と、処理→Deed などの置き換えは、別の決定として進めます）。
+試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。キーワードは英語にしました（名前と、構文木の中身は日本語のまま）。

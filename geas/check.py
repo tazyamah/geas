@@ -205,7 +205,7 @@ class Checker:
                 if decl is None or decl.no_wait is not None:
                     continue
                 if proc not in waits:
-                    self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の扱いが決まっていません（フローで「待つ」へ進めるか、外部作用の宣言に 待たない \"人が決めた理由\" を書いてください）")
+                    self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の扱いが決まっていません（ネクサスで「wait」へ進めるか、外部作用の宣言に no_wait \"人が決めた理由\" を書いてください）")
                     continue
                 for tname in sorted(waits[proc]):
                     tg = triggers.get(tname)
@@ -277,7 +277,7 @@ class Checker:
     def check_wait(self, where, proc, trig):
         tg = self.triggers.get(trig)
         if tg is None:
-            self.d(ERROR, "トリガ", where, f"待つ 先のトリガ「{trig}」が未定義です")
+            self.d(ERROR, "トリガ", where, f"wait 先のトリガ「{trig}」が未定義です")
             return
         have = {n for n, _ in self.procs[proc].inputs}
         for n, _ in tg.params:
@@ -318,7 +318,7 @@ class Checker:
                 elif [(n, show_type(t)) for n, t in proc.inputs] != [(n, show_type(t)) for n, t in tg.params]:
                     self.d(ERROR, "トリガ", where, f"行き先の処理 {dest} の入力（名前と型）が、トリガの引数と合いません")
             if tg.name not in waited:
-                self.d(WARN, "トリガ", where, "どのフローからも「待つ」で作られていません")
+                self.d(WARN, "トリガ", where, "どのネクサスからも「wait」で作られていません")
 
     def check_events(self):
         """出来事の検査。「各」は、問い合わせが返すデータ1件ずつに、その識別子だけを入力にもつ処理を起こす。"""
@@ -347,7 +347,7 @@ class Checker:
                     continue
                 key = self.key_field(dt.name)
                 if [(n, show_type(t)) for n, t in proc.inputs] != [(key.name, "ID")]:
-                    self.d(ERROR, "出来事", where, f"「各 {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
+                    self.d(ERROR, "出来事", where, f"「each {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
 
     def check_states(self):
         for s in self.p.states:
@@ -671,7 +671,7 @@ class ProcChecker:
                 self.lookup_data[st.name] = st.e.d
                 info.exist_reads.add(st.e.d)
                 if st.absent is None:
-                    self.d(QUESTION, "存在", f"{show(st.e)} が存在しないとき、どうしますか（なければ 返す …が必要です）", st.line)
+                    self.d(QUESTION, "存在", f"{show(st.e)} が存在しないとき、どうしますか（else {{ return … }} が必要です）", st.line)
                 else:
                     self.check_return(st.absent)
                     self.guarded.add(st.e.d)
@@ -725,7 +725,7 @@ class ProcChecker:
                 if isinstance(inner, Request) or (isinstance(inner, Assign) and isinstance(inner.e, Index)):
                     self.stmt(inner, pos)
                 else:
-                    self.d(ERROR, "型", "各 … { } の中に書けるのは、データを引く文と、要求だけです", st.line)
+                    self.d(ERROR, "型", "for … { } の中に書けるのは、データを引く文と、要求だけです", st.line)
             self.env = saved
 
     def check_transition(self, data, fname, dst, line):
@@ -737,7 +737,7 @@ class ProcChecker:
         for a, b in decl:
             self.info.transitions.add((data, a, b))
             if a != "(新規)" and (data, fname, a) not in self.state_guards:
-                self.d(ERROR, "遷移", f"{data} が「{a}」であることの確認（もし … != {a} なら 返す）が、遷移の前にありません", line)
+                self.d(ERROR, "遷移", f"{data} が「{a}」であることの確認（if … != {a} {{ return … }}）が、遷移の前にありません", line)
         for x, y, why in self.ck.states[sname].rejects:
             if y == dst and any(a == x for a, _ in decl):
                 self.d(ERROR, "遷移", f"拒否された遷移 {x} → {y}（{why}）を行っています", line)
@@ -812,7 +812,7 @@ class ProcChecker:
             if at != tok_of(t) and not (at in ("Int", "Money") and tok_of(t) in ("Int", "Money")) and at != "?":
                 self.d(ERROR, "型", f"外部作用 {st.effect} の引数の型が違います（{at}）", st.line)
         if st.idem is None:
-            self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（冪等キー = … が必須です）", st.line)
+            self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（idempotency_key = … が必須です）", st.line)
         else:
             self.ty(st.idem)
         info.effects.append((st.effect, show(st.idem) if st.idem is not None else ""))
