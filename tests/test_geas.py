@@ -650,9 +650,29 @@ def test_冪等キーは_ID_か文字列():
     assert any("冪等キーは ID か文字列" in m for m in msgs(ck, ERROR))
 
 
-def test_同じ結果に行き先を2つ書くと止まる():
+def test_応答と処理を同じ結果に並べると止まる():
     ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
-    assert any("行き先が2つ以上" in m for m in msgs(ck, ERROR))
+    assert any("並べられません" in m for m in msgs(ck, ERROR))
+
+
+FANOUT = ("受注: 受付 → 決済要求, 在庫不足", "受注: 受付 → 決済要求, 受付 → 決済結果の反映, 在庫不足")
+
+
+def test_同じ結果に処理を続けて書くと_書いた順に起こす行き先になる():
+    ck = chk(mutate(CODE, *FANOUT))
+    assert ck.ready, ck.diags
+    assert build(ck)["処理"][0]["結果"][0] == ("受付", "決済要求、決済結果の反映")
+    assert any("2回書かれています" in m for m in msgs(chk(mutate(CODE, FANOUT[0], "受注: 受付 → 決済要求, 受付 → 決済要求, 在庫不足")), ERROR))
+    src = generate(ck)
+    assert "vec![行き先::処理(\"決済要求\"), 行き先::処理(\"決済結果の反映\")]" in src
+
+
+@needs_cargo
+def test_行き先が複数のフローも生成コードがビルドできる(tmp_path):
+    ck = chk(mutate(CODE, *FANOUT))
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
 
 
 def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():
