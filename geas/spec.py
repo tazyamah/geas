@@ -101,6 +101,44 @@ def build(ck: Checker) -> dict:
     return spec
 
 
+def flow_diagram(fl) -> list[str]:
+    """フローの図（BPMN 風の Mermaid）。結果ごとの行き先は排他ゲートウェイ（×）、par は並列ゲートウェイ（＋）、応答は終了、待つは待ち"""
+    ids: dict[str, str] = {}
+    out = ["flowchart LR"]
+
+    def node(key: str, label: str, shape: str = "[{}]") -> str:
+        if key not in ids:
+            ids[key] = f"n{len(ids)}"
+            out.append(f'    {ids[key]}{shape.format(chr(34) + label + chr(34))}')
+        return ids[key]
+
+    def dest(d: str) -> str:
+        if d == "応答":
+            return node("応答", "応答（reply）", "([{}])")
+        if d.startswith("待つ "):
+            return node(d, "待つ " + d[3:], "[[{}]]")
+        return node("処理:" + d, d)
+
+    for proc, routes in fl.entries:
+        src = node("処理:" + proc, proc)
+        rm = route_map(routes)
+        if len(rm) > 1:
+            gw = node("×:" + proc, "×", "{{{}}}")
+            out.append(f"    {src} --> {gw}")
+            src_of = lambda v: (gw, v)
+        else:
+            src_of = lambda v: (src, v)
+        for v, ds in rm.items():
+            a, label = src_of(v)
+            if len(ds) > 1:
+                par = node(f"＋:{proc}:{v}", "＋", "{{{}}}")
+                out.append(f'    {a} -- "{label}" --> {par}')
+                out += [f"    {par} --> {dest(d)}" for d in ds]
+            else:
+                out.append(f'    {a} -- "{label}" --> {dest(ds[0])}')
+    return out
+
+
 def render(ck: Checker, spec: dict, name="") -> str:
     out = [f"# 生成した仕様書（③）{name}", "", "コードから生成。人が直さない。◆の欄は plan の仕様書（①）と機械で突合する。", ""]
     out += ["## データ", "", "| データ | 項目 | ◆型・範囲 | ◆必須 | ◆一意 |", "|---|---|---|---|---|"]
@@ -115,6 +153,8 @@ def render(ck: Checker, spec: dict, name="") -> str:
     for x in spec["処理"]:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
+    for fl in ck.p.flows:
+        out += ["", f"## フロー図 {fl.name}（×＝結果で行き先が分かれる、＋＝並列に起こす）", "", "```mermaid", *flow_diagram(fl), "```"]
     if spec["問い合わせ"]:
         out += ["", "## 問い合わせ（読むだけの処理）", "", "| 問い合わせ | ◆入力 | ◆読む | ◆条件 | ◆並び | ◆ページ |", "|---|---|---|---|---|---|"]
         for x in spec["問い合わせ"]:
