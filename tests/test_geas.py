@@ -630,3 +630,41 @@ def test_同じ処理を違う行き先で2つのネクサスに書くと止ま�
 def test_失敗の理由を宣言して待たないのは矛盾():
     ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", 'effect 決済.請求(注文ID: id, 金額: money(円)) failures 残高不足 no_wait "試し"'))
     assert any("no_wait" in m for m in msgs(ck, ERROR))
+
+
+# ---- 生成した Rust が必ずビルドできる ----
+def test_定義の名前の重複は止まる():
+    for old, new in [("data 顧客 {", "data 顧客 {\n  顧客ID: id unique\n}\n\ndata 顧客 {"),
+                     ("  在庫: int 0..\n", "  在庫: int 0..\n  在庫: money(円) 0..\n"),
+                     ("  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id\n  slot 注文ID: id\n  reads 注文.合計")]:
+        assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
+
+
+def test_未定義の型の名前は止まる():
+    ck = chk(mutate(CODE, "  input 注文ID: id\n  reads 注文.合計", "  input 注文ID: id, 謎: 謎型\n  reads 注文.合計"))
+    assert any("謎型" in m for m in msgs(ck, ERROR))
+
+
+def test_最後に_return_が無いと止まる():
+    ck = chk(mutate(CODE, "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n  return 要求済\n",
+                    "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n"))
+    assert any("return で終えて" in m for m in msgs(ck, ERROR))
+
+
+def test_if_の条件は真偽():
+    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { return 合計ゼロ }\n  if 注文.合計 { return 合計ゼロ }\n"))
+    assert any("if の条件" in m for m in msgs(ck, ERROR))
+
+
+def test_update_の値の型を確かめる():
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "writes 注文.合計").replace("注文[k].状態 = 完了", "注文[k].合計 = 完了")
+    assert any("型の違う値" in m for m in msgs(chk(src), ERROR))
+
+
+@needs_cargo
+def test_割合の参照があってもホストつきでビルドできる(tmp_path):
+    ck = chk(CODE)
+    write_crate(ck, generate(ck), "fn main() {\n    let r = geas_app::host::有理を読む(\"1/10\", Some(0), Some(1)).unwrap();\n"
+                "    assert_eq!(r.to_string(), \"1/10\");\n    assert!(geas_app::host::有理を読む(\"3/2\", Some(0), Some(1)).is_err());\n}\n", tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]

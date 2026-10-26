@@ -167,18 +167,51 @@ class Checker:
     def ok(self):
         return not any(x.level == ERROR for x in self.diags)
 
+    def check_type(self, t: Type, where: str):
+        """型に出てくる名前（参照先・状態・写像のキー）が定義されているか"""
+        if t.kind == "参照" and t.target not in self.data:
+            self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です")
+        if t.kind == "名前" and t.target not in self.states:
+            self.d(ERROR, "名前", where, f"型「{t.target}」が未定義です")
+        if t.kind == "写像" and t.key not in self.data:
+            self.d(ERROR, "名前", where, f"キーのデータ「{t.key}」が未定義です")
+        if t.kind in ("写像", "集合") and t.value is not None:
+            self.check_type(t.value, where)
+
+    def check_unique(self, names, where, what):
+        for n in dict.fromkeys(n for n in names if names.count(n) > 1):
+            self.d(ERROR, "名前", where, f"{what}「{n}」が2つ以上あります")
+
     def check_defs(self):
-        for dt in self.p.data:
+        p = self.p
+        # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ネクサス・出来事は同じ名前の空間に並ぶ
+        tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events) for x in xs]
+        self.check_unique(tops, "全体", "定義の名前")
+        self.check_unique([e.name for e in p.effects], "全体", "外部作用")
+        self.check_unique([v for s in p.states for v in [s.initial, *s.middle, *s.final] if v], "全体", "状態名")
+        for r in p.results:
+            self.check_unique([v for v, _ in r.variants], f"結果 {r.name}", "種類")
+            for v, ts in r.variants:
+                for t in ts:
+                    self.check_type(t, f"結果 {r.name} / {v}")
+        for e in p.effects:
+            self.check_unique([n for n, _ in e.params], f"外部作用 {e.name}", "引数")
+            for n, t in e.params:
+                self.check_type(t, f"外部作用 {e.name} / {n}")
+        for x in [*p.processes, *p.queries]:
+            kind = "処理" if isinstance(x, Process) else "問い合わせ"
+            self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
+            for n, t in [*x.inputs, *x.refs]:
+                self.check_type(t, f"{kind} {x.name} / {n}")
+        for tg in p.triggers:
+            for n, t in tg.params:
+                self.check_type(t, f"トリガ {tg.name} / {n}")
+        for dt in p.data:
             if self.key_field(dt.name) is None:
                 self.d(ERROR, "データ", f"データ {dt.name}", "「ID 一意」の項目（キー）がありません")
+            self.check_unique([f.name for f in dt.fields], f"データ {dt.name}", "項目")
             for f in dt.fields:
-                t = f.type
-                if t.kind == "参照" and t.target not in self.data:
-                    self.d(ERROR, "名前", f"{dt.name}.{f.name}", f"参照先のデータ「{t.target}」が未定義です")
-                if t.kind == "名前" and t.target not in self.states:
-                    self.d(ERROR, "名前", f"{dt.name}.{f.name}", f"型「{t.target}」が未定義です")
-                if t.kind == "写像" and t.key not in self.data:
-                    self.d(ERROR, "名前", f"{dt.name}.{f.name}", f"キーのデータ「{t.key}」が未定義です")
+                self.check_type(f.type, f"{dt.name}.{f.name}")
         for s in self.p.states:
             if not s.initial or not (s.final or s.endless):
                 self.d(ERROR, "状態", f"状態 {s.name}", "初期と終了の状態は必須です（行き来を繰り返す状態は「終了 なし」と書きます）")
@@ -277,8 +310,8 @@ class Checker:
                     if f is None:
                         continue
                     if st.isdigit():
-                        if f.type.kind not in ("整数", "金額", "日時", "割合"):
-                            self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 数との比較は、数か日時の項目にだけ使えます")
+                        if f.type.kind not in ("整数", "金額", "日時"):
+                            self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 数との比較は、整数・金額・日時の項目にだけ使えます")
                     elif f.type.kind != "名前" or st not in [x for s in self.p.states if s.name == f.type.target for x in [s.initial, *s.middle, *s.final]]:
                         self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 「{st}」は項目 {fn} の状態ではありません")
             for fn, op, arg in q.filters:
@@ -805,6 +838,8 @@ class ProcChecker:
         self.exist_sets = {}
         for pos, st in enumerate(proc.body):
             self.stmt(st, pos)
+        if not (proc.body and isinstance(proc.body[-1], Return)):
+            self.d(ERROR, "結果", "処理の最後は return で終えてください（結果を返さずに終わる道があります）")
         self.finish()
         return info
 
@@ -814,7 +849,8 @@ class ProcChecker:
         if isinstance(st, Return):
             self.check_return(st)
         elif isinstance(st, If):
-            self.ty(st.cond)
+            if self.ty(st.cond) not in ("Bool", "?"):
+                self.d(ERROR, "型", f"if の条件「{show(st.cond)}」は、成り立つか成り立たないかの条件である必要があります", st.line)
             c = st.cond
             state_cmp = (isinstance(c, Bin) and c.op in ("==", "!=") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
                          and c.l.e.n in self.bindings and isinstance(c.r, Name))
@@ -893,6 +929,11 @@ class ProcChecker:
                        "1件ずつ let で引き、元の状態を確かめてから変えてください）", st.line)
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
+            elif (tf is not None and tf.type.kind != "名前" and vt not in (tok_of(tf.type), "?")
+                  and not (vt in ("Int", "Money") and tok_of(tf.type) in ("Int", "Money"))):
+                self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} に型の違う値（{vt}）を入れています", st.line)
+            elif tf is not None and st.op != "=" and tf.type.kind not in ("整数", "金額", "割合"):
+                self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} は数ではないので {st.op} できません", st.line)
             info.writes.add(f"{tgt.e.d}.{tgt.n}")
             info.write_list.append(f"{tgt.e.d}.{tgt.n}")
             if tf is not None and tf.type.kind in ("整数", "金額", "割合"):

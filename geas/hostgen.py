@@ -5,6 +5,7 @@ import json
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
+from .rustgen import opt
 from .spec import fmt_cause
 
 JSON_PRELUDE = r'''// 自動生成。手で編集しない。
@@ -85,6 +86,15 @@ pub fn b64_encode(b: &[u8]) -> String {
     }
     o
 }
+/// 割合は "分子/分母" の文字列で受け取る（小数にすると丸めが入るため）。範囲の宣言もここで確かめる
+pub fn 有理を読む(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<有理, String> {
+    let (a, b) = s.split_once('/').ok_or_else(|| "割合は \"分子/分母\" で書いてください".to_string())?;
+    let 分子: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
+    let 分母: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
+    if 分母 <= 0 { return Err("割合の分母は 1 以上にしてください".into()); }
+    if lo.map_or(false, |l| 分子 < l * 分母) || hi.map_or(false, |h| 分子 > h * 分母) { return Err("範囲外の割合です".into()); }
+    Ok(有理 { 分子, 分母 })
+}
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut o = Vec::with_capacity(s.len() / 4 * 3);
     let (mut n, mut k) = (0u32, 0);
@@ -111,6 +121,9 @@ def from_j(t: Type, j: str) -> str:
         return f'{phys(t)}::try_from({j}.as_int()?).map_err(|_| "範囲外の数です".to_string())?'
     if k == "日時":
         return f"({j}.as_int()? as i64)"
+    if k == "割合":
+        r = t.range
+        return f'有理を読む({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
     if k == "バイト列":
         return f"b64_decode({j}.as_str()?)?"
     if k == "集合":
@@ -131,6 +144,8 @@ def to_j(t: Type, x: str) -> str:
         return f"{x}.to_string()"
     if k == "バイト列":
         return f"js_str(&b64_encode(&{x}))"
+    if k == "割合":
+        return f"js_str(&{x}.to_string())"
     if k == "集合":
         return f"js_set(&{x})"
     if k == "名前":
