@@ -1,10 +1,17 @@
 // お店の例：受注と決済要求（試作の最小範囲）
 // キーワードは英語、名前は日本語（仕様書・計画書の言葉）のまま。
 
+ltype 在庫数 = int 0..
+ltype 非負金額 = money(円) 0..
+ltype 数量 = int 1..99
+ltype 商品数量 = 商品 → 数量
+ltype 税率値 = ratio 0..1
+ltype ID集合 = set of id
+
 entity 商品 {
   商品ID: id unique
-  在庫: int 0.. required
-  単価: money(円) 0.. required
+  在庫: 在庫数 required
+  単価: 非負金額 required
 }
 
 entity 顧客 {
@@ -14,8 +21,8 @@ entity 顧客 {
 entity 注文 {
   注文ID: id unique
   顧客: ref 顧客 required
-  明細: 商品 → int 1..99 required
-  合計: money(円) 0.. required
+  明細: 商品数量 required
+  合計: 非負金額 required
   状態: 注文状態
 }
 
@@ -28,8 +35,8 @@ state 注文状態 {
 
 result 受注結果 {
   受付(注文ID: id)
-  在庫不足(不足: set of id)
-  商品なし(未登録: set of id)
+  在庫不足(不足: ID集合)
+  商品なし(未登録: ID集合)
   顧客なし
 }
 
@@ -49,8 +56,8 @@ result 待ち解除結果 {
 effect 決済.請求(注文ID: id, 金額: money(円))
 
 deed 受注 {
-  input 顧客ID: id required, 明細: 商品 → int 1..99 required
-  slot 税率: ratio 0..1
+  input 顧客ID: id required, 明細: 商品数量 required
+  slot 税率: 税率値
   reads 商品.在庫, 商品.単価, 顧客
   writes 商品.在庫, 注文
   transition 注文: (new) → 受付

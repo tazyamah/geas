@@ -226,7 +226,8 @@ def test_計画にあるトリガの行き先がコードと違えば検出す�
 
 
 def test_入力の範囲が項目より広いと止まる():
-    ck = chk(mutate(CODE, "顧客ID: id required, 明細: 商品 → int 1..99 required", "顧客ID: id required, 明細: 商品 → int 1..200 required"))
+    src = mutate(CODE, "ltype ID集合 = set of id\n", "ltype ID集合 = set of id\nltype 広い数量 = int 1..200\nltype 広い商品数量 = 商品 → 広い数量\n")
+    ck = chk(mutate(src, "顧客ID: id required, 明細: 商品数量 required", "顧客ID: id required, 明細: 広い商品数量 required"))
     assert any("範囲の広い入力" in m for m in msgs(ck, ERROR))
 
 
@@ -344,10 +345,12 @@ def test_条件つきの変更は_Rust_の_if_の中に出る():
 
 
 # ---- 問い合わせの条件（または・数との比較） ----
-QUERY = """entity メモ {
+QUERY = """ltype 重さ値 = int 0..
+
+entity メモ {
   メモID: id unique
   状態: メモ状態
-  重さ: int 0..
+  重さ: 重さ値
 }
 state メモ状態 {
   initial 下書き
@@ -489,7 +492,7 @@ def test_存在の確認は同じキーにだけ効く():
 
 BULK = """
 deed 一括完了 {
-  input 他: set of id
+  input 他: ID集合
   writes 注文.状態
   result 待ち解除結果
   effects none
@@ -595,7 +598,7 @@ def test_減らした後に確かめた不足の集まりは古い():
 # ---- 外部作用とフローの重複・矛盾 ----
 FOR = """
 deed 引当 {
-  input 明細: 商品 → int 1..99 required, 注文ID: id required
+  input 明細: 商品数量 required, 注文ID: id required
   result 待ち解除結果
   effects 倉庫.引当
 
@@ -613,7 +616,7 @@ nexus 引当の流れ {
 
 def with_for(key):
     src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))",
-                 'effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id, 数: int 1..99) no_wait "試し"')
+                 'effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id, 数: 数量) no_wait "試し"')
     return chk(src + FOR.replace("KEY", key))
 
 
@@ -665,7 +668,7 @@ def test_失敗の理由を宣言して待たないのは矛盾():
 # ---- 生成した Rust が必ずビルドできる ----
 def test_定義の名前の重複は止まる():
     for old, new in [("entity 顧客 {", "entity 顧客 {\n  顧客ID: id unique\n}\n\nentity 顧客 {"),
-                     ("  在庫: int 0.. required\n", "  在庫: int 0.. required\n  在庫: money(円) 0..\n"),
+                     ("  在庫: 在庫数 required\n", "  在庫: 在庫数 required\n  在庫: 非負金額\n"),
                      ("  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required\n  slot 注文ID: id\n  reads 注文.合計")]:
         assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
 
@@ -726,7 +729,7 @@ def test_結果の中身と次の処理の入力は名前と型で突き合わ�
                for m in msgs(chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → 決済要求, 商品なし")), ERROR))
     ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(番号: id)\n"))
     assert any("入力「注文ID」が、結果「受付」の中身にありません" in m for m in msgs(ck, ERROR))
-    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(注文ID: set of id)\n"))
+    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(注文ID: ID集合)\n"))
     assert any("型" in m and "受付" in m for m in msgs(ck, ERROR))
 
 
@@ -785,11 +788,13 @@ def test_型の変換を使っても_Rust_がビルドできる(tmp_path):
 
 
 # ---- すべては原則「無いかもしれない」。必須の約束は required ----
-NOTE = """entity メモ {
+NOTE = """ltype 重さ値 = int 0..
+
+entity メモ {
   メモID: id unique
   本文: text required
   題: text
-  重さ: int 0..
+  重さ: 重さ値
 }
 result 書いた結果 {
   書いた(メモID: id)
@@ -880,18 +885,21 @@ def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     assert got[2].startswith("Err(") and "題" in got[2], got[2]
 
 
-NULLIN = """entity メモ {
+NULLIN = """ltype 重さ値 = int 0..
+ltype 軽い重さ = int 0..9
+
+entity メモ {
   メモID: id unique
   本文: text required
   題: text
-  重さ: int 0..
+  重さ: 重さ値
 }
 result 書いた結果 {
   書いた(メモID: id)
   無題
 }
 deed 書く {
-  input 本文: text required, 題: text, 重さ: int 0..9
+  input 本文: text required, 題: text, 重さ: 軽い重さ
   writes メモ
   result 書いた結果
   effects none
@@ -964,15 +972,17 @@ def test_ホストは宣言にない入力の項目を無いものとして扱�
     assert got[0] == got[1] and '\\"結果\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
 
 
-TEXT = """entity 利用者 {
+TEXT = """ltype 利用者名 = text 1..20 of "a-z0-9_"
+
+entity 利用者 {
   利用者ID: id unique
-  名: text 1..20 of "a-z0-9_" required
+  名: 利用者名 required
 }
 result 登録結果 {
   登録した(利用者ID: id)
 }
 deed 登録する {
-  input 名: text 1..20 of "a-z0-9_" required
+  input 名: 利用者名 required
   writes 利用者
   result 登録結果
   effects none
@@ -994,22 +1004,28 @@ def test_文字列の長さと使える文字は仕様書の型に出る():
     assert show_type(t) == "文字列 1..20 文字種 [0-9_a-z]"
 
 
+def 入力だけ型を変える(decl):
+    """項目の型は利用者名のまま、入力の名前の型だけを、新しい論理型（decl）に変える"""
+    src = mutate(TEXT, 'ltype 利用者名 = text 1..20 of "a-z0-9_"\n', 'ltype 利用者名 = text 1..20 of "a-z0-9_"\n' + decl + "\n")
+    return mutate(src, "input 名: 利用者名", "input 名: 入力名")
+
+
 def test_長さや文字が広い入力を項目へ入れると止まる():
-    assert not msgs(chk(mutate(TEXT, "input 名: text 1..20", "input 名: text 1..10")), ERROR)  # 狭いのはよい
-    ck = chk(mutate(TEXT, "input 名: text 1..20", "input 名: text 1..30"))
+    assert not msgs(chk(入力だけ型を変える('ltype 入力名 = text 1..10 of "a-z0-9_"')), ERROR)  # 狭いのはよい
+    ck = chk(入力だけ型を変える('ltype 入力名 = text 1..30 of "a-z0-9_"'))
     assert any("長さ" in m and "収まる" in m for m in msgs(ck, ERROR)), ck.diags
-    ck = chk(mutate(TEXT, "input 名: text 1..20", "input 名: text"))
+    ck = chk(mutate(TEXT, "input 名: 利用者名", "input 名: text"))
     assert any("長さ" in m for m in msgs(ck, ERROR)), ck.diags
-    ck = chk(mutate(TEXT, 'input 名: text 1..20 of "a-z0-9_"', 'input 名: text 1..20 of "a-z0-9_A-Z"'))
+    ck = chk(入力だけ型を変える('ltype 入力名 = text 1..20 of "a-z0-9_A-Z"'))
     assert any("文字" in m and "収まる" in m for m in msgs(ck, ERROR)), ck.diags
-    ck = chk(mutate(TEXT, 'input 名: text 1..20 of "a-z0-9_"', "input 名: text 1..20"))
+    ck = chk(入力だけ型を変える("ltype 入力名 = text 1..20"))
     assert any("文字" in m for m in msgs(ck, ERROR)), ck.diags
 
 
 def test_文字種の書き方の誤りは止まる():
     for bad in ('of "z-a"', 'of ""', 'of "a\\"'):
         with pytest.raises(ParseError):
-            chk(mutate(TEXT, 'of "a-z0-9_" required\n}', bad + " required\n}"))
+            chk(mutate(TEXT, 'of "a-z0-9_"\n', bad + "\n"))
 
 
 def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
@@ -1082,16 +1098,20 @@ def test_ホストは時刻の計算をして_範囲外の時刻は境界で止�
     assert got[1].startswith("Err(") and got[2].startswith("Err("), got[1:]
 
 
-SLOT = """entity 品 {
+SLOT = """ltype 千以下の数 = int 0..1000
+ltype 十以下の数 = int 0..10
+ltype 倍率値 = int 1..100
+
+entity 品 {
   品ID: id unique
-  数: int 0..1000 required
+  数: 千以下の数 required
 }
 result 置いた結果 {
   置いた(品ID: id)
 }
 deed 置く {
-  input 数: int 0..10 required
-  slot 倍率: int 1..100
+  input 数: 十以下の数 required
+  slot 倍率: 倍率値
   writes 品
   result 置いた結果
   effects none
@@ -1120,16 +1140,19 @@ def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     assert got[2].startswith("Err(") and "倍率" in got[2], got[2]
 
 
-PART = """entity 品 {
+PART = """ltype 非負金額 = money(円) 0..
+ltype 税抜の限り = money(円) 0..1000000
+
+entity 品 {
   品ID: id unique
-  価格: money(円) 0.. required
+  価格: 非負金額 required
 }
 result 置いた結果 {
   置いた(品ID: id)
 }
-part 税込(x: money(円) 0..) -> money(円) 0.. guarantee result >= x
+part 税込(x: 非負金額) -> 非負金額 guarantee result >= x
 deed 置く {
-  input 税抜: money(円) 0..1000000 required
+  input 税抜: 税抜の限り required
   writes 品
   result 置いた結果
   effects none
@@ -1208,15 +1231,19 @@ fn main() {
     assert r.stdout.strip() == "0"
 
 
-NULLQ = """entity 人 {
+NULLQ = """ltype 重さ値 = int 0..
+ltype 札の数 = int 1..9
+ltype 札束 = 人 → 札の数
+
+entity 人 {
   人ID: id unique
   名前: text
 }
 entity メモ {
   メモID: id unique
   書いた人: ref 人
-  重さ: int 0..
-  札: 人 → int 1..9
+  重さ: 重さ値
+  札: 札束
 }
 query 一覧 {
   input 最小: int
@@ -1252,12 +1279,15 @@ fn main() {
     assert n == "1"  # 重さが null のものは絞り込みを満たさない
 
 
-PAGEQ = """entity メモ {
+PAGEQ = """ltype 重さ値 = int 0..
+ltype 件数値 = int 1..100
+
+entity メモ {
   メモID: id unique
-  重さ: int 0..
+  重さ: 重さ値
 }
 query 一覧 {
-  input 件数: int 1..100
+  input 件数: 件数値
   from メモ
   order 重さ newest
   page 件数
@@ -1347,3 +1377,10 @@ def test_ltype_の名前の重複と組み込み名は止まる():
 def test_data_は_entity_に改名した():
     with pytest.raises(ParseError, match="entity"):
         parse("data 商品 {\n  商品ID: id unique\n}\n")
+
+
+def test_範囲や組み合わせの直書きは止まり_名前を付けるよう案内する():
+    for ty in ("int 1..99", "text 1..20", "money(円) 0..", "set of id", "商品 → 数量"):
+        with pytest.raises(ParseError, match="ltype"):
+            parse(f"entity 商品 {{\n  商品ID: id unique\n  項目: {ty}\n}}\n")
+    parse("entity 商品 {\n  商品ID: id unique\n  項目: int\n  名: text\n  金: money(円)\n}\n")  # 約束のない組み込みはそのまま書ける

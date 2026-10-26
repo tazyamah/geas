@@ -32,6 +32,7 @@ class Parser:
         self.t = toks
         self.i = 0
         self.ltypes: dict[str, Type] = {}
+        self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
 
     # ---- 部品 ----
     def peek(self, k=0) -> Tok:
@@ -156,7 +157,9 @@ class Parser:
         if name in self.ltypes:
             raise ParseError(f"論理型「{name}」が2つ以上あります", line)
         self.expect("=")
+        self.in_ltype = True
         t = self.type()
+        self.in_ltype = False
         self.end_line()
         self.ltypes[name] = t
 
@@ -232,6 +235,14 @@ class Parser:
         return tuple(merged)
 
     def type(self) -> Type:
+        line = self.peek().line
+        named = self.peek().val in self.ltypes and not self.is_("→", 1)
+        t = self._type()
+        if not (self.in_ltype or named) and (t.kind in ("写像", "集合") or t.range is not None or t.chars is not None):
+            raise ParseError("範囲や組み合わせは、ltype で名前を付けてから使ってください（例：ltype 数量 = int 1..99）", line)
+        return t
+
+    def _type(self) -> Type:
         tok = self.name()
         if tok == "id":
             return Type("ID")
