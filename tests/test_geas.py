@@ -63,59 +63,59 @@ def test_物理数は範囲から選ばれる():
 
 # ---- 検査が止める例（構文のスケッチ §3 の表） ----
 def test_丸めの指定が無いと問いになる():
-    ck = chk(mutate(CODE, "合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "合計 = 小計 + 小計 * 税率"))
+    ck = chk(mutate(CODE, "let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)", "let 合計 = 小計 + 小計 * 税率"))
     assert any("端数をどう丸めますか" in m for m in msgs(ck, QUESTION))
 
 
 def test_結果に行き先が無いと止まる():
-    ck = chk(mutate(CODE, ", 顧客なし → 応答\n", "\n"))
+    ck = chk(mutate(CODE, ", 顧客なし → reply\n", "\n"))
     assert any("顧客なし" in m and "行き先" in m for m in msgs(ck, ERROR))
 
 
 def test_冪等キーが無いと止まる():
-    ck = chk(mutate(CODE, ", 冪等キー = 注文ID)", ")"))
+    ck = chk(mutate(CODE, ", idempotency_key = 注文ID)", ")"))
     assert any("冪等キー" in m for m in msgs(ck, ERROR))
 
 
 def test_宣言に無い遷移は止まる():
-    ck = chk(mutate(CODE, "    注文.状態 = 決済要求済", "    注文.状態 = 完了"))
+    ck = chk(mutate(CODE, "  注文.状態 = 決済要求済", "  注文.状態 = 完了"))
     assert any("遷移" in d.code and "完了" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_元の状態の確認が無いと止まる():
-    ck = chk(mutate(CODE, "    もし 注文.状態 != 受付 なら 返す 状態違い\n", ""))
+    ck = chk(mutate(CODE, "  if 注文.状態 != 受付 { return 状態違い }\n", ""))
     assert any("確認" in m for m in msgs(ck, ERROR))
 
 
 def test_在庫不足の判定を削ると不変条件が示せない():
-    ck = chk(mutate(CODE, "    もし 不足 が 空でない なら 返す 在庫不足(不足)\n", ""))
+    ck = chk(mutate(CODE, "  if 不足 is nonempty { return 在庫不足(不足) }\n", ""))
     assert any("反例" in m for m in msgs(ck, ERROR))
 
 
 def test_書く項目の宣言漏れは止まる():
-    ck = chk(mutate(CODE, "  書く 商品.在庫, 注文\n", "  書く 注文\n"))
+    ck = chk(mutate(CODE, "  writes 商品.在庫, 注文\n", "  writes 注文\n"))
     assert any("商品.在庫" in m for m in msgs(ck, ERROR))
 
 
 def test_合計ゼロの確認を削ると不変条件が示せない():
-    ck = chk(mutate(CODE, "    もし 注文.合計 <= 0 なら 返す 合計ゼロ\n", ""))
+    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", ""))
     assert any("合計 > 0" in m for m in msgs(ck, ERROR))
 
 
 def test_存在を確かめない参照は問いになる():
-    ck = chk(mutate(CODE, "    顧客 = 顧客[顧客ID] なければ 返す 顧客なし", "    顧客 = 顧客[顧客ID]"))
+    ck = chk(mutate(CODE, "  let 顧客 = 顧客[顧客ID] else { return 顧客なし }", "  let 顧客 = 顧客[顧客ID]"))
     assert any("存在しない" in m for m in msgs(ck, QUESTION))
 
 
 def test_構文エラーは行番号つき():
     with pytest.raises(ParseError, match="行目"):
-        parse("データ 商品 {\n  在庫 整数\n}\n")
+        parse("data 商品 {\n  在庫 int\n}\n")
 
 
 # ---- Rust 生成 ----
 def test_エラーのあるコードからは生成しない():
     with pytest.raises(AssertionError):
-        generate(chk(mutate(CODE, ", 冪等キー = 注文ID)", ")")))
+        generate(chk(mutate(CODE, ", idempotency_key = 注文ID)", ")")))
 
 
 def test_生成は決定的で_コミットした生成物と一致する():
@@ -192,12 +192,12 @@ def test_トリガの要因が仕様書に出る():
 
 
 def test_期限の無いトリガは止まる():
-    ck = chk(mutate(CODE, "  期限 現在 + 30 分 → 決済の期限切れ\n", ""))
+    ck = chk(mutate(CODE, "  deadline now + 30 min → 決済の期限切れ\n", ""))
     assert any("期限がありません" in m for m in msgs(ck, ERROR))
 
 
 def test_待つ先のトリガが未定義だと止まる():
-    ck = chk(mutate(CODE, "要求済 → 待つ 決済待ち", "要求済 → 待つ 承認待ち"))
+    ck = chk(mutate(CODE, "要求済 → wait 決済待ち", "要求済 → wait 承認待ち"))
     assert any("承認待ち" in m for m in msgs(ck, ERROR))
 
 
@@ -207,7 +207,7 @@ def test_トリガの行き先が未定義の処理だと止まる():
 
 
 def test_トリガの引数と処理の入力が合わないと止まる():
-    ck = chk(mutate(CODE, "トリガ 決済待ち(注文ID: ID)", "トリガ 決済待ち(注文: ID)"))
+    ck = chk(mutate(CODE, "trigger 決済待ち(注文ID: id)", "trigger 決済待ち(注文: id)"))
     assert any("合いません" in m or "入力にもっていません" in m for m in msgs(ck, ERROR))
 
 
@@ -218,14 +218,14 @@ def test_計画にあるトリガの行き先がコードと違えば検出す�
 
 
 def test_入力の範囲が項目より広いと止まる():
-    ck = chk(mutate(CODE, "入力 顧客ID: ID, 明細: 商品 → 整数 1..99", "入力 顧客ID: ID, 明細: 商品 → 整数 1..200"))
+    ck = chk(mutate(CODE, "input 顧客ID: id, 明細: 商品 → int 1..99", "input 顧客ID: id, 明細: 商品 → int 1..200"))
     assert any("範囲の広い入力" in m for m in msgs(ck, ERROR))
 
 
 def test_トリガの型の食い違いと期限の誤りは止まる():
-    assert any("型" in m for m in msgs(chk(mutate(CODE, "トリガ 決済待ち(注文ID: ID)", "トリガ 決済待ち(注文ID: 整数)")), ERROR))
-    assert any("期限が複数" in m for m in msgs(chk(mutate(CODE, "  期限 現在 + 30 分 → 決済の期限切れ", "  期限 現在 + 30 分 → 決済の期限切れ\n  期限 現在 + 1 時間 → 決済の期限切れ")), ERROR))
-    assert any("0より長く" in m for m in msgs(chk(mutate(CODE, "期限 現在 + 30 分", "期限 現在 + 0 分")), ERROR))
+    assert any("型" in m for m in msgs(chk(mutate(CODE, "trigger 決済待ち(注文ID: id)", "trigger 決済待ち(注文ID: int)")), ERROR))
+    assert any("期限が複数" in m for m in msgs(chk(mutate(CODE, "  deadline now + 30 min → 決済の期限切れ", "  deadline now + 30 min → 決済の期限切れ\n  deadline now + 1 hour → 決済の期限切れ")), ERROR))
+    assert any("0より長く" in m for m in msgs(chk(mutate(CODE, "deadline now + 30 min", "deadline now + 0 min")), ERROR))
 
 
 # ---- 初回の対話の台帳 ----
@@ -284,3 +284,21 @@ def test_台帳から出したplanの表は突合の対象にならない():
     led["usecases"].append({"id": "UC1", "goal": "書く", "main": ["書く"]})
     assert read_plan(iv.render(led)) == {}
 
+
+
+# ---- 構文（英語キーワード・Rust 風の本体） ----
+def test_flowはnexusの別名():
+    ck = chk(mutate(CODE, "nexus 注文受付", "flow 注文受付"))
+    assert not msgs(ck, ERROR)
+
+
+def test_日本語の古いキーワードや_body_は受け付けない():
+    with pytest.raises(ParseError):
+        parse("データ 商品 {\n  在庫: int\n}\n")
+    with pytest.raises(ParseError):
+        parse(mutate(CODE, "  let 顧客 = 顧客[顧客ID] else", "  body {\n  let 顧客 = 顧客[顧客ID] else"))
+
+
+def test_if_の本体は改行して書いてもよい():
+    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 {\n    return 合計ゼロ\n  }\n"))
+    assert not msgs(ck, ERROR)

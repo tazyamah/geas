@@ -1,4 +1,5 @@
-"""構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。"""
+"""構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。
+キーワードは英語。構文木の中身（型の種類や結果の行き先など）は、仕様書の言葉に合わせた日本語のまま持つ。"""
 from .ast import *  # noqa: F401,F403
 from .lexer import Tok, lex
 
@@ -10,6 +11,10 @@ class ParseError(Exception):
 
 
 CMP = ("<", ">", "<=", ">=", "==", "!=")
+UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}
+UNIT_WORDS = "sec・min・hour・day"
+SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
+PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない"}
 
 
 class Parser:
@@ -82,27 +87,27 @@ class Parser:
         while self.peek().kind != "EOF":
             line = self.peek().line
             kw = self.name()
-            if kw == "データ":
+            if kw == "data":
                 p.data.append(self.data(line))
-            elif kw == "状態":
+            elif kw == "state":
                 p.states.append(self.state(line))
-            elif kw == "結果":
+            elif kw == "result":
                 p.results.append(self.result_def(line))
-            elif kw == "外部作用":
+            elif kw == "effect":
                 p.effects.append(self.effect_decl(line))
-            elif kw == "部品":
+            elif kw == "part":
                 p.parts.append(self.part(line))
-            elif kw == "不変条件":
+            elif kw == "invariant":
                 p.invariants.append(self.invariant(line))
-            elif kw == "処理定義":
+            elif kw == "deed":
                 p.processes.append(self.process(line))
-            elif kw == "フロー":
+            elif kw in ("nexus", "flow"):  # flow は nexus の別名（糖衣構文）
                 p.flows.append(self.flow(line))
-            elif kw == "トリガ":
+            elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
-            elif kw == "問い合わせ":
+            elif kw == "query":
                 p.queries.append(self.query(line))
-            elif kw == "出来事":
+            elif kw == "event":
                 p.events.append(self.event(line))
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
@@ -130,7 +135,7 @@ class Parser:
     # ---- データ ----
     def data(self, line) -> Data:
         name = self.name()
-        store = self.name() if self.accept("保存先") else None
+        store = self.name() if self.accept("store") else None
         self.block_open()
         fields = []
         while not self.accept("}"):
@@ -138,11 +143,11 @@ class Parser:
             self.expect(":")
             t = self.type()
             f = Field(fname, t)
-            while self.peek().kind == "NAME" and self.peek().val in ("一意", "任意", "必須"):
+            while self.peek().kind == "NAME" and self.peek().val in ("unique", "optional", "required"):
                 m = self.name()
-                if m == "一意":
+                if m == "unique":
                     f.unique = True
-                elif m == "任意":
+                elif m == "optional":
                     f.optional = True
             fields.append(f)
             self.end_line()
@@ -161,24 +166,26 @@ class Parser:
 
     def type(self) -> Type:
         tok = self.name()
-        if tok == "ID":
-            if self.accept("の集合"):
-                return Type("集合", value=Type("ID"))
+        if tok == "id":
             return Type("ID")
-        if tok in ("文字列", "日時"):
-            return Type(tok)
-        if tok == "バイト列":  # 範囲は長さ（バイト数）
-            return Type(tok, range=self.range_opt())
-        if tok in ("整数", "割合"):
-            return Type(tok, range=self.range_opt())
-        if tok == "金額":
+        if tok == "set":  # set of id
+            self.expect("of")
+            self.expect("id")
+            return Type("集合", value=Type("ID"))
+        if tok in ("text", "time"):
+            return Type(SIMPLE_TYPES[tok])
+        if tok == "bytes":  # 範囲は長さ（バイト数）
+            return Type("バイト列", range=self.range_opt())
+        if tok in ("int", "ratio"):
+            return Type(SIMPLE_TYPES[tok], range=self.range_opt())
+        if tok == "money":
             unit = "円"
             if self.accept("("):
                 unit = self.name()
                 self.expect(")")
             return Type("金額", range=self.range_opt(), unit=unit)
-        if self.accept("を参照"):
-            return Type("参照", target=tok)
+        if tok == "ref":  # ref Data
+            return Type("参照", target=self.name())
         if self.accept("→"):
             return Type("写像", key=tok, value=self.type())
         return Type("名前", target=tok)
@@ -189,25 +196,23 @@ class Parser:
         self.block_open()
         while not self.accept("}"):
             kw = self.name()
-            if kw == "初期":
+            if kw == "initial":
                 s.initial = self.name()
-            elif kw == "中間":
+            elif kw == "middle":
                 s.middle += self.comma_list(self.name)
-            elif kw == "終了":
-                names = self.comma_list(self.name)
-                if names == ["なし"]:
-                    s.endless = True
-                else:
-                    s.final += names
-            elif kw == "拒否":
+            elif kw == "final":
+                s.final += self.comma_list(self.name)
+            elif kw == "endless":
+                s.endless = True
+            elif kw == "reject":
                 a = self.name()
                 self.expect("→")
                 b = self.name()
-                self.expect("理由")
+                self.expect("reason")
                 t = self.next()
                 s.rejects.append((a, b, t.val))
             else:
-                raise self.err(f"状態の中に「{kw}」は書けません")
+                raise self.err(f"state の中に「{kw}」は書けません")
             self.end_line()
         return s
 
@@ -242,13 +247,13 @@ class Parser:
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
         failures = []
-        if self.accept("失敗"):
+        if self.accept("failures"):
             failures = self.comma_list(self.name)
         no_wait = None
-        if self.accept("待たない"):
+        if self.accept("no_wait"):
             t = self.next()
             if t.kind != "STR":
-                raise self.err("待たない の後ろには、理由を \"…\" で書いてください")
+                raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
             no_wait = t.val
         self.end_line()
         return EffectDecl(name, params, line, failures, no_wait)
@@ -265,62 +270,73 @@ class Parser:
         d = self.name()
         self.expect(":")
         c = self.expr()
-        if self.accept("なら"):
+        if self.accept("implies"):
             c = Implies(c, self.expr())
         self.end_line()
         return Invariant(d, c, line)
 
-    # ---- 処理定義 ----
+    # ---- 処理（deed） ----
     def access(self) -> str:
         return self.dotted()
+
+    DECLS = ("input", "slot", "reads", "writes", "transition", "result", "effects")
 
     def process(self, line) -> Process:
         p = Process(self.name(), line=line)
         self.block_open()
         while not self.accept("}"):
-            kw = self.name()
-            if kw in ("入力", "参照"):
-                items = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
-                (p.inputs if kw == "入力" else p.refs).extend(items)
-            elif kw == "読む":
-                p.reads += self.comma_list(self.access)
-            elif kw == "書く":
-                p.writes += self.comma_list(self.access)
-            elif kw == "遷移":
-                d = self.name()
-                self.expect(":")
-                if self.accept("("):
-                    self.name()
-                    self.expect(")")
-                    src = "(新規)"
-                else:
-                    src = self.name()
-                self.expect("→")
-                p.transitions.append((d, src, self.name()))
-            elif kw == "結果":
-                p.result = self.name()
-            elif kw == "外部":
-                if not self.accept("なし"):
-                    p.effects += self.comma_list(self.dotted)
-            elif kw == "本体":
-                self.block_open()
-                while not self.accept("}"):
-                    p.body.append(self.stmt())
+            if self.peek().kind == "NAME" and self.peek().val in self.DECLS:
+                self.decl(p)
             else:
-                raise self.err(f"処理定義の中に「{kw}」は書けません")
-            self.end_line()
+                p.body.append(self.stmt())  # 宣言でなければ本体の文（body ブロックは無い）
         return p
+
+    def decl(self, p: Process):
+        kw = self.name()
+        if kw in ("input", "slot"):
+            items = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
+            (p.inputs if kw == "input" else p.refs).extend(items)
+        elif kw == "reads":
+            p.reads += self.comma_list(self.access)
+        elif kw == "writes":
+            p.writes += self.comma_list(self.access)
+        elif kw == "transition":
+            d = self.name()
+            self.expect(":")
+            if self.accept("("):
+                self.name()
+                self.expect(")")
+                src = "(新規)"
+            else:
+                src = self.name()
+            self.expect("→")
+            p.transitions.append((d, src, self.name()))
+        elif kw == "result":
+            p.result = self.name()
+        else:  # effects
+            if not self.accept("none"):
+                p.effects += self.comma_list(self.dotted)
+        self.end_line()
 
     # ---- 文 ----
     def ret(self) -> Return:
         line = self.peek().line
-        self.expect("返す")
+        self.expect("return")
         v = self.name()
         args = []
         if self.accept("("):
             args = self.comma_list(self.expr)
             self.expect(")")
         return Return(v, args, line)
+
+    def ret_block(self) -> Return:
+        """「{ return X }」。1行でも、改行して書いてもよい"""
+        self.expect("{")
+        self.skip_nl()
+        r = self.ret()
+        self.skip_nl()
+        self.expect("}")
+        return r
 
     def binder(self) -> Binder:
         if self.accept("("):
@@ -333,17 +349,16 @@ class Parser:
 
     def stmt(self):
         line = self.peek().line
-        if self.is_("返す"):
+        if self.is_("return"):
             s = self.ret()
-        elif self.accept("もし"):
+        elif self.accept("if"):
             cond = self.expr()
-            self.expect("なら")
-            s = If(cond, self.ret(), line)
-        elif self.accept("更新"):
+            s = If(cond, self.ret_block(), line)
+        elif self.accept("update"):
             self.expect("{")
             target = self.postfix()
             if self.peek().val not in ("-=", "+=", "="):
-                raise self.err("更新の演算子（-= += =）が必要です")
+                raise self.err("update の演算子（-= += =）が必要です")
             op = self.next().val
             value = self.expr()
             self.expect("|")
@@ -351,19 +366,19 @@ class Parser:
             cond = self.expr() if self.accept(",") else None
             self.expect("}")
             s = Update(target, op, value, b, cond, line)
-        elif self.accept("各"):
+        elif self.accept("for"):
             b = self.binder()
             self.block_open()
             body = []
             while not self.accept("}"):
                 body.append(self.stmt())
             s = ForEach(b, body, line)
-        elif self.accept("要求"):
+        elif self.accept("request"):
             eff = self.dotted()
             self.expect("(")
             args, idem = [], None
             while True:
-                if self.is_("冪等キー") and self.is_("=", 1):
+                if self.is_("idempotency_key") and self.is_("=", 1):
                     self.next()
                     self.next()
                     idem = self.expr()
@@ -373,33 +388,35 @@ class Parser:
                     break
             self.expect(")")
             s = Request(eff, args, idem, line)
+        elif self.accept("let"):
+            n = self.name()
+            self.expect("=")
+            if self.accept("create"):
+                d = self.name()
+                self.expect("{")
+                fields = self.comma_list(lambda: (self.name(), (self.expect(":"), self.expr())[1]))
+                self.expect("}")
+                s = Create(n, d, fields, line)
+            else:
+                e = self.expr()
+                absent = None
+                if self.accept("else"):
+                    absent = self.ret_block()
+                s = Assign(n, e, absent, line)
         else:
             n = self.name()
-            if self.accept("."):
-                f = self.name()
-                self.expect("=")
-                s = SetField(n, f, self.expr(), line)
-            else:
-                self.expect("=")
-                if self.accept("新規作成"):
-                    d = self.name()
-                    self.expect("{")
-                    fields = self.comma_list(lambda: (self.name(), (self.expect(":"), self.expr())[1]))
-                    self.expect("}")
-                    s = Create(n, d, fields, line)
-                else:
-                    e = self.expr()
-                    absent = None
-                    if self.accept("なければ"):
-                        absent = self.ret()
-                    s = Assign(n, e, absent, line)
+            if not self.accept("."):
+                raise self.err(f"文の始まりが分かりません（「{n}」。変数は let で作り、項目の更新は 名前.項目 = 値 と書きます）")
+            f = self.name()
+            self.expect("=")
+            s = SetField(n, f, self.expr(), line)
         self.end_line()
         return s
 
     # ---- 式 ----
     def expr(self):
         l = self.cmp_expr()
-        while self.accept("かつ"):
+        while self.accept("and"):
             l = Bin("かつ", l, self.cmp_expr())
         return l
 
@@ -408,11 +425,11 @@ class Parser:
         if self.peek().kind == "OP" and self.peek().val in CMP:
             op = self.next().val
             return Bin(op, l, self.add())
-        if self.accept("が"):
+        if self.accept("is"):
             kw = self.name()
-            if kw not in ("空", "空でない", "ある", "ない"):
-                raise self.err(f"「が」の後ろに「{kw}」は書けません")
-            return Pred(l, kw)
+            if kw not in PRED:
+                raise self.err(f"「is」の後ろに「{kw}」は書けません（{'・'.join(PRED)}）")
+            return Pred(l, PRED[kw])
         return l
 
     def add(self):
@@ -461,7 +478,8 @@ class Parser:
             e = self.expr()
             self.expect(")")
             return e
-        if self.accept("Σ"):
+        if self.is_("sum") and self.is_("{", 1):
+            self.next()
             return SumE(*self.builder())
         if self.is_("{"):
             return SetB(*self.builder())
@@ -474,7 +492,7 @@ class Parser:
             return Name(t.val)
         raise self.err(f"式のはずが「{t.val or '行末'}」があります")
 
-    # ---- フロー ----
+    # ---- ネクサス（nexus。flow は別名） ----
     def flow(self, line) -> Flow:
         name = self.name()
         self.block_open()
@@ -487,7 +505,9 @@ class Parser:
                 v = self.name()
                 self.expect("→")
                 d = self.name()
-                if d == "待つ":
+                if d == "reply":
+                    d = "応答"
+                elif d == "wait":
                     d = "待つ " + self.name()
                 routes.append((v, d))
                 if not self.accept(","):
@@ -497,7 +517,16 @@ class Parser:
             self.end_line()
         return Flow(name, entries, line)
 
+    def unit(self) -> str:
+        unit = self.name()
+        if unit not in UNITS:
+            raise self.err(f"時間の単位「{unit}」は使えません（{UNIT_WORDS}）")
+        return unit
+
     # ---- 問い合わせ（読むだけの処理） ----
+    FILTER_OPS = {"at_least": "以上", "at_most": "以下", "contains": "含む"}
+    ORDERS = {"newest": "新しい順", "oldest": "古い順"}
+
     def query(self, line) -> Query:
         q = Query(self.name(), line=line)
         self.block_open()
@@ -506,49 +535,46 @@ class Parser:
             n = self.name()
             self.expect(":")
             t = self.type()
-            if self.accept("任意"):
+            if self.accept("optional"):
                 t.optional = True
             return n, t
 
         while not self.accept("}"):
             kw = self.name()
-            if kw == "入力":
+            if kw == "input":
                 q.inputs += self.comma_list(typed)
-            elif kw == "参照":
+            elif kw == "slot":
                 q.refs += self.comma_list(typed)
-            elif kw == "対象":
+            elif kw == "from":
                 q.target = self.name()
-            elif kw == "条件":
+            elif kw == "where":
                 f = self.name()
                 op = self.next().val
                 if op not in ("==", "!="):
-                    raise self.err("問い合わせの条件は「項目 == 状態」か「項目 != 状態」の形です")
+                    raise self.err("問い合わせの where は「項目 == 状態」か「項目 != 状態」の形です")
                 q.conds.append((f, op, self.name()))
-            elif kw == "絞り込み":
+            elif kw == "filter":
                 f = self.name()
                 op = self.name()
-                if op == "直近":
+                if op == "within":
                     n = self.num()
-                    unit = self.name()
-                    if unit not in self.UNITS:
-                        raise self.err(f"時間の単位「{unit}」は使えません（秒・分・時間・日）")
-                    q.filters.append((f, op, str(n * self.UNITS[unit])))
-                elif op in ("以上", "以下", "含む"):
-                    q.filters.append((f, op, self.name()))
+                    q.filters.append((f, "直近", str(n * UNITS[self.unit()])))
+                elif op in self.FILTER_OPS:
+                    q.filters.append((f, self.FILTER_OPS[op], self.name()))
                 else:
-                    raise self.err(f"絞り込みの種類「{op}」は使えません（以上・以下・含む・直近）")
-            elif kw == "並び":
+                    raise self.err(f"filter の種類「{op}」は使えません（at_least・at_most・contains・within）")
+            elif kw == "order":
                 f = self.name()
                 d = self.name()
-                if d not in ("新しい順", "古い順"):
-                    raise self.err("並びは「新しい順」か「古い順」です")
-                q.order = (f, d)
-            elif kw == "先頭":
+                if d not in self.ORDERS:
+                    raise self.err("order は「newest」か「oldest」です")
+                q.order = (f, self.ORDERS[d])
+            elif kw == "limit":
                 q.limit = self.name()
-            elif kw == "読む":
+            elif kw == "reads":
                 q.reads += self.comma_list(self.access)
             else:
-                raise self.err(f"問い合わせの中に「{kw}」は書けません")
+                raise self.err(f"query の中に「{kw}」は書けません")
             self.end_line()
         return q
 
@@ -558,20 +584,19 @@ class Parser:
         self.block_open()
         while not self.accept("}"):
             kw = self.name()
-            if kw == "各":
+            if kw == "each":
                 q = self.name()
                 self.expect("→")
                 ev.steps.append(("各", q, self.name()))
-            elif kw == "外から":
+            elif kw == "external":
+                self.expect("→")
                 ev.steps.append(("外から", "", self.name()))
             else:
-                raise self.err("出来事の中は「各 問い合わせ → 処理」か「外から 処理」です")
+                raise self.err("event の中は「each 問い合わせ → 処理」か「external → 処理」です")
             self.end_line()
         return ev
 
     # ---- トリガ ----
-    UNITS = {"秒": 1, "分": 60, "時間": 3600, "日": 86400}
-
     def trigger(self, line) -> Trigger:
         name = self.name()
         self.expect("(")
@@ -581,18 +606,16 @@ class Parser:
         causes = []
         while not self.accept("}"):
             kind = self.name()
-            if kind == "応答":
-                key = self.name()
-            elif kind == "期限":
-                if self.accept("現在"):  # 「現在 + 30 分」。現在は動的具体化の【参照】
+            if kind == "reply":
+                kind, key = "応答", self.name()
+            elif kind == "deadline":
+                kind = "期限"
+                if self.accept("now"):  # 「now + 30 min」。now は動的具体化の【参照】
                     self.expect("+")
                 n = self.num()
-                unit = self.name()
-                if unit not in self.UNITS:
-                    raise self.err(f"時間の単位「{unit}」は使えません（秒・分・時間・日）")
-                key = str(n * self.UNITS[unit])
+                key = str(n * UNITS[self.unit()])
             else:
-                raise self.err(f"トリガの要因は「応答」か「期限」です（「{kind}」は使えません）")
+                raise self.err(f"トリガの要因は「reply」か「deadline」です（「{kind}」は使えません）")
             self.expect("→")
             causes.append((kind, key, self.name()))
             self.end_line()
