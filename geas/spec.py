@@ -67,7 +67,7 @@ def build(ck: Checker) -> dict:
     routes: dict[str, dict[str, str]] = {}
     for fl in p.flows:
         for proc, rs in fl.entries:
-            routes.setdefault(proc, {}).update({v: "、".join(ds) for v, ds in route_map(rs).items()})
+            routes.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else "並列［" + " ＋ ".join(ds) + "］" for v, ds in route_map(rs).items()})
     procs = []
     for proc in p.processes:
         info = ck.infos[proc.name]

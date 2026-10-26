@@ -315,7 +315,7 @@ class Checker:
                 rm = route_map(routes)
                 for v, ds in rm.items():
                     if len(ds) > 1 and any(d == "応答" or d.startswith("待つ ") for d in ds):
-                        self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が複数あります。応答（reply）と待つ（wait）は、ほかの行き先と並べられません")
+                        self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が複数あります。応答（reply）と待つ（wait）は、par に入れられません")
                     for d in dict.fromkeys(d for d in ds if ds.count(d) > 1):
                         self.d(ERROR, "行き先", where, f"結果「{v}」の行き先「{d}」が2回書かれています")
                 # 行き先は処理の結果で決まる。同じ処理を別の行き先で2回書くと、どちらへ進むか決まらない
