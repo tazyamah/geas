@@ -145,7 +145,11 @@ def from_j(t: Type, j: str) -> str:
     if k == "名前":
         return f'{t.target}::名前から({j}.as_str()?).ok_or_else(|| "未知の状態です".to_string())?'
     if k == "合成":
-        return f"{t.target} {{ {', '.join(pn + ': ' + from_j(pt, j + f'.get(\"{pn}\")?') for pn, pt in t.parts)} }}"
+        def comp(pn, pt):  # 未指定にできる成分は、キーが無いのも null も「未指定」
+            if pt.optional:
+                return (f'match {j}.get_opt("{pn}") {{ Some(v) => Some({from_j(replace(pt, optional=False), "v")}), None => None }}')
+            return from_j(pt, j + f'.get("{pn}")?')
+        return f"{t.target} {{ {', '.join(pn + ': ' + comp(pn, pt) for pn, pt in t.parts)} }}"
     if k == "写像":
         return f"{j}.as_obj()?.iter().map(|(k, v)| Ok((k.clone(), {from_j(t.value, 'v')}))).collect::<Result<BTreeMap<String, _>, String>>()?"
     raise ValueError(f"JSON への対応がない型: {k}")

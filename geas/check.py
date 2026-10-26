@@ -717,6 +717,9 @@ class ProcChecker:
                 if pt is None:
                     self.d(ERROR, "名前", f"合成型 {bt[5:]} に成分「{e.n}」がありません")
                     return "?"
+                if pt.optional and not self.writing and (("#成分", show(base)), e.n) not in self.present:
+                    self.d(ERROR, "null", f"「{show(e)}」は未指定かもしれない成分です。使う前に確かめてください"
+                           f"（if {show(e)} is null {{ return … }}）。未指定にアクセスしうる道があるとエラーです")
                 return tok_of(pt)
             if not bt.startswith("Rec:"):
                 self.d(ERROR, "型", f"「{show(e)}」: 「.{e.n}」はデータにしか使えません")
@@ -741,6 +744,16 @@ class ProcChecker:
         if isinstance(e, Pred) and e.kind == "null" and isinstance(e.e, Name):
             if not self.null_input(e.e, env):
                 self.d(ERROR, "型", f"「is null」は、無いかもしれない入力（required でない入力）にだけ使えます（{e.e.n}）")
+            self.writing, saved = True, self.writing
+            self.ty(e.e, env)
+            self.writing = saved
+            return "Bool"
+        if (isinstance(e, Pred) and e.kind == "null" and isinstance(e.e, Attr)
+                and self.ty_quiet(e.e.e, env).startswith("Comp:")):
+            ct = ck.comps[self.ty_quiet(e.e.e, env)[5:]]
+            pt = next((t for n, t in ct.parts if n == e.e.n), None)
+            if pt is None or not pt.optional:
+                self.d(ERROR, "型", f"「is null」は、未指定にできる成分（optional な成分）にだけ使えます（{show(e.e)}）")
             self.writing, saved = True, self.writing
             self.ty(e.e, env)
             self.writing = saved
@@ -825,6 +838,16 @@ class ProcChecker:
             return "Bool"
         raise ValueError(e)
 
+    def ty_quiet(self, e, env) -> str:
+        """診断を増やさずに式の型を見る（調べるだけ）"""
+        n = len(self.ck.diags)
+        saved_types = dict(self.info.types)
+        try:
+            return self._ty(e, env)
+        finally:
+            del self.ck.diags[n:]
+            self.info.types = saved_types
+
     def make(self, e: Make, env) -> str:
         """合成型の値を作る式。成分はすべて、過不足なく、型と範囲が合う値で書く"""
         ct = self.ck.comps[e.n]
@@ -832,9 +855,9 @@ class ProcChecker:
         for n, _ in e.fields:
             if sum(1 for x, _ in e.fields if x == n) > 1:
                 self.d(ERROR, "名前", f"{e.n} の成分「{n}」が2つ以上あります", e.line)
-        for pn, _ in ct.parts:
-            if pn not in given:
-                self.d(ERROR, "項目", f"{e.n} の成分「{pn}」がありません（成分はすべて書きます）", e.line)
+        for pn, pt in ct.parts:
+            if pn not in given and not pt.optional:
+                self.d(ERROR, "項目", f"{e.n} の成分「{pn}」がありません（未指定にできる成分（optional）以外は、すべて書きます）", e.line)
         for n, x in e.fields:
             pt = next((t for pn, t in ct.parts if pn == n), None)
             if pt is None:
@@ -842,7 +865,10 @@ class ProcChecker:
                 self.ty(x, env)
                 continue
             vt = self.ty(x, env)
-            if vt == "Rational":
+            if vt == "Null":
+                if not pt.optional:
+                    self.d(ERROR, "null", f"{e.n}.{n} は必須の成分なので null は入れられません", e.line)
+            elif vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", e.line)
             elif vt != tok_of(pt) and not (isinstance(x, Num) and tok_of(pt) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{e.n}.{n} に型の違う値（{vt}）を入れています", e.line)
@@ -1123,6 +1149,8 @@ class ProcChecker:
                     self.present.add((self.bindings[c.e.e.n], c.e.n))
                 if isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Name):
                     self.present.add(("#入力", c.e.n))
+                if isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Attr) and self.ty_quiet(c.e.e, self.env).startswith("Comp:"):
+                    self.present.add((("#成分", show(c.e.e)), c.e.n))
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
                     self.guarded.add(self.exist_sets[c.e.n])
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
@@ -1261,6 +1289,9 @@ class ProcChecker:
                 return
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             self.check_text_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
+            if fld.type.kind == "合成":  # 書き換えたので、その成分について確かめたことは消える
+                path = f"{st.var}.{st.f}"
+                self.present = {k for k in self.present if not (isinstance(k[0], tuple) and k[0][0] == "#成分" and k[0][1].startswith(path))}
             if passing and fld.type.kind in ("整数", "金額", "割合"):  # 入力が無ければ null になる
                 self.check_write(data, st.f, (None, None), st.line, bind=b, null=True)
             self.set_null(data, st.f, b, not passing)
