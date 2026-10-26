@@ -109,7 +109,7 @@ def test_存在を確かめない参照は問いになる():
 
 def test_構文エラーは行番号つき():
     with pytest.raises(ParseError, match="行目"):
-        parse("data 商品 {\n  在庫 int\n}\n")
+        parse("entity 商品 {\n  在庫 int\n}\n")
 
 
 # ---- Rust 生成 ----
@@ -344,7 +344,7 @@ def test_条件つきの変更は_Rust_の_if_の中に出る():
 
 
 # ---- 問い合わせの条件（または・数との比較） ----
-QUERY = """data メモ {
+QUERY = """entity メモ {
   メモID: id unique
   状態: メモ状態
   重さ: int 0..
@@ -408,7 +408,7 @@ def test_selectのある問い合わせは_each_に使えない():
 
 
 # ---- 文字列検索の同一視（contains の軸） ----
-MEMO = """data メモ {
+MEMO = """entity メモ {
   メモID: id unique
   本文: text
 }
@@ -664,7 +664,7 @@ def test_失敗の理由を宣言して待たないのは矛盾():
 
 # ---- 生成した Rust が必ずビルドできる ----
 def test_定義の名前の重複は止まる():
-    for old, new in [("data 顧客 {", "data 顧客 {\n  顧客ID: id unique\n}\n\ndata 顧客 {"),
+    for old, new in [("entity 顧客 {", "entity 顧客 {\n  顧客ID: id unique\n}\n\nentity 顧客 {"),
                      ("  在庫: int 0.. required\n", "  在庫: int 0.. required\n  在庫: money(円) 0..\n"),
                      ("  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required\n  slot 注文ID: id\n  reads 注文.合計")]:
         assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
@@ -785,7 +785,7 @@ def test_型の変換を使っても_Rust_がビルドできる(tmp_path):
 
 
 # ---- すべては原則「無いかもしれない」。必須の約束は required ----
-NOTE = """data メモ {
+NOTE = """entity メモ {
   メモID: id unique
   本文: text required
   題: text
@@ -880,7 +880,7 @@ def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     assert got[2].startswith("Err(") and "題" in got[2], got[2]
 
 
-NULLIN = """data メモ {
+NULLIN = """entity メモ {
   メモID: id unique
   本文: text required
   題: text
@@ -964,7 +964,7 @@ def test_ホストは宣言にない入力の項目を無いものとして扱�
     assert got[0] == got[1] and '\\"結果\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
 
 
-TEXT = """data 利用者 {
+TEXT = """entity 利用者 {
   利用者ID: id unique
   名: text 1..20 of "a-z0-9_" required
 }
@@ -1026,7 +1026,7 @@ def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
     assert all(g.startswith("Err(") for g in got[1:5]), got[1:5]  # 空・長すぎ・使えない文字は入力不正
 
 
-TIMEC = """data 約束 {
+TIMEC = """entity 約束 {
   約束ID: id unique
   期限: time
   待ち秒: int
@@ -1082,7 +1082,7 @@ def test_ホストは時刻の計算をして_範囲外の時刻は境界で止�
     assert got[1].startswith("Err(") and got[2].startswith("Err("), got[1:]
 
 
-SLOT = """data 品 {
+SLOT = """entity 品 {
   品ID: id unique
   数: int 0..1000 required
 }
@@ -1120,7 +1120,7 @@ def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     assert got[2].startswith("Err(") and "倍率" in got[2], got[2]
 
 
-PART = """data 品 {
+PART = """entity 品 {
   品ID: id unique
   価格: money(円) 0.. required
 }
@@ -1208,11 +1208,11 @@ fn main() {
     assert r.stdout.strip() == "0"
 
 
-NULLQ = """data 人 {
+NULLQ = """entity 人 {
   人ID: id unique
   名前: text
 }
-data メモ {
+entity メモ {
   メモID: id unique
   書いた人: ref 人
   重さ: int 0..
@@ -1252,7 +1252,7 @@ fn main() {
     assert n == "1"  # 重さが null のものは絞り込みを満たさない
 
 
-PAGEQ = """data メモ {
+PAGEQ = """entity メモ {
   メモID: id unique
   重さ: int 0..
 }
@@ -1311,3 +1311,39 @@ def test_問いが残っているうちは生成しない():
     assert ck.ok and not ck.ready
     with pytest.raises(AssertionError, match="問い"):
         generate(ck)
+
+
+# ---- 論理型（ltype）と entity ----
+LTYPE = """ltype 数量 = int 1..99
+ltype 商品数量 = 商品 → 数量
+
+entity 商品 {
+  商品ID: id unique
+  在庫: 数量 required
+}
+
+entity 注文 {
+  注文ID: id unique
+  明細: 商品数量 required
+}
+"""
+
+
+def test_ltype_は使った場所に定義が写される():
+    p = parse(LTYPE)
+    stock = next(f for d in p.data if d.name == "商品" for f in d.fields if f.name == "在庫")
+    assert stock.type.kind == "整数" and (stock.type.range.lo, stock.type.range.hi) == (1, 99)
+    lines = next(f for d in p.data if d.name == "注文" for f in d.fields if f.name == "明細")
+    assert lines.type.kind == "写像" and lines.type.key == "商品" and lines.type.value.range.hi == 99
+
+
+def test_ltype_の名前の重複と組み込み名は止まる():
+    with pytest.raises(ParseError, match="2つ以上"):
+        parse("ltype 数量 = int 1..99\nltype 数量 = int 1..9\n")
+    with pytest.raises(ParseError, match="組み込み"):
+        parse("ltype int = int 1..99\n")
+
+
+def test_data_は_entity_に改名した():
+    with pytest.raises(ParseError, match="entity"):
+        parse("data 商品 {\n  商品ID: id unique\n}\n")
