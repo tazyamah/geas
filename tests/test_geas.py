@@ -1415,3 +1415,111 @@ def test_store_の誤りは止まる():
         parse(STORE + "store メモ in 端末\n")
     with pytest.raises(ParseError, match="別の行"):
         parse(STORE.replace("entity メモ {", "entity メモ store Dropbox {").replace("store メモ in Dropbox\n", ""))
+
+
+# ---- 合成型 ----
+COMP = """ltype 横 = int 0..100
+ltype 点 { x: 横, y: 横 }
+ltype 線 {
+  始点: 点
+  終点: 点
+}
+
+entity 地図 {
+  地図ID: id unique
+  位置: 点 required
+  道: 線 required
+}
+result 置いた結果 {
+  置いた(地図ID: id)
+}
+result 読んだ結果 {
+  読んだ(地図ID: id)
+  なし
+  右寄り
+}
+deed 置く {
+  input 位置: 点 required
+  writes 地図
+  result 置いた結果
+  effects none
+
+  let 地図 = create 地図 { 位置: 位置, 道: 線 { 始点: 位置, 終点: 点 { x: 位置.x, y: 5 } } }
+  return 置いた(地図.地図ID)
+}
+deed 横を見る {
+  input 地図ID: id required
+  reads 地図.道
+  result 読んだ結果
+  effects none
+
+  let 地図 = 地図[地図ID] else { return なし }
+  if 地図.道.終点.x > 50 { return 右寄り }
+  return 読んだ(地図ID)
+}
+nexus 流れ {
+  置く: 置いた → reply
+  横を見る: 読んだ → reply, なし → reply, 右寄り → reply
+}
+"""
+
+
+def test_合成型は項目と入力に使え_成分は平らに読める():
+    ck = chk(COMP)
+    assert ck.ok and ck.ready, ck.diags
+    sp = build(ck)
+    assert ("地図", "位置", "点（x: 整数 0..100、y: 整数 0..100）", "○", "") in sp["データ"]
+
+
+def test_合成型の誤りは止まる():
+    # 成分の書き漏れ・余計な成分・型の違い
+    ck = chk(mutate(COMP, "点 { x: 位置.x, y: 5 }", "点 { x: 位置.x }"))
+    assert any("成分「y」がありません" in m for m in msgs(ck, ERROR))
+    ck = chk(mutate(COMP, "点 { x: 位置.x, y: 5 }", "点 { x: 位置.x, y: 5, z: 1 }"))
+    assert any("成分「z」がありません" in m for m in msgs(ck, ERROR))
+    ck = chk(mutate(COMP, "点 { x: 位置.x, y: 5 }", "点 { x: 位置.x, y: 位置 }"))
+    assert any("型の違う値" in m for m in msgs(ck, ERROR)), ck.diags
+    # 範囲が収まると示せない（入力は 0..1000 で、成分は 0..100）
+    wide = mutate(COMP, "ltype 点 {", "ltype 広い横 = int 0..1000\nltype 点 {")
+    ck = chk(mutate(mutate(wide, "deed 置く {\n  input 位置: 点 required", "deed 置く {\n  input 位置: 点 required, 幅: 広い横 required"), "点 { x: 位置.x, y: 5 }", "点 { x: 位置.x, y: 幅 }"))
+    assert any("成分の範囲に収まると示せません" in m for m in msgs(ck, ERROR)), ck.diags
+    # 存在しない成分を読む
+    ck = chk(mutate(COMP, "地図.道.終点.x > 50", "地図.道.終点.z > 50"))
+    assert any("成分「z」がありません" in m for m in msgs(ck, ERROR))
+
+
+def test_合成型は結果の中身には使えない():
+    ck = chk(mutate(COMP, "読んだ(地図ID: id)", "読んだ(地図ID: id, 場所: 点)"))
+    assert any("いまは項目と処理の入力・slot にだけ" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+def test_合成型の宣言の誤りは止まる():
+    for src, msg in [("ltype 点 {\n  x: int\n  x: int\n}\n", "2つ以上"),
+                     ("ltype 点 {\n}\n", "成分がありません"),
+                     ("ltype 横 = int 0..9\nltype 横束 = 商品 → 横\nltype 点 {\n  束: 横束\n}\n", "使えません")]:
+        with pytest.raises(ParseError, match=msg):
+            parse(src)
+
+
+@needs_cargo
+def test_合成型はホストの境界で成分ごとに確かめる(tmp_path):
+    ck = chk(COMP)
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::呼ぶ(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    rec = lambda x: '{"地図":{"G1":{"地図ID":"G1","位置":{"x":1,"y":2},"道":{"始点":{"x":1,"y":2},"終点":{"x":' + str(x) + ',"y":5}}}}}'
+    main = "fn main() {\n" + "".join([
+        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":20}}', "{}"),
+        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":200}}', "{}"),
+        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10}}', "{}"),
+        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":20,"z":1}}', "{}"),
+        call("横を見る", "{}", '{"地図ID":"G1"}', rec(5)),
+        call("横を見る", "{}", '{"地図ID":"G1"}', rec(70)),
+    ]) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert '\\"位置\\":{\\"x\\":10,\\"y\\":20}' in got[0] and '\\"終点\\":{\\"x\\":10,\\"y\\":5}' in got[0], got[0]
+    assert "範囲外" in got[1] and "位置.y" in got[1], got[1]
+    assert got[2].startswith("Err(") and "y" in got[2], got[2]
+    assert got[3].startswith("Ok(") and "置いた" in got[3]  # 宣言にない成分は来ていないものとして扱う
+    assert "読んだ" in got[4] and "右寄り" in got[5], got[4:6]

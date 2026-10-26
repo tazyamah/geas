@@ -144,6 +144,8 @@ def from_j(t: Type, j: str) -> str:
         return f"{j}.as_set()?"
     if k == "名前":
         return f'{t.target}::名前から({j}.as_str()?).ok_or_else(|| "未知の状態です".to_string())?'
+    if k == "合成":
+        return f"{t.target} {{ {', '.join(pn + ': ' + from_j(pt, j + f'.get(\"{pn}\")?') for pn, pt in t.parts)} }}"
     if k == "写像":
         return f"{j}.as_obj()?.iter().map(|(k, v)| Ok((k.clone(), {from_j(t.value, 'v')}))).collect::<Result<BTreeMap<String, _>, String>>()?"
     raise ValueError(f"JSON への対応がない型: {k}")
@@ -166,6 +168,9 @@ def to_j(t: Type, x: str) -> str:
         return f"js_set(&{x})"
     if k == "名前":
         return f"js_str({x}.名前())"
+    if k == "合成":
+        items = ", ".join(f'format!("{{}}:{{}}", js_str("{pn}"), {to_j(pt, f"{x}.{pn}")})' for pn, pt in t.parts)
+        return f'format!("{{{{{{}}}}}}", vec![{items}].join(","))'
     if k == "写像":
         return f'format!("{{{{{{}}}}}}", {x}.iter().map(|(k, v)| format!("{{}}:{{}}", js_str(k), {to_j(t.value, "v")})).collect::<Vec<_>>().join(","))'
     raise ValueError(f"JSON への対応がない型: {k}")

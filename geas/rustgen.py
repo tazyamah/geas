@@ -107,7 +107,7 @@ def rust_type(t: Type) -> str:
         return phys(t)
     if k == "割合":
         return "有理"
-    if k == "名前":
+    if k in ("名前", "合成"):
         return t.target
     if k == "写像":
         return f"BTreeMap<String, {rust_type(t.value)}>"
@@ -120,29 +120,39 @@ def chars_rust(cs: tuple) -> str:
     return "&[" + ", ".join(f"('\\u{{{a:x}}}', '\\u{{{b:x}}}')" for a, b in cs) + "]"
 
 
+def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
+    """値 x（Rust の場所の式）の、型の範囲の宣言の検査の行。deref なら x は参照（無いかもしれない値の中身）"""
+    chk = []
+    num = f"*{x}" if deref else x
+    ref = x if deref else f"&{x}"
+    if t.kind == "日時":
+        chk.append(f'範囲検査("{label}", {num} as i128, Some(-時刻の限り), Some(時刻の限り))?;')
+    if t.kind == "文字列" and t.range:
+        chk.append(f'範囲検査("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind == "文字列" and t.chars is not None:
+        chk.append(f'文字種検査("{label}", &{x}, {chars_rust(t.chars)})?;')
+    if t.kind == "バイト列" and t.range:
+        chk.append(f'範囲検査("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind in ("整数", "金額") and t.range:
+        chk.append(f'範囲検査("{label}", {num} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind == "割合" and t.range:
+        chk.append(f'割合検査("{label}", {ref}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
+        r = t.value.range
+        chk.append(f'for v in {x}.values() {{ 範囲検査("{label}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+    if t.kind == "合成":
+        for pn, pt in t.parts:
+            chk += value_checks(f"{label}.{pn}", pt, f"{x}.{pn}", False)
+    return chk
+
+
 def range_checks(items) -> list[str]:
     """外から受け取る値（入力・slot）の、範囲の宣言の検査の行。無いかもしれない値は、あるときだけ確かめる。
     """
     out = []
     for name, t in items:
         opt_ = getattr(t, "optional", False)
-        x = "x" if opt_ else f"self.{name}"
-        chk = []
-        if t.kind == "日時":
-            chk.append(f'範囲検査("{name}", {"*x" if opt_ else x} as i128, Some(-時刻の限り), Some(時刻の限り))?;')
-        if t.kind == "文字列" and t.range:
-            chk.append(f'範囲検査("{name}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-        if t.kind == "文字列" and t.chars is not None:
-            chk.append(f'文字種検査("{name}", &{x}, {chars_rust(t.chars)})?;')
-        if t.kind == "バイト列" and t.range:
-            chk.append(f'範囲検査("{name}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-        if t.kind in ("整数", "金額") and t.range:
-            chk.append(f'範囲検査("{name}", {"*x" if opt_ else x} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-        if t.kind == "割合" and t.range:
-            chk.append(f'割合検査("{name}", {"x" if opt_ else "&" + x}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-        if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
-            r = t.value.range
-            chk.append(f'for v in {x}.values() {{ 範囲検査("{name}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+        chk = value_checks(name, t, "x" if opt_ else f"self.{name}", opt_)
         out += [f"        if let Some(x) = &self.{name} {{ {c} }}" if opt_ else f"        {c}" for c in chk]
     return out
 
@@ -159,6 +169,8 @@ def show_expr(t: Type, x: str) -> str:
     k = t.kind
     if k == "名前":
         return f"{x}.名前()"
+    if k == "合成":
+        return f'format!("{{:?}}", &{x})'
     if k == "写像":
         return f"写像表示(&{x})"
     if k == "集合":
@@ -338,6 +350,12 @@ class Gen:
         return self.ck.key_field(d).name
 
     def records(self):
+        for c in self.p.composites:
+            self.w("#[derive(Clone, Debug, PartialEq)]")
+            self.w(f"pub struct {c.target} {{")
+            for pn, pt in c.parts:
+                self.w(f"    pub {pn}: {rust_type(pt)},")
+            self.w("}\n")
         for d in self.p.data:
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {d.name} {{")
@@ -500,7 +518,7 @@ class ProcGen:
     def wrap(self, tok, x):
         if tok in ("Int", "Money"):
             return f"({x} as i128)"
-        if tok in ("ID", "Str", "Bytes") or tok.startswith("Map:") or tok == "Set":
+        if tok in ("ID", "Str", "Bytes") or tok.startswith("Map:") or tok.startswith("Comp:") or tok == "Set":
             return f"{x}.clone()"
         return x
 
@@ -579,6 +597,14 @@ class ProcGen:
             return self.wrap(self.tok(e), self.place(e))
         if isinstance(e, Index):
             return self.place(e)
+        if isinstance(e, Make):  # 範囲は検査で示してあるので、成分は物理数へそのまま移す
+            ct = self.ck.comps[e.n]
+            vals = []
+            for n, x in e.fields:
+                pt = next(t for pn, t in ct.parts if pn == n)
+                num = pt.kind in ("整数", "金額")
+                vals.append(f"{n}: {self.conv(pt, self.rx(x), f'{e.n}.{n}', proven=True) if num else self.rx(x)}")
+            return f"{e.n} {{ {', '.join(vals)} }}"
         if isinstance(e, Pred) and e.kind == "null":
             return f"{self.place(e.e)}.is_none()"
         if isinstance(e, Null):
