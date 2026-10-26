@@ -412,12 +412,14 @@ class Checker:
                 f = field_of(q.order[0])
                 if f is not None and f.type.kind not in ("日時", "整数", "金額"):
                     self.d(ERROR, "型", where, f"並びの項目「{q.order[0]}」は数か日時である必要があります")
-            if q.limit is not None:
-                t = ins.get(q.limit)
+            if q.page is not None:
+                t = ins.get(q.page)
                 if t is None or t.kind != "整数":
-                    self.d(ERROR, "型", where, f"先頭の件数「{q.limit}」は、整数の入力である必要があります")
+                    self.d(ERROR, "型", where, f"1ページの件数「{q.page}」は、整数の入力である必要があります")
+            if (q.page is not None or q.page_n is not None) and not q.order:
+                self.d(ERROR, "並び", where, "page には order が要ります（並びが無いと、どの1ページかが決まらず、実行のたびに変わりえます）")
             for n, t in q.inputs:
-                if not t.optional and not any(n == a for _, _, a in q.filters) and n != q.limit:
+                if not t.optional and not any(n == a for _, _, a in q.filters) and n != q.page:
                     self.d(WARN, "宣言", where, f"入力「{n}」はどこにも使われていません")
             declared, actual = set(q.reads), used
             for x in sorted(actual - declared):

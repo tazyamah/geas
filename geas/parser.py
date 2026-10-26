@@ -673,8 +673,15 @@ class Parser:
                 if d not in self.ORDERS:
                     raise self.err("order は「newest」か「oldest」です")
                 q.order = (f, self.ORDERS[d])
+            elif kw == "page":  # 1ページ分（最大 N 件）。N は数か、整数の入力の名前
+                if self.peek().kind == "NUM":
+                    q.page_n = self.num()
+                    if q.page_n < 1:
+                        raise self.err("page の件数は 1 以上にしてください")
+                else:
+                    q.page = self.name()
             elif kw == "limit":
-                q.limit = self.name()
+                raise self.err("limit は page に替わりました（page 20 か page 入力の名前。order が要ります）")
             elif kw == "select":
                 q.select += self.comma_list(self.column)
             elif kw == "reads":
