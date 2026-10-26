@@ -34,6 +34,8 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
     }
     Ok(())
 }
+/// 時刻（秒）の絶対値の上限。期間の足し引きが i64 であふれないよう、外から入る値を境界で止める
+pub const 時刻の限り: i128 = 1_000_000_000_000_000;
 pub fn 文字種検査(名: &str, s: &str, 許す: &[(char, char)]) -> Result<(), String> {
     match s.chars().find(|c| !許す.iter().any(|&(a, b)| a <= *c && *c <= b)) {
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", 名, c)),

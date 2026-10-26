@@ -12,8 +12,11 @@ class ParseError(Exception):
 
 
 CMP = ("<", ">", "<=", ">=", "==", "!=")
-UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}
-UNIT_WORDS = "sec・min・hour・day"
+UNITS = {"sec": 1, "min": 60, "hour": 3600}  # day・week・month・year は暦で数え方が変わる（人の「1日後」は86400秒後と限らない）ので、論理日時を設計するまで入れない
+CAL_MSG = "「{}」は暦で数え方が変わる（夏時間・月の長さ・タイムゾーン）ので、まだ使えません。ちょうど何時間か何秒かなら hour か sec で書いてください（24 hour など）"
+CALENDAR_UNITS = ("day", "week", "month", "year")
+MAX_DUR = 10**10  # 期間の上限（約317年）。時刻の足し引きがあふれないようにする
+UNIT_WORDS = "sec・min・hour"
 SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
 PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
 
@@ -565,6 +568,15 @@ class Parser:
         t = self.peek()
         if t.kind == "NUM":
             self.next()
+            nxt = self.peek()
+            if nxt.kind == "NAME" and nxt.val in CALENDAR_UNITS:
+                raise self.err(CAL_MSG.format(nxt.val))
+            if nxt.kind == "NAME" and nxt.val in UNITS:  # 30 min：期間（時刻に足し引きする）
+                self.next()
+                secs = int(t.val) * UNITS[nxt.val]
+                if secs > MAX_DUR:
+                    raise self.err(f"期間が長すぎます（{t.val} {nxt.val}。{MAX_DUR} 秒まで）")
+                return Dur(secs, f"{t.val} {nxt.val}")
             return Num(int(t.val))
         if self.accept("("):
             e = self.expr()
@@ -615,6 +627,8 @@ class Parser:
     def unit(self) -> str:
         unit = self.name()
         if unit not in UNITS:
+            if unit in CALENDAR_UNITS:
+                raise self.err(CAL_MSG.format(unit))
             raise self.err(f"時間の単位「{unit}」は使えません（{UNIT_WORDS}）")
         return unit
 
