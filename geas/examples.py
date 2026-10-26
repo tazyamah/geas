@@ -126,7 +126,7 @@ def example_code(ck: Checker, row: dict) -> str:
     eid = row["ID"].strip()
     if q is not None:
         L += [
-            "        match 入力.検査() {",
+            "        match ctx.検査().and_then(|_| 入力.検査()) {",  # slot も入力も、境界で範囲を確かめる
             f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
             f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &保存, &入力){".iter().map(|x| x.表示()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
             "        }",
@@ -134,7 +134,7 @@ def example_code(ck: Checker, row: dict) -> str:
         ]
         return "\n".join(L)
     L += [
-        "        match 入力.検査() {",
+        "        match ctx.検査().and_then(|_| 入力.検査()) {",  # slot も入力も、境界で範囲を確かめる
         f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
         "            Ok(()) => {",
         f"                let 出力 = {proc.name}(&ctx, &保存, &入力);",

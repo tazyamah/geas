@@ -38,6 +38,12 @@ pub fn 冪等キーの組(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
     format!("[{}]", q.join(","))
 }
+pub fn 割合検査(名: &str, x: &有理, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+    if x.分母 <= 0 || lo.map_or(false, |l| x.分子 < l * x.分母) || hi.map_or(false, |h| x.分子 > h * x.分母) {
+        return Err(format!("{}={}/{} は範囲外", 名, x.分子, x.分母));
+    }
+    Ok(())
+}
 pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
     範囲検査(名, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
     x
@@ -301,6 +307,13 @@ pub struct 受注文脈 {
     pub 税率: 有理,
     pub 新注文ID: String,
 }
+impl 受注文脈 {
+    /// 外から埋まる値（slot）の、範囲の宣言の検査
+    pub fn 検査(&self) -> Result<(), String> {
+        割合検査("税率", &self.税率, Some(0), Some(1))?;
+        Ok(())
+    }
+}
 pub struct 受注出力 {
     pub 結果: 受注結果,
     pub 書込: Vec<書込>,
@@ -355,6 +368,12 @@ impl 決済要求入力 {
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
 pub struct 決済要求文脈 {
 }
+impl 決済要求文脈 {
+    /// 外から埋まる値（slot）の、範囲の宣言の検査
+    pub fn 検査(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
 pub struct 決済要求出力 {
     pub 結果: 決済要求結果,
     pub 書込: Vec<書込>,
@@ -391,6 +410,12 @@ impl 決済結果の反映入力 {
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
 pub struct 決済結果の反映文脈 {
 }
+impl 決済結果の反映文脈 {
+    /// 外から埋まる値（slot）の、範囲の宣言の検査
+    pub fn 検査(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
 pub struct 決済結果の反映出力 {
     pub 結果: 待ち解除結果,
     pub 書込: Vec<書込>,
@@ -423,6 +448,12 @@ impl 決済の期限切れ入力 {
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
 pub struct 決済の期限切れ文脈 {
 }
+impl 決済の期限切れ文脈 {
+    /// 外から埋まる値（slot）の、範囲の宣言の検査
+    pub fn 検査(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
 pub struct 決済の期限切れ出力 {
     pub 結果: 待ち解除結果,
     pub 書込: Vec<書込>,
@@ -451,6 +482,12 @@ impl 注文一覧入力 {
     }
 }
 pub struct 注文一覧文脈 {
+}
+impl 注文一覧文脈 {
+    /// 外から埋まる値（slot）の、範囲の宣言の検査
+    pub fn 検査(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct 注文一覧行 {

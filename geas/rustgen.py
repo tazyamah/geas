@@ -45,6 +45,12 @@ pub fn 冪等キーの組(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
     format!("[{}]", q.join(","))
 }
+pub fn 割合検査(名: &str, x: &有理, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+    if x.分母 <= 0 || lo.map_or(false, |l| x.分子 < l * x.分母) || hi.map_or(false, |h| x.分子 > h * x.分母) {
+        return Err(format!("{}={}/{} は範囲外", 名, x.分子, x.分母));
+    }
+    Ok(())
+}
 pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
     範囲検査(名, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
     x
@@ -98,6 +104,27 @@ def rust_type(t: Type) -> str:
     if k == "集合":
         return "BTreeSet<String>"
     raise ValueError(k)
+
+
+def range_checks(items) -> list[str]:
+    """外から受け取る値（入力・slot）の、範囲の宣言の検査の行。無いかもしれない値は、あるときだけ確かめる。
+    """
+    out = []
+    for name, t in items:
+        opt_ = getattr(t, "optional", False)
+        x = "x" if opt_ else f"self.{name}"
+        chk = []
+        if t.kind == "バイト列" and t.range:
+            chk.append(f'範囲検査("{name}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        if t.kind in ("整数", "金額") and t.range:
+            chk.append(f'範囲検査("{name}", {"*x" if opt_ else x} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        if t.kind == "割合" and t.range:
+            chk.append(f'割合検査("{name}", {"x" if opt_ else "&" + x}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
+            r = t.value.range
+            chk.append(f'for v in {x}.values() {{ 範囲検査("{name}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+        out += [f"        if let Some(x) = &self.{name} {{ {c} }}" if opt_ else f"        {c}" for c in chk]
+    return out
 
 
 def field_rust(t: Type) -> str:
@@ -171,16 +198,17 @@ class Gen:
             self.w(f"    pub {name}: {ty(t)},")
         self.w("}")
         self.w(f"impl {n}入力 {{\n    pub fn 検査(&self) -> Result<(), String> {{")
-        for name, t in q.inputs:
-            if t.kind in ("整数", "金額") and t.range:
-                x = f"*x as i128" if t.optional else f"self.{name} as i128"
-                chk = f'範囲検査("{name}", {x}, {opt(t.range.lo)}, {opt(t.range.hi)})?;'
-                self.w(f"        if let Some(x) = &self.{name} {{ {chk} }}" if t.optional else f"        {chk}")
+        for line in range_checks(q.inputs):
+            self.w(line)
         self.w("        Ok(())\n    }\n}")
         self.w(f"pub struct {n}文脈 {{")
         for name, t in q.refs:
             self.w(f"    pub {name}: {rust_type(t)},")
         self.w("}")
+        self.w(f"impl {n}文脈 {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
+        for line in range_checks(q.refs):
+            self.w(line)
+        self.w("        Ok(())\n    }\n}")
         if q.select:
             cols = [(c, column_type(self.ck, q, c)) for c in q.select]
             self.w("#[derive(Clone, Debug, PartialEq)]")
@@ -472,8 +500,8 @@ class ProcGen:
                     return self.wrap(tok, f"unsafe {{ {x}.clone().unwrap_unchecked() }}")
                 if kind == "local" and tok in ("Int", "Money", "Rational", "Ratio"):
                     return x
-                if kind == "ref":
-                    return x
+                if kind == "ref":  # slot も入力と同じく、整数と金額は i128 で計算する
+                    return self.wrap(tok, x)
                 if tok.startswith("Rec:"):
                     return x
                 return self.wrap(tok, x)
@@ -688,18 +716,8 @@ class ProcGen:
             g.w(f"    pub {name}: {field_rust(t)},")  # 無いかもしれない入力は Option
         g.w("}")
         g.w(f"impl {n}入力 {{\n    /// 外部から取り込むときの、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
-        for name, t in proc.inputs:
-            x = "x" if t.optional else f"self.{name}"
-            chk = []
-            if t.kind == "バイト列" and t.range:
-                chk.append(f'範囲検査("{name}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-            if t.kind in ("整数", "金額") and t.range:
-                chk.append(f'範囲検査("{name}", {"*x" if t.optional else x} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-            if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
-                r = t.value.range
-                chk.append(f'for v in {x}.values() {{ 範囲検査("{name}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
-            for c in chk:
-                g.w(f"        if let Some(x) = &self.{name} {{ {c} }}" if t.optional else f"        {c}")
+        for line in range_checks(proc.inputs):
+            g.w(line)
         g.w("        Ok(())\n    }\n}")
         g.w(f"/// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）\npub struct {n}文脈 {{")
         for name, t in proc.refs:
@@ -707,6 +725,10 @@ class ProcGen:
         for d in sorted(set(info.new_ids)):
             g.w(f"    pub 新{d}ID: String,")
         g.w("}")
+        g.w(f"impl {n}文脈 {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
+        for line in range_checks(proc.refs):
+            g.w(line)
+        g.w("        Ok(())\n    }\n}")
         g.w(f"pub struct {n}出力 {{\n    pub 結果: {self.rdef.name},\n    pub 書込: Vec<書込>,\n    pub 外部: Vec<外部作用>,\n}}")
         g.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> {n}出力 {{")
         g.w("    let mut 書込列: Vec<書込> = Vec::new();\n    let mut 外部列: Vec<外部作用> = Vec::new();")
