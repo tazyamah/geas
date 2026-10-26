@@ -8,7 +8,7 @@ from math import ceil, floor
 from .ast import *  # noqa: F401,F403
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
-METHODS = ("切り捨て", "切り上げ", "四捨五入")
+METHODS = ("floor", "ceil", "half_up")
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -205,7 +205,7 @@ class Checker:
     def check_part(self, pt: Part):
         """部品の宣言。保証の式は、引数と result だけを使う、真偽の式"""
         where = f"部品 {pt.name}"
-        if pt.name in ("丸め", *CONVERSIONS):
+        if pt.name in ("round", *CONVERSIONS):
             self.d(ERROR, "名前", where, "組み込みの部品と同じ名前は使えません")
         names = [n for n, _ in pt.params]
         self.check_unique(names, where, "引数")
@@ -848,7 +848,7 @@ class ProcChecker:
                 self.info.parts.add(e.n)
             return tok_of(pt.ret)
         if isinstance(e, Call):
-            if e.n != "丸め" or len(e.args) != 3:
+            if e.n != "round" or len(e.args) != 3:
                 self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（宣言した部品と、丸め(値, 方式, 単位)、型の変換 money( )・int( ) だけ）")
                 return "?"
             x = self.ty(e.args[0], env)
@@ -1048,12 +1048,12 @@ class ProcChecker:
             return self.interval(e.args[0], env)
         if isinstance(e, Call) and e.n in self.ck.parts:  # 戻り値の範囲は、呼ぶたびに確かめる（生成コード）ので、宣言をそのまま信じてよい
             return iv_of(self.ck.parts[e.n].ret)
-        if isinstance(e, Call) and e.n == "丸め" and len(e.args) == 3:
+        if isinstance(e, Call) and e.n == "round" and len(e.args) == 3:
             lo, hi = self.interval(e.args[0], env)
             how = getattr(e.args[1], "n", "")
-            if getattr(e.args[2], "n", "") == "円":  # 1円単位：整数への丸め
-                return (None if lo is None else Fraction(floor(lo) if how != "切り上げ" else ceil(lo)),
-                        None if hi is None else Fraction(ceil(hi) if how != "切り捨て" else floor(hi)))
+            if getattr(e.args[2], "n", "") == "JPY":  # 1円単位：整数への丸め
+                return (None if lo is None else Fraction(floor(lo) if how != "ceil" else ceil(lo)),
+                        None if hi is None else Fraction(ceil(hi) if how != "floor" else floor(hi)))
             # 単位の大きさが分からないとき：0 以上の値は、どう丸めても 0 以上
             return (0 if lo is not None and lo >= 0 else None, None)
         if isinstance(e, SumE):

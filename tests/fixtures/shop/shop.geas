@@ -2,7 +2,7 @@
 // キーワードは英語、名前は日本語（仕様書・計画書の言葉）のまま。
 
 ltype 在庫数 = int 0..
-ltype 非負金額 = money(円) 0..
+ltype 非負金額 = money(JPY) 0..
 ltype 数量 = int 1..99
 ltype 商品数量 = 商品 → 数量
 ltype 税率値 = ratio 0..1
@@ -53,7 +53,7 @@ result 待ち解除結果 {
   状態違い
 }
 
-effect 決済.請求(注文ID: id, 金額: money(円))
+effect 決済.請求(注文ID: id, 金額: money(JPY))
 
 deed 受注 {
   input 顧客ID: id required, 明細: 商品数量 required
@@ -71,7 +71,7 @@ deed 受注 {
   if 不足 is nonempty { return 在庫不足(不足) }
   update { 商品[k].在庫 -= v | (k, v) in 明細 }
   let 小計 = sum { 商品[k].単価 * v | (k, v) in 明細 }
-  let 合計 = 小計 + 丸め(小計 * 税率, 切り捨て, 円)
+  let 合計 = 小計 + round(小計 * 税率, floor, JPY)
   let 注文 = create 注文 { 顧客: 顧客ID, 明細: 明細, 合計: 合計, 状態: 受付 }
   return 受付(注文.注文ID)
 }

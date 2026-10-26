@@ -19,13 +19,13 @@ impl Display for 有理 {
 pub fn 積(x: i128, r: 有理) -> 有理 {
     有理 { 分子: x * r.分子, 分母: r.分母 }
 }
-pub fn 切り捨て(x: 有理) -> i128 {
+pub fn floor(x: 有理) -> i128 {
     x.分子.div_euclid(x.分母)
 }
-pub fn 切り上げ(x: 有理) -> i128 {
+pub fn ceil(x: 有理) -> i128 {
     -((-x.分子).div_euclid(x.分母))
 }
-pub fn 四捨五入(x: 有理) -> i128 {
+pub fn half_up(x: 有理) -> i128 {
     (2 * x.分子 + x.分母).div_euclid(2 * x.分母)
 }
 pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
@@ -352,7 +352,7 @@ pub fn 受注(ctx: &受注文脈, 保存: &保存, 入力: &受注入力) -> 受
         }
     }
     let 小計: i128 = { let mut 集め: i128 = 0; for (k_, v_) in 入力.明細.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; 集め += ((保存.商品[&(k.clone())].単価 as i128) * v); } 集め };
-    let 合計: i128 = (小計 + 切り捨て(積(小計, ctx.税率)));
+    let 合計: i128 = (小計 + floor(積(小計, ctx.税率)));
     let 注文 = 注文 {
         注文ID: ctx.新注文ID.clone(),
         顧客: 入力.顧客ID.clone(),

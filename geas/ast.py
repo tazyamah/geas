@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# 仕様書に出す日本語の呼び名（言語の名前は半角英数、人に見せる所だけ日本語にする）
+SHOW_JA = {"JPY": "円", "floor": "切り捨て", "ceil": "切り上げ", "half_up": "四捨五入"}
+
+
 @dataclass
 class Range:
     lo: Optional[int] = None
@@ -361,7 +365,7 @@ def show_type(t: Type) -> str:
     if k == "割合":
         return "割合" + show_range(t.range)
     if k == "金額":
-        return f"金額({t.unit or '円'})" + show_range(t.range)
+        return f"金額({SHOW_JA.get(t.unit or 'JPY', t.unit)})" + show_range(t.range)
     if k == "参照":
         return f"{t.target} を参照"
     if k == "名前":
