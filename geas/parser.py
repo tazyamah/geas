@@ -773,7 +773,23 @@ class Parser:
             while True:
                 v = self.name()
                 self.expect("→")
+                if any(v == x for x, _ in routes):
+                    raise self.err(f"結果「{v}」の行き先が2つ以上あります。並列に起こすなら par {{ 処理, 処理 }} と書きます")
                 d = self.name()
+                if d == "par":  # 並列に起こす（実行は書いた順）。仕様書にも並列として出る
+                    self.expect("{")
+                    ds = self.comma_list(self.name)
+                    self.expect("}")
+                    if len(ds) < 2:
+                        raise self.err("par には2つ以上の処理を書きます")
+                    if "wait" in ds:
+                        raise self.err("wait は par に入れられません（待つ行き先は、ほかの行き先と並べられません）")
+                    ds = ["応答" if x == "reply" else x for x in ds]
+                    routes.extend((v, x) for x in ds)
+                    if not self.accept(","):
+                        break
+                    self.skip_nl()
+                    continue
                 if d == "reply":
                     d = "応答"
                 elif d == "wait":

@@ -486,12 +486,14 @@ class Gen:
         for fl in self.p.flows:
             for proc, routes in fl.entries:
                 rdef = self.ck.results[self.ck.procs[proc].result]
-                m = dict(routes)
-                self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> 行き先 {{\n    match r {{")
+                m = route_map(routes)
+                many = any(len(ds) > 1 for ds in m.values())  # 行き先が複数ある結果があれば、全部の結果を、書いた順の列で返す
+                one = lambda dest: "行き先::応答" if dest == "応答" else f'行き先::待つ("{dest[3:]}")' if dest.startswith("待つ ") else f'行き先::処理("{dest}")'
+                self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> {'Vec<行き先>' if many else '行き先'} {{\n    match r {{")
                 for v, ts in rdef.variants:  # ts は中身（名前, 型）。ここでは有無だけ見る
                     pat = f"{rdef.name}::{v}" + ("(..)" if ts else "")
-                    dest = m[v]
-                    self.w(f"        {pat} => " + ("行き先::応答," if dest == "応答" else f'行き先::待つ("{dest[3:]}"),' if dest.startswith("待つ ") else f'行き先::処理("{dest}"),'))
+                    ds = [one(d) for d in m[v]]
+                    self.w(f"        {pat} => " + (f"vec![{', '.join(ds)}]," if many else ds[0] + ","))
                 self.w("    }\n}\n")
 
     def triggers(self):

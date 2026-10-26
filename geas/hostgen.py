@@ -190,10 +190,10 @@ pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
 
 def definitions(ck: Checker) -> dict:
     p = ck.p
-    flows: dict[str, dict[str, str]] = {}
+    flows: dict[str, dict] = {}
     for fl in p.flows:
-        for proc, routes in fl.entries:
-            flows.setdefault(proc, {}).update(dict(routes))
+        for proc, routes in fl.entries:  # 行き先が1つなら文字列、複数なら書いた順の配列
+            flows.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else ds for v, ds in route_map(routes).items()})
     return {
         "処理": {x.name: {"入力": [n for n, _ in x.inputs], "参照": [n for n, _ in x.refs], "採番": sorted(set(ck.infos[x.name].new_ids))} for x in p.processes},
         "問い合わせ": {q.name: {"入力": [n for n, _ in q.inputs], "参照": [n for n, _ in q.refs]} for q in p.queries},

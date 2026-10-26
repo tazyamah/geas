@@ -328,6 +328,14 @@ class ForEach:
     line: int = 0
 
 
+def route_map(routes) -> dict:
+    """結果の種類 → 行き先のならび。同じ結果に行き先を続けて書くと、書いた順に起こす（並列っぽい書き方。実行は書いた順）"""
+    m: dict[str, list[str]] = {}
+    for v, d in routes:
+        m.setdefault(v, []).append(d)
+    return m
+
+
 def show_range(r: Optional[Range]) -> str:
     if r is None:
         return ""

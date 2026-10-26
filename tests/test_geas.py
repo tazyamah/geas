@@ -650,9 +650,69 @@ def test_冪等キーは_ID_か文字列():
     assert any("冪等キーは ID か文字列" in m for m in msgs(ck, ERROR))
 
 
-def test_同じ結果に行き先を2つ書くと止まる():
-    ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
-    assert any("行き先が2つ以上" in m for m in msgs(ck, ERROR))
+def test_応答と処理を同じ結果に並べると止まる():
+    ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → par { reply, 決済要求 }, 商品なし"))
+    assert any("par に入れられません" in m for m in msgs(ck, ERROR))
+    with pytest.raises(ParseError, match="par"):
+        parse(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
+
+
+NOTIFY = """
+effect 通知.メール(注文ID: id) no_wait "通知は結果を待たない"
+effect 通知.プッシュ(注文ID: id) no_wait "通知は結果を待たない"
+result 通知結果 {
+  要求済
+}
+deed メール通知 {
+  input 注文ID: id required
+  result 通知結果
+  effects 通知.メール
+
+  request 通知.メール(注文ID, idempotency_key = 注文ID)
+  return 要求済
+}
+deed プッシュ通知 {
+  input 注文ID: id required
+  result 通知結果
+  effects 通知.プッシュ
+
+  request 通知.プッシュ(注文ID, idempotency_key = 注文ID)
+  return 要求済
+}
+nexus メール {
+  メール通知: 要求済 → reply
+}
+nexus プッシュ {
+  プッシュ通知: 要求済 → reply
+}
+"""
+FANOUT = ("受注: 受付 → 決済要求, 在庫不足", "受注: 受付 → par { メール通知, プッシュ通知 }, 在庫不足")
+
+
+def fanout(*edits):
+    return chk(mutate(CODE + NOTIFY, *edits))
+
+
+def test_同じ結果に処理を続けて書くと_書いた順に起こす行き先になる():
+    ck = fanout(*FANOUT)
+    assert ck.ready, ck.diags
+    assert build(ck)["処理"][0]["結果"][0] == ("受付", "並列［メール通知 ＋ プッシュ通知］")
+    assert any("2回書かれています" in m for m in msgs(fanout(FANOUT[0], "受注: 受付 → par { メール通知, メール通知 }, 在庫不足"), ERROR))
+    src = generate(ck)
+    assert "vec![行き先::処理(\"メール通知\"), 行き先::処理(\"プッシュ通知\")]" in src
+
+
+def test_par_の枝がデータを書くと止まる():
+    ck = fanout(FANOUT[0], "受注: 受付 → par { メール通知, 決済要求 }, 在庫不足")
+    assert any("par の枝「決済要求」は、データを書いています" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_行き先が複数のフローも生成コードがビルドできる(tmp_path):
+    ck = fanout(*FANOUT)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
 
 
 def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():

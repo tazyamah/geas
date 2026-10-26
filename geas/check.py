@@ -312,12 +312,16 @@ class Checker:
                     self.d(ERROR, "行き先", where, f"処理「{proc}」が未定義です")
                     continue
                 names = [v for v, _ in routes]
-                for v in dict.fromkeys(v for v in names if names.count(v) > 1):
-                    self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が2つ以上あります（どちらへ進むか決まりません）")
+                rm = route_map(routes)
+                for v, ds in rm.items():
+                    if len(ds) > 1 and any(d == "応答" or d.startswith("待つ ") for d in ds):
+                        self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が複数あります。応答（reply）と待つ（wait）は、par に入れられません")
+                    for d in dict.fromkeys(d for d in ds if ds.count(d) > 1):
+                        self.d(ERROR, "行き先", where, f"結果「{v}」の行き先「{d}」が2回書かれています")
                 # 行き先は処理の結果で決まる。同じ処理を別の行き先で2回書くと、どちらへ進むか決まらない
-                if proc in in_flow and in_flow[proc][1] != dict(routes):
+                if proc in in_flow and in_flow[proc][1] != rm:
                     self.d(ERROR, "行き先", where, f"処理 {proc} は、フロー {in_flow[proc][0]} にも違う行き先で書かれています")
-                in_flow.setdefault(proc, (fl.name, dict(routes)))
+                in_flow.setdefault(proc, (fl.name, rm))
                 rdef = self.results.get(self.procs[proc].result)
                 if rdef:
                     for v, _ in rdef.variants:
@@ -326,6 +330,13 @@ class Checker:
                     for v in names:
                         if v not in [x for x, _ in rdef.variants]:
                             self.d(ERROR, "名前", where, f"「{v}」は結果 {rdef.name} にありません")
+                for v, ds in rm.items():  # par の枝は、データを書かない（排他制御を要らなくし、書き込みは応答を受ける別の処理でやる）
+                    if len(ds) > 1:
+                        for d in ds:
+                            info = self.infos.get(d)
+                            if info is not None and (info.writes or info.transitions or info.new_ids):
+                                self.d(ERROR, "並列", where, f"par の枝「{d}」は、データを書いています（{'、'.join(sorted(info.writes))}）。"
+                                       "par の枝は、読むことと外部作用の要求だけにして、書き込みは応答を受ける別の処理に回してください")
                 for v, dest in routes:
                     base = dest.split(" ", 1)[1] if dest.startswith("待つ ") else dest
                     if dest.startswith("待つ "):
