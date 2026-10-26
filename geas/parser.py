@@ -14,7 +14,7 @@ CMP = ("<", ">", "<=", ">=", "==", "!=")
 UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}
 UNIT_WORDS = "sec・min・hour・day"
 SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
-PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない"}
+PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
 
 
 class Parser:
@@ -147,8 +147,10 @@ class Parser:
                 m = self.name()
                 if m == "unique":
                     f.unique = True
-                elif m == "optional":
-                    f.optional = True
+                elif m == "required":
+                    f.required = True
+                else:
+                    raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
             fields.append(f)
             self.end_line()
         return Data(name, fields, line, store)
@@ -505,6 +507,9 @@ class Parser:
             return SumE(*self.builder())
         if self.is_("{"):
             return SetB(*self.builder())
+        if t.kind == "NAME" and t.val == "null":
+            self.next()
+            return Null()
         if t.kind == "NAME":
             self.next()
             if self.accept("("):

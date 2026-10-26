@@ -89,9 +89,13 @@ def example_code(ck: Checker, row: dict) -> str:
             vals.update(kv(",".join(args[1:])) if len(args) > 1 else {})
             fields = []
             for f in ck.data[dname].fields:
+                if f.type.optional and vals.get(f.name, "null").strip() == "null":  # 書かないか null なら null
+                    fields.append(f"{f.name}: None")
+                    continue
                 if f.name not in vals:
                     raise ExampleError(f"前提 {dname}({args[0]}) に項目「{f.name}」がありません")
-                fields.append(f"{f.name}: {lit(f.type, vals[f.name], ck)}")
+                v = lit(f.type, vals[f.name], ck)
+                fields.append(f"{f.name}: Some({v})" if f.type.optional else f"{f.name}: {v}")
             extra = set(vals) - {f.name for f in ck.data[dname].fields}
             if extra:
                 raise ExampleError(f"データ {dname} に項目「{sorted(extra)[0]}」がありません")

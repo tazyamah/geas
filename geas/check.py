@@ -1,6 +1,6 @@
 """検査器。型の推論つき。宣言（読む・書く・遷移・外部・結果）と本体のずれ、
 行き先の漏れ、丸めの指定漏れ、冪等キーの漏れなどを見つける。"""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import ceil, floor
 
@@ -97,7 +97,8 @@ def column_type(ck, q, c) -> Type:
     own = {f.name: f for f in ck.data[q.target].fields}
     if c.kind == "参照先":
         tdt = ck.data[own[c.via].type.target]
-        return next(x.type for x in tdt.fields if x.name == c.field)
+        t = next(x.type for x in tdt.fields if x.name == c.field)
+        return replace(t, optional=t.optional or own[c.via].type.optional)  # 参照が null なら、その先の列も null
     if c.kind == "件数":
         return Type("整数")
     f = own[c.field]
@@ -137,6 +138,10 @@ class Checker:
         self.infos: dict[str, ProcInfo] = {}
         self.invariant_status: list[tuple[str, list[tuple[str, str]]]] = []
         self.inv_forms = [inv_form(inv) for inv in prog.invariants]
+        # すべての項目は原則「無いかもしれない」。required と書いたもの・キー・状態の項目だけが必須
+        for d in prog.data:
+            for f in d.fields:
+                f.type.optional = not (f.required or (f.type.kind == "ID" and f.unique) or f.type.kind == "名前")
         self.inv_rows: dict[int, dict[str, list[tuple[bool, str]]]] = {}  # 不変条件 → 処理 → (示せたか, 理由)
 
     def d(self, level, code, where, msg):
@@ -610,6 +615,8 @@ class ProcChecker:
         self.facts: dict[tuple, object] = {}
         self.var_iv: dict[str, tuple] = {}  # let の変数 → 値の範囲
         self.loop_deps: set[str] = set()  # for の中で、回すたびに違う値の変数
+        self.present: set[tuple[str, str]] = set()  # null でないと確かめた (束縛, 項目)
+        self.writing = False  # 書き込む先として見ているとき（null かどうかは問わない）
         self.shortage_sets: dict[str, tuple[str, str, str]] = {}  # { k | (k, v) in 元, D[k].f < v } の変数 → (D, f, 元)
         self.accessed_vars: set[str] = set()
         self.created: set[str] = set()
@@ -630,6 +637,8 @@ class ProcChecker:
         ck = self.ck
         if isinstance(e, Num):
             return "Int"
+        if isinstance(e, Null):
+            return "Null"
         if isinstance(e, Name):
             if e.n in env:
                 return env[e.n]
@@ -655,6 +664,10 @@ class ProcChecker:
             if fld is None:
                 self.d(ERROR, "名前", f"データ {dname} に項目「{e.n}」がありません")
                 return "?"
+            if fld.type.optional and not self.writing and not (
+                    isinstance(base, Name) and base.n in self.bindings and (self.bindings[base.n], e.n) in self.present):
+                self.d(ERROR, "null", f"「{show(e)}」は無い（null の）ことがあります。使う前に確かめてください"
+                       f"（let x = {show(e)} else {{ return … }}、または if {show(e)} is null {{ return … }}。必ずあるなら項目に required）")
             if isinstance(base, Index) and not self.exists_known(base, env):
                 self.d(QUESTION, "存在", f"{show(base)} が存在しないとき、どうしますか"
                        f"（{dname}の存在を確かめて返す処理が、使う前にありません）")
@@ -663,6 +676,14 @@ class ProcChecker:
             if not (isinstance(base, Name) and base.n in self.created):
                 self.info.field_reads.add(f"{dname}.{e.n}")
             return tok_of(fld.type)
+        if isinstance(e, Pred) and e.kind == "null":
+            if not (isinstance(e.e, Attr) and self.null_field(e.e, env) is not None):
+                self.d(ERROR, "型", f"「is null」は、無いかもしれない項目（required でない項目）にだけ使えます（{show(e.e)}）")
+                return "Bool"
+            self.writing, saved = True, self.writing
+            self.ty(e.e, env)
+            self.writing = saved
+            return "Bool"
         if isinstance(e, Pred):
             if e.kind in ("ある", "ない"):
                 if isinstance(e.e, Index):
@@ -730,6 +751,21 @@ class ProcChecker:
         if (isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index)
                 and c.e.e == Name(e.binder.names[0]) and e.elem == Name(e.binder.names[0])):
             self._last_exist = (c.e.d, "∈" + show(e.binder.src))
+
+    def null_field(self, e: Attr, env):
+        """e が無いかもしれない項目なら、その項目。そうでなければ None（型の検査はしない）"""
+        data = (self.lookup_data.get(e.e.n) if isinstance(e.e, Name)
+                else e.e.d if isinstance(e.e, Index) else None)
+        if data not in self.ck.data:
+            return None
+        f = next((x for x in self.ck.data[data].fields if x.name == e.n), None)
+        return f if f is not None and f.type.optional else None
+
+    def set_null(self, data, fname, bind, known_present):
+        """data.fname に書いた。同じデータの別の束縛（同じ1件かもしれない）の確認は消し、この1件は書いた値で分かる"""
+        self.present = {p for p in self.present if not (self.binding_data.get(p[0]) == data and p[1] == fname)}
+        if bind is not None and known_present:
+            self.present.add((bind, fname))
 
     def exists_known(self, ix: Index, env) -> bool:
         """D[k] の存在が確かめ済みか。同じキーの式で確かめたか、確かめた集まりを回している変数か"""
@@ -917,7 +953,8 @@ class ProcChecker:
             if not st.body:
                 self.d(ERROR, "型", "if の中が空です", st.line)
             # 「x.項目 == 状態」や「x.項目 > 数」が成り立つ分岐の中で分かることは、分岐の外へは持ち出さない
-            outer_sg, outer_facts, outer_guarded = self.state_guards, self.facts, self.guarded
+            outer_sg, outer_facts, outer_guarded, outer_present = self.state_guards, self.facts, self.guarded, self.present
+            self.present = set(self.present)
             self.state_guards = self.state_guards | ({fact} if state_cmp and c.op == "==" else set())
             self.facts = self.add_facts(dict(self.facts), self.cond_facts(c, True))
             self.guarded = set(self.guarded)
@@ -929,7 +966,10 @@ class ProcChecker:
             skip_facts = self.add_facts(dict(outer_facts), self.cond_facts(c, False))
             if st.body and isinstance(st.body[-1], Return):
                 # 分岐がかならず return で終わるなら、成り立たなかったときだけ先へ進む。その確認は、あとの文へ引き継ぐ
-                self.state_guards, self.facts, self.guarded = outer_sg, skip_facts, outer_guarded
+                self.state_guards, self.facts, self.guarded, self.present = outer_sg, skip_facts, outer_guarded, outer_present
+                if (isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Attr) and isinstance(c.e.e, Name)
+                        and c.e.e.n in self.bindings):
+                    self.present.add((self.bindings[c.e.e.n], c.e.n))
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
                     self.guarded.add(self.exist_sets[c.e.n])
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
@@ -943,6 +983,7 @@ class ProcChecker:
                 self.state_guards = outer_sg & self.state_guards
                 self.facts = iv_join(skip_facts, self.facts)
                 self.guarded = outer_guarded
+                self.present = outer_present & self.present
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):
                 t = self.ty(st.e)
@@ -959,7 +1000,22 @@ class ProcChecker:
                 else:
                     self.check_return(st.absent)
                     self.guarded.add((st.e.d, show(st.e.e)))
+            elif st.absent is not None and isinstance(st.e, Attr) and self.null_field(st.e, self.env) is not None:
+                # let x = y.項目 else { return … }：null なら返し、そうでなければ値を x に
+                self.writing = True
+                t = self.ty(st.e)
+                self.writing = False
+                self.check_return(st.absent)
+                self.env[st.name] = t
+                self.lookup_data.pop(st.name, None)
+                self.bindings.pop(st.name, None)
+                self.var_iv[st.name] = self.interval(st.e)
+                self.shortage_sets.pop(st.name, None)
+                if isinstance(st.e.e, Name) and st.e.e.n in self.bindings:
+                    self.present.add((self.bindings[st.e.e.n], st.e.n))
             else:
+                if st.absent is not None:
+                    self.d(ERROR, "型", f"let … else は、1件を引くとき（D[k]）か、無いかもしれない項目を取り出すときだけ書けます（{show(st.e)}）", st.line)
                 self._last_exist = None
                 t = self.ty(st.e)
                 self.env[st.name] = t
@@ -982,14 +1038,19 @@ class ProcChecker:
                 return
             # = で書くだけなら、対象の項目は読まない（ほかの所で読んでいれば、読んだまま）
             was_read = f"{tgt.e.d}.{tgt.n}" in info.field_reads
+            self.writing = st.op == "="  # = で書くだけなら、null かどうかは問わない
             self.ty(tgt, env2)
+            self.writing = False
             if st.op == "=" and not was_read:
                 info.field_reads.discard(f"{tgt.e.d}.{tgt.n}")
             tf = next((f for f in self.ck.data[tgt.e.d].fields if f.name == tgt.n), None) if tgt.e.d in self.ck.data else None
             if tf is not None and tf.type.kind == "名前":
                 self.d(ERROR, "遷移", f"update で状態の項目「{tgt.e.d}.{tgt.n}」は変えられません（遷移の確認ができないため。"
                        "1件ずつ let で引き、元の状態を確かめてから変えてください）", st.line)
-            if vt == "Rational":
+            if vt == "Null":
+                if tf is not None and not (tf.type.optional and st.op == "="):
+                    self.d(ERROR, "null", f"{tgt.e.d}.{tgt.n} に null は入れられません（必須の項目か、= 以外の更新です）", st.line)
+            elif vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif (tf is not None and tf.type.kind != "名前" and vt not in (tok_of(tf.type), "?")
                   and not (isinstance(st.value, Num) and tok_of(tf.type) in ("Int", "Money"))):
@@ -998,9 +1059,10 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} は数ではないので {st.op} できません", st.line)
             info.writes.add(f"{tgt.e.d}.{tgt.n}")
             info.write_list.append(f"{tgt.e.d}.{tgt.n}")
-            if tf is not None and tf.type.kind in ("整数", "金額", "割合"):
+            if tf is not None and tf.type.kind in ("整数", "金額", "割合") and vt != "Null":
                 self.check_update(st, env2)
             self.forget(tgt.e.d, tgt.n)
+            self.set_null(tgt.e.d, tgt.n, None, False)
         elif isinstance(st, SetField):
             data = self.lookup_data.get(st.var)
             if data is None:
@@ -1011,6 +1073,18 @@ class ProcChecker:
                 self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません", st.line)
                 return
             vt = self.ty(st.e)
+            b = self.bindings.get(st.var, st.var)
+            if vt == "Null":
+                if not fld.type.optional:
+                    self.d(ERROR, "null", f"{data}.{st.f} は必須（required）なので null は入れられません", st.line)
+                    return
+                if fld.type.kind in ("整数", "金額", "割合"):
+                    self.check_write(data, st.f, (None, None), st.line, bind=b, null=True)
+                self.forget(data, st.f)
+                self.set_null(data, st.f, b, False)
+                info.writes.add(f"{data}.{st.f}")
+                info.write_list.append(f"{data}.{st.f}")
+                return
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif (vt != tok_of(fld.type) and vt != "?" and fld.type.kind != "名前"
@@ -1018,7 +1092,7 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
-            b = self.bindings.get(st.var, st.var)
+            self.set_null(data, st.f, b, True)
             if fld.type.kind in ("整数", "金額", "割合"):
                 iv = self.interval(st.e)
                 self.check_write(data, st.f, iv, st.line, bind=b)
@@ -1096,15 +1170,18 @@ class ProcChecker:
         for f in dt.fields:
             if f is key:
                 continue
-            if f.name not in given:
-                self.d(ERROR, "項目", f"{st.data} の新規作成に項目「{f.name}」がありません", st.line)
+            if f.name not in given and not f.type.optional:
+                self.d(ERROR, "項目", f"{st.data} の新規作成に必須の項目「{f.name}」がありません", st.line)
         for n, e in st.fields:
             f = next((x for x in dt.fields if x.name == n), None)
             if f is None:
                 self.d(ERROR, "名前", f"データ {st.data} に項目「{n}」がありません", st.line)
                 continue
             vt = self.ty(e)
-            if vt == "Rational":
+            if vt == "Null":
+                if not f.type.optional:
+                    self.d(ERROR, "null", f"{st.data}.{n} は必須（required）なので null は入れられません", st.line)
+            elif vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif vt != tok_of(f.type) and not (isinstance(e, Num) and tok_of(f.type) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{st.data}.{n} に型の違う値（{vt}）を入れています", st.line)
@@ -1119,18 +1196,22 @@ class ProcChecker:
         states = {f.name: given[f.name].n for f in dt.fields
                   if f.type.kind == "名前" and isinstance(given.get(f.name), Name)}
         lows = {}
-        for n, e in st.fields:
-            f = next((x for x in dt.fields if x.name == n), None)
-            if f is not None and f.type.kind in ("整数", "金額", "割合"):
+        for f in dt.fields:
+            e = given.get(f.name, Null())  # 書かなかった項目は null
+            if f.type.kind in ("整数", "金額", "割合") and (f.name in given or f.type.optional):
+                if isinstance(e, Null):
+                    self.check_write(st.data, f.name, (None, None), st.line, new_state=states, null=True)
+                    continue
                 iv = self.interval(e)
-                self.check_write(st.data, n, iv, st.line, new_state=states)
-                lows[n] = iv[0]
+                self.check_write(st.data, f.name, iv, st.line, new_state=states)
+                lows[f.name] = iv[0]
         self.created.add(st.name)
         self.env[st.name] = f"Rec:{st.data}"
         self.lookup_data[st.name] = st.data
         b = self.bind_var(st.name)
         # 作ったばかりの1件は、状態も値も分かっている
         self.state_guards |= {(b, n, v) for n, v in states.items()}
+        self.present |= {(b, n) for n, e in st.fields if not isinstance(e, Null)}
         self.facts.update({(b, n): lo for n, lo in lows.items() if lo is not None})
 
     # ---- 書き込みの証明（項目の範囲と不変条件）。書き込むその場で、値の範囲から示す ----
@@ -1186,13 +1267,13 @@ class ProcChecker:
     def inv_row(self, i, ok, note):
         self.ck.inv_rows.setdefault(i, {}).setdefault(self.proc.name, []).append((ok, note))
 
-    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None):
+    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None, null=False):
         """項目へ範囲 iv の値を書くとき、項目の範囲と、その項目にかかる不変条件が守れるか。
         bind は書く1件の束縛（update では None）。note は値の範囲を示せた理由。grow は「元の値から減らさない」こと。
         new_state は新規作成のときの状態（状態の項目 → 状態名）"""
         fld = next(f for f in self.ck.data[data].fields if f.name == fname)
         lo, hi = iv_of(fld.type)
-        if (lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi)):
+        if not null and ((lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi))):
             self.d(ERROR, "範囲", f"{data}.{fname} に書く値が、項目の範囲 {iv_show((lo, hi))} に収まると示せません"
                    f"（書く値の範囲 {iv_show(iv)}。はみ出す例（反例）があります）", line)
         for i, form in enumerate(self.ck.inv_forms):
@@ -1204,7 +1285,8 @@ class ProcChecker:
                 self.inv_row(i, ok, note or f"書く値は {n} 以上")
                 if not ok:
                     self.d(ERROR, "不変条件", f"不変条件 {data}: {fname} >= {n} を示せません"
-                           f"（反例：書く値が {'いくらでも小さく' if iv[0] is None else iv[0]} になりえます）", line)
+                           + ("（null は満たしません。必ずあるなら項目に required）" if null else
+                              f"（反例：書く値が {'いくらでも小さく' if iv[0] is None else iv[0]} になりえます）"), line)
             elif form[0] == "ならば" and form[4] == fname:
                 _, _, sf, s, g, n = form
                 big = iv[0] is not None and iv[0] > n
@@ -1249,6 +1331,9 @@ class ProcChecker:
                 self.inv_row(i, True, f"{s}以外にする")
                 continue
             lo = self.interval(Attr(Name(var), g))[0]
+            fg = next((f for f in self.ck.data[data].fields if f.name == g), None)
+            if fg is not None and fg.type.optional and (self.bindings.get(var, var), g) not in self.present:
+                lo = None  # null かもしれない値は「g > n」を満たさない
             ok = lo is not None and lo > n
             self.inv_row(i, ok, f"{s}にする前に {g} > {n} を確認している")
             if not ok:

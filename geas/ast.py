@@ -17,15 +17,17 @@ class Type:
     key: Optional[str] = None  # 写像のキーのデータ名
     value: Optional["Type"] = None
     unit: Optional[str] = None
-    optional: bool = False  # 問い合わせの入力が「任意」（指定が無ければ、その絞り込みをしない）
+    optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
 
 
 @dataclass
 class Field:
+    """データの項目。すべては原則「無いかもしれない」（null になりうる）。必須の約束は required で書く。
+    キーと状態の項目は必須（状態は作るときに初期の状態が入る）"""
     name: str
     type: Type
     unique: bool = False
-    optional: bool = False
+    required: bool = False
 
 
 @dataclass
@@ -161,6 +163,11 @@ class Program:
 @dataclass
 class Num:
     v: int
+
+
+@dataclass
+class Null:
+    """無いかもしれない項目が、実際に無いこと（null の値）。1件や項目そのものが無いこと（undefined）とは別"""
 
 
 @dataclass
@@ -322,6 +329,8 @@ def show_type(t: Type) -> str:
 def show(e) -> str:
     if isinstance(e, Num):
         return str(e.v)
+    if isinstance(e, Null):
+        return "null"
     if isinstance(e, Name):
         return e.n
     if isinstance(e, Attr):

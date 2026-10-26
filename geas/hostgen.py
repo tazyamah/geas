@@ -2,6 +2,7 @@
 JSON の文字列で（名前, 文脈, 保存, 入力）を受け取り、処理を実行して書込を適用し、（結果, 外部作用, 新しい保存）を JSON で返す。
 フローの行き先とトリガの宣言は、生成時に JSON 定義として埋め込む。待ち・期限・外部作用の実行は、JS 側の基盤（runtime.js）の仕事。"""
 import json
+from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
@@ -113,7 +114,10 @@ pub fn js_arr(v: &[String]) -> String { format!("[{}]", v.iter().map(|x| js_str(
 
 
 def from_j(t: Type, j: str) -> str:
-    """JSON 値 j から Rust の値へ（エラーは ? で伝える）。"""
+    """JSON 値 j から Rust の値へ（エラーは ? で伝える）。
+    無いかもしれない項目は、null なら None。キーそのものが無い（undefined）のはエラー"""
+    if t.optional:
+        return f"match {j} {{ J::Null => None, v => Some({from_j(replace(t, optional=False), 'v')}) }}"
     k = t.kind
     if k in ("ID", "参照", "文字列"):
         return f"{j}.as_str()?.to_string()"
@@ -136,7 +140,9 @@ def from_j(t: Type, j: str) -> str:
 
 
 def to_j(t: Type, x: str) -> str:
-    """Rust の値 x から JSON 文字列へ（式。String を返す）。"""
+    """Rust の値 x から JSON 文字列へ（式。String を返す）。None は null"""
+    if t.optional:
+        return f'match &{x} {{ None => "null".to_string(), Some(v) => {to_j(replace(t, optional=False), "v")} }}'
     k = t.kind
     if k in ("ID", "参照", "文字列"):
         return f"js_str(&{x})"
@@ -232,9 +238,10 @@ def host_source(ck: Checker) -> str:
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = []
         for x, t in q.inputs:
-            e = from_j(t, f'入力.get("{x}")?')
-            if t.optional:
-                e = f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(t, "v")}), None => None }}'
+            base = replace(t, optional=False)
+            e = from_j(base, f'入力.get("{x}")?')
+            if t.optional:  # 問い合わせの任意の入力は、無くても null でもよい
+                e = f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(base, "v")}), None => None }}'
             inf.append(f"{x}: {e}")
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')

@@ -32,7 +32,7 @@ def build(ck: Checker) -> dict:
     p = ck.p
     spec: dict = {}
     spec["データ"] = [
-        (d.name, f.name, show_type(f.type), "" if f.optional else "○", "○" if f.unique else "")
+        (d.name, f.name, show_type(f.type), "" if f.type.optional else "○", "○" if f.unique else "")
         for d in p.data
         for f in d.fields
     ]

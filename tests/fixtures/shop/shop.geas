@@ -3,8 +3,8 @@
 
 data 商品 {
   商品ID: id unique
-  在庫: int 0..
-  単価: money(円) 0..
+  在庫: int 0.. required
+  単価: money(円) 0.. required
 }
 
 data 顧客 {
@@ -13,9 +13,9 @@ data 顧客 {
 
 data 注文 {
   注文ID: id unique
-  顧客: ref 顧客
-  明細: 商品 → int 1..99
-  合計: money(円) 0..
+  顧客: ref 顧客 required
+  明細: 商品 → int 1..99 required
+  合計: money(円) 0.. required
   状態: 注文状態
 }
 
