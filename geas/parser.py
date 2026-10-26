@@ -14,7 +14,7 @@ CMP = ("<", ">", "<=", ">=", "==", "!=")
 UNITS = {"sec": 1, "min": 60, "hour": 3600, "day": 86400}
 UNIT_WORDS = "sec・min・hour・day"
 SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
-PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない"}
+PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
 
 
 class Parser:
@@ -147,8 +147,10 @@ class Parser:
                 m = self.name()
                 if m == "unique":
                     f.unique = True
-                elif m == "optional":
-                    f.optional = True
+                elif m == "required":
+                    f.required = True
+                else:
+                    raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
             fields.append(f)
             self.end_line()
         return Data(name, fields, line, store)
@@ -298,11 +300,23 @@ class Parser:
                 p.body.append(self.stmt())  # 宣言でなければ本体の文（body ブロックは無い）
         return p
 
+    def input_item(self):
+        """入力 名前: 型 [required]。入力も原則「無いかもしれない」（キーが無いのも null も同じ「無い」）。
+        必ず要るものは required で、無ければ処理の手前（境界）で入力不正になる"""
+        n = self.name()
+        self.expect(":")
+        t = self.type()
+        if self.is_("optional"):
+            raise self.err("入力は、書かなければ「無いかもしれない」扱いです。optional は要りません（必ず要るなら required と書きます）")
+        t.optional = not self.accept("required")
+        return n, t
+
     def decl(self, p: Process):
         kw = self.name()
-        if kw in ("input", "slot"):
-            items = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
-            (p.inputs if kw == "input" else p.refs).extend(items)
+        if kw == "input":
+            p.inputs += self.comma_list(self.input_item)
+        elif kw == "slot":
+            p.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         elif kw == "reads":
             p.reads += self.comma_list(self.access)
         elif kw == "writes":
@@ -403,7 +417,7 @@ class Parser:
                 if self.is_("idempotency_key") and self.is_("=", 1):
                     self.next()
                     self.next()
-                    idem = self.expr()
+                    idem = self.idem_key()
                 else:
                     args.append(self.expr())
                 if not self.accept(","):
@@ -491,6 +505,17 @@ class Parser:
         self.expect("}")
         return elem, b, cond
 
+    def idem_key(self):
+        """冪等キー。1つの値か、値の組 (a, b, …)"""
+        if not self.is_("("):
+            return self.expr()
+        self.next()
+        items = [self.expr()]
+        while self.accept(","):
+            items.append(self.expr())
+        self.expect(")")
+        return items[0] if len(items) == 1 else Tuple(items)
+
     def primary(self):
         t = self.peek()
         if t.kind == "NUM":
@@ -505,6 +530,9 @@ class Parser:
             return SumE(*self.builder())
         if self.is_("{"):
             return SetB(*self.builder())
+        if t.kind == "NAME" and t.val == "null":
+            self.next()
+            return Null()
         if t.kind == "NAME":
             self.next()
             if self.accept("("):
@@ -554,20 +582,12 @@ class Parser:
         q = Query(self.name(), line=line)
         self.block_open()
 
-        def typed():
-            n = self.name()
-            self.expect(":")
-            t = self.type()
-            if self.accept("optional"):
-                t.optional = True
-            return n, t
-
         while not self.accept("}"):
             kw = self.name()
             if kw == "input":
-                q.inputs += self.comma_list(typed)
+                q.inputs += self.comma_list(self.input_item)
             elif kw == "slot":
-                q.refs += self.comma_list(typed)
+                q.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
             elif kw == "from":
                 q.target = self.name()
             elif kw == "where":

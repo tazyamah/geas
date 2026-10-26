@@ -1,5 +1,7 @@
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
+from dataclasses import replace
+
 from .ast import *  # noqa: F401,F403
 from .check import Checker, column_type, phys, tok_of
 
@@ -37,6 +39,11 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
         return Err(format!("{}={} は範囲外", 名, x));
     }
     Ok(())
+}
+/// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
+pub fn 冪等キーの組(xs: &[String]) -> String {
+    let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    format!("[{}]", q.join(","))
 }
 pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
     範囲検査(名, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
@@ -93,8 +100,15 @@ def rust_type(t: Type) -> str:
     raise ValueError(k)
 
 
+def field_rust(t: Type) -> str:
+    """項目の Rust の型。無いかもしれない項目は Option"""
+    return f"Option<{rust_type(t)}>" if t.optional else rust_type(t)
+
+
 def show_expr(t: Type, x: str) -> str:
-    """値の表示用の Rust 式（突合のための正規の書式）。"""
+    """値の表示用の Rust 式（突合のための正規の書式）。null は「null」"""
+    if t.optional:
+        return f'{x}.as_ref().map_or("null".to_string(), |v| format!("{{}}", {show_expr(replace(t, optional=False), "v")}))'
     k = t.kind
     if k == "名前":
         return f"{x}.名前()"
@@ -107,13 +121,16 @@ def show_expr(t: Type, x: str) -> str:
     return x
 
 
+CONVERSIONS = ("money", "int")
+
+
 def opt(v):
     return "None" if v is None else f"Some({v})"
 
 
 class Gen:
     def __init__(self, ck: Checker):
-        assert ck.ok, "検査にエラーがあるので生成しません"
+        assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
         self.out: list[str] = []
@@ -169,7 +186,7 @@ class Gen:
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {n}行 {{")
             for c, t in cols:
-                self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else rust_type(t)},")  # 集計は桁あふれしない広い整数
+                self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else field_rust(t)},")  # 集計は桁あふれしない広い整数
             self.w("}")
             fmt = "/".join(f"{c.name}={{}}" for c, _ in cols)
             vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
@@ -177,20 +194,33 @@ class Gen:
         out_ty = f"{n}行" if q.select else "String"
         self.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> Vec<{out_ty}> {{")
         self.w(f"    let mut 行: Vec<&{q.target}> = 保存.{q.target}.values().filter(|r| {{")
+        def atom(f, op, st):
+            if not st.isdigit():
+                return f"r.{f} {op} {fields[f].type.target}::{st}"
+            if fields[f].type.optional:  # null はどの比較も満たさない
+                return f"r.{f}.map_or(false, |v| (v as i128) {op} {st})"
+            return f"(r.{f} as i128) {op} {st}"
+
         for group in q.conds:
-            atoms = [f"(r.{f} as i128) {op} {st}" if st.isdigit() else f"r.{f} {op} {fields[f].type.target}::{st}" for f, op, st in group]
+            atoms = [atom(f, op, st) for f, op, st in group]
             self.w(f"        if !({' || '.join(atoms)}) {{ return false; }}")
         for f, op, a in q.filters:
+            nul = fields[f].type.optional
+            v = "(*fv)" if nul else f"r.{f}"
+
+            def guard(cond):  # null は絞り込みを満たさない。値があれば fv で比べる
+                return f"match &r.{f} {{ Some(fv) => {cond}, None => false }}" if nul else cond
             if op == "直近":
-                self.w(f"        if !(r.{f} >= ctx.現在 - {a}) {{ return false; }}")
+                self.w(f"        if !({guard(f'{v} >= ctx.現在 - {a}')}) {{ return false; }}")
                 continue
             t = ins[a]
             if op.startswith("含む"):
                 folds = op[3:-1].split(",") if "(" in op else []
                 flags = ", ".join("true" if k in folds else "false" for k in ("大小無視", "かな無視", "幅無視"))
-                cond = f"照合(&r.{f}, {flags}).contains(&照合(x, {flags}))" if folds else f"r.{f}.contains(x.as_str())"
+                cond = f"照合(&{v}, {flags}).contains(&照合(x, {flags}))" if folds else f"{v}.contains(x.as_str())"
             else:
-                cond = {"以上": f"r.{f} >= *x", "以下": f"r.{f} <= *x"}[op]
+                cond = {"以上": f"({v} as i128) >= (*x as i128)", "以下": f"({v} as i128) <= (*x as i128)"}[op]  # 物理数の幅が違っても比べられる
+            cond = guard(cond)
             if t.optional:
                 self.w(f"        if let Some(x) = &入力.{a} {{ if !({cond}) {{ return false; }} }}")
             else:
@@ -199,7 +229,8 @@ class Gen:
         if q.order:
             f, d = q.order
             a, b = ("b", "a") if d == "新しい順" else ("a", "b")
-            self.w(f"    行.sort_by(|a, b| {a}.{f}.cmp(&{b}.{f}).then({a}.{key}.cmp(&{b}.{key})));")
+            nulls = f"a.{f}.is_none().cmp(&b.{f}.is_none()).then(" if fields[f].type.optional else "("  # null は最後
+            self.w(f"    行.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
         else:
             self.w(f"    行.sort_by(|a, b| a.{key}.cmp(&b.{key}));")
         if q.limit:
@@ -211,15 +242,26 @@ class Gen:
             return
         self.w("    行.into_iter().filter_map(|r| {")
         for via in dict.fromkeys(c.via for c in q.select if c.kind == "参照先"):
-            self.w(f"        let j_{via} = 保存.{fields[via].type.target}.get(&r.{via})?;  // 参照先が無い行は出さない")
+            tgt = fields[via].type.target
+            if fields[via].type.optional:  # 参照が null なら、その先の列は null
+                self.w(f"        let j_{via} = match &r.{via} {{ Some(k) => Some(保存.{tgt}.get(k)?), None => None }};  // 参照先が無い行は出さない")
+            else:
+                self.w(f"        let j_{via} = 保存.{tgt}.get(&r.{via})?;  // 参照先が無い行は出さない")
         parts = []
         for c, _ in cols:
             if c.kind == "参照先":
-                parts.append(f"{c.name}: j_{c.via}.{c.field}.clone()")
+                tf = next(x for x in self.ck.data[fields[c.via].type.target].fields if x.name == c.field)
+                if fields[c.via].type.optional:
+                    get = "and_then(|j| j.{0}.clone())" if tf.type.optional else "map(|j| j.{0}.clone())"
+                    parts.append(f"{c.name}: j_{c.via}." + get.format(c.field))
+                else:
+                    parts.append(f"{c.name}: j_{c.via}.{c.field}.clone()")
             elif c.kind == "合計":
-                parts.append(f"{c.name}: r.{c.field}.values().map(|v| *v as i128).sum::<i128>()")
+                parts.append(f"{c.name}: r.{c.field}.iter().flat_map(|m| m.values()).map(|v| *v as i128).sum::<i128>()"
+                             if fields[c.field].type.optional else f"{c.name}: r.{c.field}.values().map(|v| *v as i128).sum::<i128>()")
             elif c.kind == "件数":
-                parts.append(f"{c.name}: r.{c.field}.len() as i128")
+                parts.append(f"{c.name}: r.{c.field}.as_ref().map_or(0, |m| m.len()) as i128"
+                             if fields[c.field].type.optional else f"{c.name}: r.{c.field}.len() as i128")
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
         self.w(f"        Some({n}行 {{ {', '.join(parts)} }})")
@@ -248,7 +290,7 @@ class Gen:
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {d.name} {{")
             for f in d.fields:
-                self.w(f"    pub {f.name}: {rust_type(f.type)},")
+                self.w(f"    pub {f.name}: {field_rust(f.type)},")
             self.w("}\n")
         self.w("#[derive(Clone, Debug, Default)]\npub struct 保存 {")
         for d in self.p.data:
@@ -261,7 +303,8 @@ class Gen:
             if f is None:
                 self.w(f"                書込::{d}_新規(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
             else:
-                self.w(f"                書込::{d}_{f}(id, v) => {{ self.{d}.get_mut(&id).expect(\"書込先が無い\").{f} = v; }}")
+                # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
+                self.w(f"                書込::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
         self.w("            }\n        }\n    }")
         self.w("    pub fn 差分(&self, 後: &保存) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
         for d in self.p.data:
@@ -297,7 +340,7 @@ class Gen:
                 self.w(f"    {d}_新規({d}),")
             else:
                 t = next(x.type for x in self.ck.data[d].fields if x.name == f)
-                self.w(f"    {d}_{f}(String, {rust_type(t)}),")
+                self.w(f"    {d}_{f}(String, {field_rust(t)}),")
         self.w("}\n")
 
     def effects(self):
@@ -379,6 +422,7 @@ class ProcGen:
         self.scope: dict[str, tuple[str, str]] = {}  # 名前 → (種類, 型トークン)
         self.lines: list[str] = []
         self.ind = 1
+        self.null_inputs: set[str] = set()
         self.in_loop = False
 
     def L(self, s=""):
@@ -395,6 +439,12 @@ class ProcGen:
             return f"{x}.clone()"
         return x
 
+    def nullable(self, e: Attr) -> bool:
+        bt = self.tok(e.e)
+        if not bt.startswith("Rec:"):
+            return False
+        return next(f for f in self.ck.data[bt[4:]].fields if f.name == e.n).type.optional
+
     def place(self, e) -> str:
         if isinstance(e, Name):
             kind, _ = self.scope[e.n]
@@ -405,6 +455,12 @@ class ProcGen:
             return f"保存.{e.d}[&({self.rx(e.e)})]"
         raise ValueError(e)
 
+    def src(self, e) -> str:
+        """読むだけの場所。無いかもしれない入力は、検査で確かめてあるので中身を借りる"""
+        if isinstance(e, Name) and e.n in self.null_inputs and self.scope.get(e.n, ("",))[0] == "input":
+            return f"unsafe {{ {self.place(e)}.as_ref().unwrap_unchecked() }}"
+        return self.place(e)
+
     def rx(self, e) -> str:
         if isinstance(e, Num):
             return f"{e.v}i128"
@@ -412,6 +468,8 @@ class ProcGen:
             if e.n in self.scope:
                 kind, tok = self.scope[e.n]
                 x = self.place(e)
+                if kind == "input" and e.n in self.null_inputs:  # 検査で、無くないと確かめてある（実行時に確かめない）
+                    return self.wrap(tok, f"unsafe {{ {x}.clone().unwrap_unchecked() }}")
                 if kind == "local" and tok in ("Int", "Money", "Rational", "Ratio"):
                     return x
                 if kind == "ref":
@@ -421,16 +479,25 @@ class ProcGen:
                 return self.wrap(tok, x)
             return f"{self.ck.variants[e.n]}::{e.n}"
         if isinstance(e, Attr):
+            if self.nullable(e):  # 検査で、null でないと確かめてある
+                # 検査で、null でないと確かめてある（No.28：示せた所は実行時に確かめない）
+                return self.wrap(self.tok(e), f'unsafe {{ {self.place(e)}.clone().unwrap_unchecked() }}')
             return self.wrap(self.tok(e), self.place(e))
         if isinstance(e, Index):
             return self.place(e)
+        if isinstance(e, Pred) and e.kind == "null":
+            return f"{self.place(e.e)}.is_none()"
+        if isinstance(e, Null):
+            return "None"
         if isinstance(e, Pred):
             if e.kind in ("ある", "ない"):
                 c = f"保存.{e.e.d}.contains_key(&({self.rx(e.e.e)}))"
                 return c if e.kind == "ある" else f"!{c}"
-            c = f"{self.place(e.e)}.is_empty()"
+            c = f"{self.src(e.e)}.is_empty()"
             return c if e.kind == "空" else f"!{c}"
         if isinstance(e, Call):
+            if e.n in CONVERSIONS:  # 整数 ⇄ 金額 の変換は、意味の型を変えるだけ（物理の値はそのまま）
+                return self.rx(e.args[0])
             return f"{e.args[1].n}({self.rx(e.args[0])})"
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
@@ -446,7 +513,7 @@ class ProcGen:
     def bind_lines(self, b: Binder, pad: str):
         """束縛の for 文の先頭と、束縛した名前の登録。戻り値は (for 行, 束縛の行, 旧 scope)。"""
         st = self.tok(b.src)
-        src = self.place(b.src)
+        src = self.src(b.src)
         saved = dict(self.scope)
         if st.startswith("Map:"):
             _, _, vt = st.split(":", 2)
@@ -483,12 +550,29 @@ class ProcGen:
         v = f"{self.rdef.name}::{r.variant}" + (f"({args})" if r.args else "")
         return f"{self.proc.name}出力 {{ 結果: {v}, 書込: 書込列, 外部: 外部列 }}"
 
-    def conv(self, t: Type, x: str, name: str) -> str:
-        """i128 の式を、項目の物理数へ。範囲の宣言があれば検査を付ける。"""
+    def conv(self, t: Type, x: str, name: str, proven: bool = False) -> str:
+        """i128 の式を、項目の物理数へ。proven なら、範囲は検査で示してある（実行時には確かめない）。
+        上限か下限が決まっていない範囲は、物理数に収まるかまでは示せないので、そこだけ確かめる"""
+        if proven:
+            r = t.range
+            if r and r.lo is not None and r.hi is not None:
+                return f"(({x}) as {phys(t)})"  # 範囲は検査で示した。範囲から選んだ物理数には必ず収まる
+            return f'{phys(t)}::try_from({x}).expect("物理数に収まらない")'
         r = t.range
         lo = r.lo if r else None
         hi = r.hi if r else None
         return f'{phys(t)}::try_from(範囲内("{name}", {x}, {opt(lo) if lo is None else f"Some({lo})"}, {"None" if hi is None else f"Some({hi})"})).expect("物理数に収まらない")'
+
+    def field_value(self, t: Type, e, name: str) -> str:
+        """項目へ書く値。null になりうる項目は Option で、無いかもしれない入力はそのまま渡す"""
+        num = t.kind in ("整数", "金額")
+        if isinstance(e, Null):
+            return "None"
+        if t.optional and isinstance(e, Name) and e.n in self.null_inputs and self.scope[e.n][0] == "input":
+            x = self.place(e)
+            return f"{x}.map(|v| {self.conv(t, '(v as i128)', name, proven=True)})" if num else f"{x}.clone()"
+        v = self.conv(t, self.rx(e), name, proven=True) if num else self.rx(e)
+        return f"Some({v})" if t.optional else v
 
     def field_type(self, d, f) -> Type:
         return next(x.type for x in self.ck.data[d].fields if x.name == f)
@@ -514,6 +598,14 @@ class ProcGen:
                     self.L(f"    None => return {self.ret_expr(st.absent)},")
                 self.L("};")
                 self.scope[st.name] = ("local", f"Rec:{d}")
+            elif st.absent is not None and isinstance(st.e, (Attr, Name)):  # let x = y.項目／入力 else { return … }（無ければ返す）
+                tok = self.tok(st.e)
+                ty = {"Int": "i128", "Money": "i128", "Ratio": "有理", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}.get(tok, "_")
+                self.L(f"let {st.name}: {ty} = match {self.place(st.e)}.clone() {{")
+                self.L(f"    Some(v) => {self.wrap(tok, 'v') if tok in ('Int', 'Money') else 'v'},")
+                self.L(f"    None => return {self.ret_expr(st.absent)},")
+                self.L("};")
+                self.scope[st.name] = ("local", tok)
             else:
                 tok = self.tok(st.e)
                 ty = {"Int": "i128", "Money": "i128", "Rational": "有理", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}[tok]
@@ -530,17 +622,23 @@ class ProcGen:
             cur = self.rx(tgt)
             new = {"-=": f"{cur} - {val}", "+=": f"{cur} + {val}", "=": val}[st.op]
             pre = f"if {self.rx(st.cond)} " if st.cond is not None else ""
+            ft = self.field_type(d, f)
             self.L(f"    {pre}{{")
-            self.L(f"        let 新値: i128 = {new};")
-            self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {self.conv(self.field_type(d, f), '新値', d + '.' + f)}));")
+            if isinstance(st.value, Null):
+                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, None));")
+            elif ft.kind in ("整数", "金額"):
+                v = self.conv(ft, '新値', d + '.' + f, proven=True)
+                self.L(f"        let 新値: i128 = {new};")
+                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({v})' if ft.optional else v}));")
+            else:
+                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({val})' if ft.optional else val}));")
             self.L("    }")
             self.L("}")
             self.scope = saved
         elif isinstance(st, SetField):
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
-            t = self.field_type(d, st.f)
-            v = self.conv(t, self.rx(st.e), f"{d}.{st.f}") if t.kind in ("整数", "金額") else self.rx(st.e)
+            v = self.field_value(self.field_type(d, st.f), st.e, f"{d}.{st.f}")
             self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Create):
             dt = self.ck.data[st.data]
@@ -551,11 +649,7 @@ class ProcGen:
                 if f is key:
                     v = f"ctx.新{st.data}ID.clone()"
                 else:
-                    e = given[f.name]
-                    if f.type.kind in ("整数", "金額"):
-                        v = self.conv(f.type, self.rx(e), f"{st.data}.{f.name}")
-                    else:
-                        v = self.rx(e)
+                    v = self.field_value(f.type, given.get(f.name, Null()), f"{st.data}.{f.name}")  # 書かなかった項目は null
                 self.L(f"    {f.name}: {v},")
             self.L("};")
             self.L(f"書込列.push(書込::{st.data}_新規({st.name}.clone()));")
@@ -578,7 +672,10 @@ class ProcGen:
             for (n, t), a in zip(eff.params, st.args):
                 v = self.conv(t, self.rx(a), n) if t.kind in ("整数", "金額") else self.rx(a)
                 parts.append(f"{n}: {v}")
-            parts.append(f"冪等キー: {self.rx(st.idem)}")
+            if isinstance(st.idem, Tuple):  # 組は、区切りがあいまいにならない形で1つの文字列に
+                parts.append(f"冪等キー: 冪等キーの組(&[{', '.join(self.rx(x) for x in st.idem.items)}])")
+            else:
+                parts.append(f"冪等キー: {self.rx(st.idem)}")
             self.L(f"外部列.push(外部作用::{st.effect.replace('.', '_')} {{ {', '.join(parts)} }});")
 
     # ---- 関数全体 ----
@@ -588,17 +685,21 @@ class ProcGen:
         g.w(f"// ---- 処理 {n} ----")
         g.w(f"pub struct {n}入力 {{")
         for name, t in proc.inputs:
-            g.w(f"    pub {name}: {rust_type(t)},")
+            g.w(f"    pub {name}: {field_rust(t)},")  # 無いかもしれない入力は Option
         g.w("}")
         g.w(f"impl {n}入力 {{\n    /// 外部から取り込むときの、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
         for name, t in proc.inputs:
+            x = "x" if t.optional else f"self.{name}"
+            chk = []
             if t.kind == "バイト列" and t.range:
-                g.w(f'        範囲検査("{name}の長さ", self.{name}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+                chk.append(f'範囲検査("{name}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
             if t.kind in ("整数", "金額") and t.range:
-                g.w(f'        範囲検査("{name}", self.{name} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+                chk.append(f'範囲検査("{name}", {"*x" if t.optional else x} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
             if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
                 r = t.value.range
-                g.w(f'        for v in self.{name}.values() {{ 範囲検査("{name}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+                chk.append(f'for v in {x}.values() {{ 範囲検査("{name}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+            for c in chk:
+                g.w(f"        if let Some(x) = &self.{name} {{ {c} }}" if t.optional else f"        {c}")
         g.w("        Ok(())\n    }\n}")
         g.w(f"/// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）\npub struct {n}文脈 {{")
         for name, t in proc.refs:
@@ -609,6 +710,7 @@ class ProcGen:
         g.w(f"pub struct {n}出力 {{\n    pub 結果: {self.rdef.name},\n    pub 書込: Vec<書込>,\n    pub 外部: Vec<外部作用>,\n}}")
         g.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> {n}出力 {{")
         g.w("    let mut 書込列: Vec<書込> = Vec::new();\n    let mut 外部列: Vec<外部作用> = Vec::new();")
+        self.null_inputs = {name for name, t in proc.inputs if t.optional}
         for name, t in proc.inputs:
             self.scope[name] = ("input", tok_of(t))
         for name, t in proc.refs:

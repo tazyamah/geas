@@ -2,6 +2,7 @@
 JSON の文字列で（名前, 文脈, 保存, 入力）を受け取り、処理を実行して書込を適用し、（結果, 外部作用, 新しい保存）を JSON で返す。
 フローの行き先とトリガの宣言は、生成時に JSON 定義として埋め込む。待ち・期限・外部作用の実行は、JS 側の基盤（runtime.js）の仕事。"""
 import json
+from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
@@ -112,8 +113,19 @@ pub fn js_arr(v: &[String]) -> String { format!("[{}]", v.iter().map(|x| js_str(
 '''
 
 
+def input_j(x: str, t: Type) -> str:
+    """処理と問い合わせの入力。無いかもしれない入力は、キーが無いのも null も同じ「無い」。
+    必ず要る入力（required）は、キーが無くても null でも入力不正"""
+    if t.optional:
+        return f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(replace(t, optional=False), "v")}), None => None }}'
+    return from_j(t, f'入力.get("{x}")?')
+
+
 def from_j(t: Type, j: str) -> str:
-    """JSON 値 j から Rust の値へ（エラーは ? で伝える）。"""
+    """JSON 値 j から Rust の値へ（エラーは ? で伝える）。
+    無いかもしれない項目は、null なら None。キーそのものが無い（undefined）のはエラー"""
+    if t.optional:
+        return f"match {j} {{ J::Null => None, v => Some({from_j(replace(t, optional=False), 'v')}) }}"
     k = t.kind
     if k in ("ID", "参照", "文字列"):
         return f"{j}.as_str()?.to_string()"
@@ -136,7 +148,9 @@ def from_j(t: Type, j: str) -> str:
 
 
 def to_j(t: Type, x: str) -> str:
-    """Rust の値 x から JSON 文字列へ（式。String を返す）。"""
+    """Rust の値 x から JSON 文字列へ（式。String を返す）。None は null"""
+    if t.optional:
+        return f'match &{x} {{ None => "null".to_string(), Some(v) => {to_j(replace(t, optional=False), "v")} }}'
     k = t.kind
     if k in ("ID", "参照", "文字列"):
         return f"js_str(&{x})"
@@ -223,19 +237,14 @@ def host_source(ck: Checker) -> str:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'新{d}ID: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
-        inf = [f"{x}: {from_j(t, f'入力.get(\"{x}\")?')}" for x, t in proc.inputs]
+        inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
         w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
-        inf = []
-        for x, t in q.inputs:
-            e = from_j(t, f'入力.get("{x}")?')
-            if t.optional:
-                e = f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(t, "v")}), None => None }}'
-            inf.append(f"{x}: {e}")
+        inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')

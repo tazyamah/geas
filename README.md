@@ -39,19 +39,27 @@ python -m pytest tests                            # テスト
 ```
 data 注文 { 注文ID: id unique, 状態: 注文状態 ... }      // 型：id set of id text time bytes int ratio money(円) ref X
 deed 決済要求 {
-  input 注文ID: id                                      // 宣言：input slot reads writes transition result effects
+  input 注文ID: id required                             // 宣言：input slot reads writes transition result effects
   reads 注文.状態
   ...
   let 注文 = 注文[注文ID] else { return 注文なし }        // 本体は Rust 風（body も then もない）
   if 注文.状態 != 受付 { return 状態違い }
-  for k in 注文.明細 { request 決済.請求(k, idempotency_key = k) }
+  for k in 注文.明細 { request 決済.請求(k, idempotency_key = (注文ID, k)) }
   return 要求済
 }
 nexus 注文受付 { 受注: 受付 → 決済要求, 顧客なし → reply, ... }   // flow は nexus の別名。行き先は reply か wait トリガ名
 trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now + 30 min → ... }
 ```
 
+データの項目は、原則としてすべて「無いかもしれない」（null になりうる）ものとして扱います。必ずある約束は `required` で書き、仕様書の「必須」に出ます（キーと状態の項目は必須）。null になりうる項目は、使う前に `let 題 = メモ.題 else { return 題なし }` か `if メモ.題 is null { return 題なし }` で確かめます（確かめずに使うと検査で止まるので、生成したコードは null で壊れません）。新規作成では書かなかった項目が null になり、`メモ.題 = null` で null に戻せます。1件や項目そのものが無いこと（undefined。`D[k] is absent` で確かめる）と、値が null であることは別のものです。問い合わせでは、null はどの条件・絞り込みも満たさず、並びでは最後になります。
+
+処理と問い合わせの入力も同じで、書かなければ「無いかもしれない」入力です。必ず要る入力には `required` を書き（`input 注文ID: id required`）、仕様書の入力欄に「（必須）」と出て計画書と突き合わせます。無いかもしれない入力は、使う前に `let x = 入力 else { return … }` か `if 入力 is null { return … }` で確かめます（null になりうる項目へそのまま入れるだけなら、確かめは要りません）。外から受け取るときは、キーが無いのも null も同じ「無い」として扱い、空文字は「ある」です。空文字と未入力を区別したいときは、処理の手前の入力の境界で不正として弾きます。必ず要る入力が無い・null なら入力不正です。`trigger` の引数には、必ず要る入力しか渡せません。
+
+整数と金額は違う型で、そのままでは混ぜられません。許すのは、同じ型どうしの計算、金額 × 整数（数量ぶん）、金額 × 割合（端数は `丸め` で整数にする）です。違う型にするときは `money(個数)`・`int(金額)` で変えてから計算します。数字をそのまま書いたもの（`0` など）は、どちらの型としても使えます。
+
 結果の中身には名前を付けます（`result 受注結果 { 受付(注文ID: id), 在庫不足(不足: set of id), 顧客なし }`）。ネクサスで次の処理へ進むときは、結果の中身を次の処理の入力へ名前と型で渡します。過不足や型の違いはエラーです（`trigger` の引数と同じルール）。
+
+外部作用（`request`）には冪等キー（`idempotency_key`）が必須で、ID か文字列、またはその組 `(注文ID, k)` で書きます。`for` の中では、回すたびに違う値と、`for` の外で決まる値の両方を組に含めます（回す値だけだと、別の注文で同じ商品を回したときにキーがぶつかり、外のサービスに重複として捨てられるため）。組は、区切りがあいまいにならない形（`["O1","P1"]`）で1つの文字列にして外へ渡します。
 
 `if` の中には、`return`・項目の更新・`update`・`request`・入れ子の `if` を書けます（`let` は外に書きます）。検査は、状態を変える文ごとに「その分岐で元の状態を確かめているか」を追います。
 

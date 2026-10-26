@@ -3,8 +3,8 @@
 
 data 商品 {
   商品ID: id unique
-  在庫: int 0..
-  単価: money(円) 0..
+  在庫: int 0.. required
+  単価: money(円) 0.. required
 }
 
 data 顧客 {
@@ -13,9 +13,9 @@ data 顧客 {
 
 data 注文 {
   注文ID: id unique
-  顧客: ref 顧客
-  明細: 商品 → int 1..99
-  合計: money(円) 0..
+  顧客: ref 顧客 required
+  明細: 商品 → int 1..99 required
+  合計: money(円) 0.. required
   状態: 注文状態
 }
 
@@ -51,7 +51,7 @@ effect 決済.請求(注文ID: id, 金額: money(円))
 part 丸め(x: 有理, 方式, 単位) -> 整数 保証 "|結果 - x| < 単位"
 
 deed 受注 {
-  input 顧客ID: id, 明細: 商品 → int 1..99
+  input 顧客ID: id required, 明細: 商品 → int 1..99 required
   slot 税率: ratio 0..1
   reads 商品.在庫, 商品.単価, 顧客
   writes 商品.在庫, 注文
@@ -72,7 +72,7 @@ deed 受注 {
 }
 
 deed 決済要求 {
-  input 注文ID: id
+  input 注文ID: id required
   reads 注文.合計, 注文.状態
   writes 注文.状態
   transition 注文: 受付 → 決済要求済
@@ -89,7 +89,7 @@ deed 決済要求 {
 
 // 決済待ちを解く2つの処理。どちらも決済要求済の注文だけを動かす（先に起きた要因が勝つ）
 deed 決済結果の反映 {
-  input 注文ID: id
+  input 注文ID: id required
   reads 注文.状態
   writes 注文.状態
   transition 注文: 決済要求済 → 完了
@@ -103,7 +103,7 @@ deed 決済結果の反映 {
 }
 
 deed 決済の期限切れ {
-  input 注文ID: id
+  input 注文ID: id required
   reads 注文.状態
   writes 注文.状態
   transition 注文: 決済要求済 → キャンセル
