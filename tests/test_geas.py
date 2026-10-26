@@ -333,3 +333,40 @@ def test_条件つきの変更は_Rust_の_if_の中に出る():
     prog = parse(mutate(CODE, GUARD, COND))
     src = generate(check(prog))
     assert "    if (注文.状態 == 注文状態::受付) {\n        書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::決済要求済));\n    }" in src
+
+
+# ---- 問い合わせの条件（または・数との比較） ----
+QUERY = """data メモ {
+  メモID: id unique
+  状態: メモ状態
+  重さ: int 0..
+}
+state メモ状態 {
+  initial 下書き
+  middle 公開
+  final 削除
+}
+query 探す {
+  from メモ
+  where 状態 == 公開 or 状態 == 下書き
+  where 重さ >= 10
+  reads メモ.状態, メモ.重さ
+}
+"""
+
+
+def test_問い合わせの条件に_or_と数の比較を書ける():
+    ck = chk(QUERY)
+    assert not msgs(ck, ERROR)
+    assert build(ck)["問い合わせ"][0]["条件"] == ["状態 == 公開 または 状態 == 下書き", "重さ >= 10"]
+
+
+def test_数との比較は数の項目にだけ使える():
+    ck = chk(QUERY.replace("重さ >= 10", "状態 >= 10"))
+    assert any("数との比較" in m for m in msgs(ck, ERROR))
+
+
+def test_問い合わせの条件は_Rust_で_or_になる():
+    src = generate(chk(QUERY))
+    assert "if !(r.状態 == メモ状態::公開 || r.状態 == メモ状態::下書き) { return false; }" in src
+    assert "if !((r.重さ as i128) >= 10) { return false; }" in src

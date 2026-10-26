@@ -157,9 +157,9 @@ class Gen:
         self.w("}")
         self.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> Vec<String> {{")
         self.w(f"    let mut 行: Vec<&{q.target}> = 保存.{q.target}.values().filter(|r| {{")
-        for f, op, st in q.conds:
-            sname = fields[f].type.target
-            self.w(f"        if !(r.{f} {op} {sname}::{st}) {{ return false; }}")
+        for group in q.conds:
+            atoms = [f"(r.{f} as i128) {op} {st}" if st.isdigit() else f"r.{f} {op} {fields[f].type.target}::{st}" for f, op, st in group]
+            self.w(f"        if !({' || '.join(atoms)}) {{ return false; }}")
         for f, op, a in q.filters:
             if op == "直近":
                 self.w(f"        if !(r.{f} >= ctx.現在 - {a}) {{ return false; }}")

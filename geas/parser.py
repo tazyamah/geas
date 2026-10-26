@@ -563,11 +563,21 @@ class Parser:
             elif kw == "from":
                 q.target = self.name()
             elif kw == "where":
-                f = self.name()
-                op = self.next().val
-                if op not in ("==", "!="):
-                    raise self.err("問い合わせの where は「項目 == 状態」か「項目 != 状態」の形です")
-                q.conds.append((f, op, self.name()))
+                group = []
+                while True:
+                    f = self.name()
+                    op = self.next().val
+                    if op not in CMP:
+                        raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」の形です（or でつなげます）")
+                    if self.peek().kind == "NUM":
+                        group.append((f, op, str(self.num())))
+                    elif op in ("==", "!="):
+                        group.append((f, op, self.name()))
+                    else:
+                        raise self.err(f"「{op}」は数との比較にだけ使えます")
+                    if not self.accept("or"):
+                        break
+                q.conds.append(group)
             elif kw == "filter":
                 f = self.name()
                 op = self.name()

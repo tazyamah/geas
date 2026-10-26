@@ -114,7 +114,7 @@ class Query:
     inputs: list[tuple[str, "Type"]] = field(default_factory=list)
     refs: list[tuple[str, "Type"]] = field(default_factory=list)
     target: str = ""
-    conds: list[tuple[str, str, str]] = field(default_factory=list)  # (項目, == か !=, 状態名)
+    conds: list[list[tuple[str, str, str]]] = field(default_factory=list)  # where 1行 = または でつないだ組。行どうしは かつ。要素は (項目, 比較, 状態名か数)
     filters: list[tuple[str, str, str]] = field(default_factory=list)  # (項目, 以上／以下／含む／直近, 入力名／秒数)
     order: Optional[tuple[str, str]] = None  # (項目, 新しい順／古い順)
     limit: Optional[str] = None  # 先頭 N 件の N を持つ入力名
