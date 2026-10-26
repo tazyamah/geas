@@ -42,6 +42,12 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
     }
     Ok(())
 }
+pub fn 文字種検査(名: &str, s: &str, 許す: &[(char, char)]) -> Result<(), String> {
+    match s.chars().find(|c| !許す.iter().any(|&(a, b)| a <= *c && *c <= b)) {
+        Some(c) => Err(format!("{} に使えない文字 {:?} があります", 名, c)),
+        None => Ok(()),
+    }
+}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn 冪等キーの組(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
@@ -108,6 +114,10 @@ def rust_type(t: Type) -> str:
     raise ValueError(k)
 
 
+def chars_rust(cs: tuple) -> str:
+    return "&[" + ", ".join(f"('\\u{{{a:x}}}', '\\u{{{b:x}}}')" for a, b in cs) + "]"
+
+
 def range_checks(items) -> list[str]:
     """外から受け取る値（入力・slot）の、範囲の宣言の検査の行。無いかもしれない値は、あるときだけ確かめる。
     """
@@ -116,6 +126,10 @@ def range_checks(items) -> list[str]:
         opt_ = getattr(t, "optional", False)
         x = "x" if opt_ else f"self.{name}"
         chk = []
+        if t.kind == "文字列" and t.range:
+            chk.append(f'範囲検査("{name}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        if t.kind == "文字列" and t.chars is not None:
+            chk.append(f'文字種検査("{name}", &{x}, {chars_rust(t.chars)})?;')
         if t.kind == "バイト列" and t.range:
             chk.append(f'範囲検査("{name}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
         if t.kind in ("整数", "金額") and t.range:
@@ -512,6 +526,11 @@ class ProcGen:
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
             lines.append(f'if let Err(m) = 範囲検査("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
+        if pt.ret.kind == "文字列" and pt.ret.range:
+            r = pt.ret.range
+            lines.append(f'if let Err(m) = 範囲検査("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
+        if pt.ret.kind == "文字列" and pt.ret.chars is not None:
+            lines.append(f'if let Err(m) = 文字種検査("result", &result, {chars_rust(pt.ret.chars)}) {{ 保証違反("{e.n}", &m) }}')
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))

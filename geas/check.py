@@ -1183,6 +1183,7 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
+            self.check_text_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             if passing and fld.type.kind in ("整数", "金額", "割合"):  # 入力が無ければ null になる
                 self.check_write(data, st.f, (None, None), st.line, bind=b, null=True)
             self.set_null(data, st.f, b, not passing)
@@ -1252,6 +1253,27 @@ class ProcChecker:
             self.d(ERROR, "範囲", f"{where} に、範囲の広い入力「{e.n}」を入れています"
                    f"（入力{show_range(src.range).strip() or '制限なし'} ／ 項目{show_range(dst.range).strip()}）。収まるか確認が要ります", line)
 
+    def check_text_fit(self, e, dst: Type, where: str, line: int):
+        """長さか使える文字が決まっている文字列の項目へ書くとき、書く値の長さと文字が収まると示せるか。
+        示せるのは、宣言のある入力・項目・slot と、部品の戻り値を、そのまま書く場合だけ（外から来る値は、境界で確かめてある）"""
+        if dst.kind != "文字列" or (dst.range is None and dst.chars is None) or isinstance(e, Null):
+            return
+        if isinstance(e, Call) and e.n in self.ck.parts:
+            src = self.ck.parts[e.n].ret
+        else:
+            src = self.decl_type(e, self.env)
+        if src is None or src.kind != "文字列":
+            if src is None:
+                self.d(ERROR, "範囲", f"{where} は長さか使える文字が決まっているので、宣言のある入力・項目・slot か部品の戻り値を、そのまま書いてください（「{show(e)}」では収まると示せません）", line)
+            return
+        s, d = src.range or Range(), dst.range or Range()
+        if (d.lo is not None and d.lo > 0 and (s.lo is None or s.lo < d.lo)) or (d.hi is not None and (s.hi is None or s.hi > d.hi)):
+            self.d(ERROR, "範囲", f"{where} に書く文字列の長さが、項目の長さの範囲に収まると示せません"
+                   f"（書く値{show_range(src.range).strip() or '長さの制限なし'} ／ 項目{show_range(dst.range).strip() or '長さの制限なし'}）", line)
+        if dst.chars is not None and (src.chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in src.chars)):
+            self.d(ERROR, "文字種", f"{where} に書く文字列の文字が、項目の使える文字に収まると示せません"
+                   f"（書く値{'の文字は制限なし' if src.chars is None else ' [' + show_chars(src.chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
+
     def create(self, st: Create):
         ck, info = self.ck, self.info
         if st.data not in ck.data:
@@ -1281,6 +1303,7 @@ class ProcChecker:
             elif vt != tok_of(f.type) and not (isinstance(e, Num) and tok_of(f.type) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{st.data}.{n} に型の違う値（{vt}）を入れています", st.line)
             self.check_range_fit(e, f.type, f"{st.data}.{n}", st.line)
+            self.check_text_fit(e, f.type, f"{st.data}.{n}", st.line)
             if f.type.kind == "名前":
                 if isinstance(e, Name) and e.n in self.ck.variants and e.n not in self.env:
                     self.check_transition_new(st.data, n, e.n, st.line)

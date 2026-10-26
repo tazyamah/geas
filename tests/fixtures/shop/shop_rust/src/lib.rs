@@ -34,6 +34,12 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
     }
     Ok(())
 }
+pub fn 文字種検査(名: &str, s: &str, 許す: &[(char, char)]) -> Result<(), String> {
+    match s.chars().find(|c| !許す.iter().any(|&(a, b)| a <= *c && *c <= b)) {
+        Some(c) => Err(format!("{} に使えない文字 {:?} があります", 名, c)),
+        None => Ok(()),
+    }
+}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn 冪等キーの組(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
