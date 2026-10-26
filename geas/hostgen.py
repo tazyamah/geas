@@ -180,7 +180,7 @@ def host_source(ck: Checker) -> str:
         w(f'    v.push(format!("{{}}:{{{{{{}}}}}}", js_str("{d.name}"), s.{d.name}.iter().map(|(k, r)| format!("{{}}:{{}}", js_str(k), {d.name}_へ(r))).collect::<Vec<_>>().join(",")));')
     w('    format!("{{{}}}", v.join(","))\n}')
     # 外部作用
-    w("fn 外部を書く(e: &外部作用) -> String {\n    match e {")
+    w("fn 外部を書く(e: &外部作用) -> String {\n    match " + ("e" if p.effects else "*e") + " {")
     for e in p.effects:
         names = [n for n, _ in e.params]
         pat = ", ".join(names + ["冪等キー"])

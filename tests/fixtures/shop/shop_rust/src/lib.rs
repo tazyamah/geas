@@ -38,6 +38,15 @@ pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128
     x
 }
 pub fn バイト列表示(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
+/// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
+pub fn 照合(s: &str, 大小: bool, かな: bool, 幅: bool) -> String {
+    s.chars().flat_map(|c| {
+        let mut c = c;
+        if 幅 && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
+        if かな && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
+        if 大小 { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
+    }).collect()
+}
 pub fn 集合表示(s: &BTreeSet<String>) -> String {
     format!("{{{}}}", s.iter().cloned().collect::<Vec<_>>().join(","))
 }

@@ -57,6 +57,8 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 `query` に `select 注文ID, 顧客.顧客ID as 顧客, sum(明細) as 点数` と書くと、IDの列でなく列つきの行を返します（参照の先の項目は結合、`sum` と `count` はキーつきの集まりの集計）。
 
+文字列の検索は `filter 本文 contains 単語` が完全一致の部分文字列で、同一視する軸は書いたものだけです（`ignore_case`＝大小、`ignore_kana`＝ひらがなとカタカナ、`ignore_width`＝全角と半角の英数記号）。正規化（NFC）は入力の境界で済ませる前提で、検索には持ち込みません。
+
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## 状態

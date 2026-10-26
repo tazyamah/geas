@@ -43,6 +43,15 @@ pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128
     x
 }
 pub fn バイト列表示(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
+/// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
+pub fn 照合(s: &str, 大小: bool, かな: bool, 幅: bool) -> String {
+    s.chars().flat_map(|c| {
+        let mut c = c;
+        if 幅 && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
+        if かな && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
+        if 大小 { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
+    }).collect()
+}
 pub fn 集合表示(s: &BTreeSet<String>) -> String {
     format!("{{{}}}", s.iter().cloned().collect::<Vec<_>>().join(","))
 }
@@ -176,7 +185,12 @@ class Gen:
                 self.w(f"        if !(r.{f} >= ctx.現在 - {a}) {{ return false; }}")
                 continue
             t = ins[a]
-            cond = {"以上": f"r.{f} >= *x", "以下": f"r.{f} <= *x", "含む": f"r.{f}.contains(x.as_str())"}[op]
+            if op.startswith("含む"):
+                folds = op[3:-1].split(",") if "(" in op else []
+                flags = ", ".join("true" if k in folds else "false" for k in ("大小無視", "かな無視", "幅無視"))
+                cond = f"照合(&r.{f}, {flags}).contains(&照合(x, {flags}))" if folds else f"r.{f}.contains(x.as_str())"
+            else:
+                cond = {"以上": f"r.{f} >= *x", "以下": f"r.{f} <= *x"}[op]
             if t.optional:
                 self.w(f"        if let Some(x) = &入力.{a} {{ if !({cond}) {{ return false; }} }}")
             else:
@@ -291,7 +305,8 @@ class Gen:
         for e in self.p.effects:
             fs = ", ".join(f"{n}: {rust_type(t)}" for n, t in e.params)
             self.w(f"    {e.name.replace('.', '_')} {{ {fs}, 冪等キー: String }},")
-        self.w("}\nimpl 外部作用 {\n    pub fn 表示(&self) -> String {\n        match self {")
+        # 外部作用が1つも無いときは、中身の無い enum になる。参照のまま match できないので、値で match する
+        self.w("}\nimpl 外部作用 {\n    pub fn 表示(&self) -> String {\n        match " + ("self" if self.p.effects else "*self") + " {")
         for e in self.p.effects:
             names = [n for n, _ in e.params]
             pat = ", ".join(names)

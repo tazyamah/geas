@@ -539,7 +539,8 @@ class Parser:
         return unit
 
     # ---- 問い合わせ（読むだけの処理） ----
-    FILTER_OPS = {"at_least": "以上", "at_most": "以下", "contains": "含む"}
+    FILTER_OPS = {"at_least": "以上", "at_most": "以下"}
+    FOLDS = {"ignore_case": "大小無視", "ignore_kana": "かな無視", "ignore_width": "幅無視"}
     ORDERS = {"newest": "新しい順", "oldest": "古い順"}
 
     def query(self, line) -> Query:
@@ -584,6 +585,12 @@ class Parser:
                 if op == "within":
                     n = self.num()
                     q.filters.append((f, "直近", str(n * UNITS[self.unit()])))
+                elif op == "contains":  # 既定は完全一致の部分文字列。同一視する軸は、書いたものだけ
+                    arg = self.name()
+                    folds = []
+                    while self.peek().kind == "NAME" and self.peek().val in self.FOLDS:
+                        folds.append(self.FOLDS[self.name()])
+                    q.filters.append((f, "含む" + (f"({','.join(folds)})" if folds else ""), arg))
                 elif op in self.FILTER_OPS:
                     q.filters.append((f, self.FILTER_OPS[op], self.name()))
                 else:
