@@ -397,3 +397,55 @@ def test_selectに書いた参照先は読むの宣言に要る():
 def test_selectのある問い合わせは_each_に使えない():
     ck = chk(mutate(CODE, "invariant 商品: 在庫 >= 0", "event 開いた {\n  each 注文一覧 → 決済要求\n}\n\ninvariant 商品: 在庫 >= 0"))
     assert any("select" in m for m in msgs(ck, ERROR))
+
+
+# ---- 文字列検索の同一視（contains の軸） ----
+MEMO = """data メモ {
+  メモID: id unique
+  本文: text
+}
+query 探す {
+  input 単語: text
+  from メモ
+  filter 本文 contains 単語 ignore_case ignore_kana ignore_width
+  reads メモ.本文
+}
+"""
+
+
+def test_containsの同一視する軸は書いたものだけ():
+    ck = chk(MEMO)
+    assert not msgs(ck, ERROR)
+    row = build(ck)["問い合わせ"][0]
+    assert row["条件"] == ["本文 含む(大小無視,かな無視,幅無視) 単語"]
+    plain = build(chk(MEMO.replace(" ignore_case ignore_kana ignore_width", "")))["問い合わせ"][0]
+    assert plain["条件"] == ["本文 含む 単語"]
+
+
+def test_生成した照合は大小_かな_幅をそろえる(tmp_path):
+    if shutil.which("rustc") is None:
+        pytest.skip("rustc が無い")
+    src = generate(chk(MEMO))
+    start = src.index("pub fn 照合")
+    end = src.index("pub fn 集合表示")
+    main = src[start:end] + '''
+fn main() {
+    assert_eq!(照合("ＡＢＣ　abc", true, false, true), "abc　abc");
+    assert_eq!(照合("カタカナ", false, true, false), "かたかな");
+    assert_eq!(照合("Ａｂ", false, false, false), "Ａｂ");
+}
+'''
+    f = tmp_path / "t.rs"
+    f.write_text(main)
+    r = subprocess.run(["rustc", "--edition", "2021", "-o", str(tmp_path / "t"), str(f)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert subprocess.run([str(tmp_path / "t")]).returncode == 0
+
+
+def test_外部作用の無いアプリでも生成した_crate_がビルドできる(tmp_path):
+    if shutil.which("cargo") is None:
+        pytest.skip("cargo が無い")
+    ck = chk(MEMO)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path, host=True)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
