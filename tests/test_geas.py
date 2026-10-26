@@ -9,6 +9,7 @@ from geas.ast import show_type
 from geas.check import ERROR, QUESTION, check
 from geas.examples import HOST_MOD, compare_examples, run_crate, runner_source, write_crate
 from geas.hostgen import host_source
+from geas.spec import render
 from geas.parser import ParseError, parse
 from geas.plan import A_ONLY, B_ONLY, DIFF, compare_static, read_plan
 from geas.rustgen import generate
@@ -1806,3 +1807,13 @@ fn main() {
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     assert r.stdout.split() == ["1792983845", "946684800", "0"], r.stdout
+
+
+def test_仕様書にフロー図が出る_並列は_プラスのゲートウェイ():
+    ck = fanout(*FANOUT)
+    md = render(ck, build(ck))
+    assert "```mermaid" in md and "flowchart LR" in md
+    assert md.count('{"＋"}') == 1
+    assert '-- "受付" -->' in md and "応答（reply）" in md
+    plain = render(chk(CODE), build(chk(CODE)))
+    assert '{"＋"}' not in plain and '{"×"}' in plain and "待つ 決済待ち" in plain
