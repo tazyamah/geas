@@ -538,7 +538,9 @@ class ProcGen:
         elif isinstance(st, SetField):
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
-            self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {self.rx(st.e)}));")
+            t = self.field_type(d, st.f)
+            v = self.conv(t, self.rx(st.e), f"{d}.{st.f}") if t.kind in ("整数", "金額") else self.rx(st.e)
+            self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Create):
             dt = self.ck.data[st.data]
             key = self.ck.key_field(st.data)

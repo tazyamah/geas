@@ -507,3 +507,76 @@ def test_新規作成の状態は状態名で書く():
 def test_空の_if_はエラーで止まる():
     ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n"))
     assert any("if の中が空" in m for m in msgs(ck, ERROR))
+
+
+# ---- 不変条件と項目の範囲は、書き込むその場で、値の範囲から示す ----
+REFLECT = ("  writes 注文.状態\n  transition 注文: 決済要求済 → 完了", "  writes 注文.状態, 注文.合計\n  transition 注文: 決済要求済 → 完了")
+
+
+def test_項目の更新で在庫を減らすと範囲も不変条件も示せない():
+    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n",
+                           "  reads 注文.合計, 注文.状態, 商品.在庫\n  writes 注文.状態, 商品.在庫\n"),
+                    "  注文.状態 = 決済要求済\n",
+                    "  注文.状態 = 決済要求済\n  let 品 = 注文[注文ID] else { return 注文なし }\n  let 商 = 商品[注文ID] else { return 注文なし }\n  商.在庫 = 商.在庫 - 1\n"))
+    assert any("反例" in m and "商品.在庫" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ減算を2回すると不足の確認は効かない():
+    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    assert any("反例" in m for m in msgs(chk(mutate(CODE, up, up + up)), ERROR))
+
+
+def test_状態がSでないと分かっていれば値を下げてよい():
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    assert ck.ok, ck.diags
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.合計 = 0\n  注文.状態 = 完了\n"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_Sで新規作成するなら値の確認が要る():
+    ck = chk(mutate(mutate(CODE, "transition 注文: (new) → 受付", "transition 注文: (new) → 決済要求済"), "状態: 受付 }", "状態: 決済要求済 }"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_分岐の中の書き込みで確認は崩れる():
+    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n", "  reads 注文.合計, 注文.状態\n  writes 注文.状態, 注文.合計\n"),
+                    "  注文.状態 = 決済要求済\n", "  if 注文.合計 > 100 {\n    注文.合計 = 0\n  }\n  注文.状態 = 決済要求済\n"))
+    assert any("合計 > 0" in m for m in msgs(ck, ERROR))
+
+
+def test_遷移した後は元の状態の確認が消える():
+    ck = chk(mutate(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 決済要求済\n  transition 注文: 受付 → キャンセル"),
+                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  注文.状態 = キャンセル\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_同じデータの別の束縛の確認も遷移で消える():
+    ck = chk(mutate(two_orders(PAY + "  let 別 = 注文[別ID] else { return 注文なし }\n  if 別.状態 != 受付 { return 状態違い }\n"),
+                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  別.状態 = 決済要求済\n"))
+    assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_書けない形の不変条件はエラーになる():
+    ck = chk(CODE + "\ninvariant 商品: 在庫 <= 100\n")
+    assert any("まだ検査できません" in m for m in msgs(ck, ERROR))
+
+
+def test_項目の更新は型を確かめる():
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 注文ID\n"))
+    assert any("型の違う値" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_項目へ数を書くと物理数へ変換される(tmp_path):
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_減らした後に確かめた不足の集まりは古い():
+    chk_line = "  if 不足 is nonempty { return 在庫不足(不足) }\n"
+    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    src = mutate(CODE, up, up + chk_line + up)
+    assert chk(mutate(CODE, up, up)).ok
+    assert any("反例" in m for m in msgs(chk(src), ERROR))

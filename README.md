@@ -59,6 +59,8 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 文字列の検索は `filter 本文 contains 単語` が完全一致の部分文字列で、同一視する軸は書いたものだけです（`ignore_case`＝大小、`ignore_kana`＝ひらがなとカタカナ、`ignore_width`＝全角と半角の英数記号）。正規化（NFC）は入力の境界で済ませる前提で、検索には持ち込みません。
 
+`invariant` に書けるのは「項目 >= 数」と「状態の項目 == 状態 implies 項目 > 数」の形です。検査は、項目へ書き込むたびに、その場で値の範囲から約束が守れることを示し、示せなければエラーにします（項目の型の範囲 `int 0..` なども同じように示します）。値の範囲は、入力と項目の範囲、`if x.項目 <= 0 { return … }` のような確認、減らす前の不足の確認から分かります。
+
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## 状態
