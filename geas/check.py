@@ -221,6 +221,17 @@ class Checker:
             b = pc.ty(pt.body, {n: tok_of(t) for n, t in pt.params})
             if b not in (tok_of(pt.ret), "?") and not (isinstance(pt.body, Num) and tok_of(pt.ret) in ("Int", "Money")):
                 self.d(ERROR, "型", where, f"変換の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
+            for n, t in pt.params:
+                if t.kind in ("整数", "金額", "割合"):
+                    pc.var_iv[n] = iv_of(t)
+            r = pt.ret.range
+            if pt.ret.kind in ("整数", "金額", "割合") and r is not None:  # 範囲は静的に示す。示せなければ、実行時に確かめず検査で止める
+                lo, hi = pc.interval(pt.body)
+                if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
+                    self.d(ERROR, "範囲", where, f"変換の結果が戻り値の範囲{show_range(r)}に収まると示せません"
+                           f"（式の範囲 {iv_show((lo, hi))}）。引数の型か式を見直してください")
+            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None):
+                self.d(ERROR, "範囲", where, "長さや文字種が決まっている文字列を返す変換は、まだ静的に示せません")
             self.part_types.update(pc.info.types)
             return
         env = {n: tok_of(t) for n, t in [*pt.params, ("result", pt.ret)]}

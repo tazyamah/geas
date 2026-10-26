@@ -566,6 +566,8 @@ class ProcGen:
         else:
             call = f"部品.{e.n}({', '.join(args)})"
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
+        if pt.body is not None:  # convert の範囲は検査器が静的に示してある。実行時には確かめない
+            return "{ " + " ".join(lines) + " result }"
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
             lines.append(f'if let Err(m) = 範囲検査("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
@@ -574,8 +576,6 @@ class ProcGen:
             lines.append(f'if let Err(m) = 範囲検査("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
             lines.append(f'if let Err(m) = 文字種検査("result", &result, {chars_rust(pt.ret.chars)}) {{ 保証違反("{e.n}", &m) }}')
-        if pt.body is not None:
-            return "{ " + " ".join(lines) + " result }"
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))

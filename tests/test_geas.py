@@ -1632,8 +1632,16 @@ def test_convert_の式の型が戻り値と違うと止まる():
 
 
 @needs_cargo
-def test_convert_は生成コードの中で計算され_戻り値の範囲を確かめる(tmp_path):
+def test_convert_は生成コードの中で計算され_実行時の範囲検査は出さない(tmp_path):
     ck = chk(CONVERT)
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_convert_の結果が範囲に収まると示せなければ検査で止まる():
+    bad = CONVERT.replace("convert 税込(x: 非負金額) -> 非負金額", "convert 税込(x: 非負金額) -> 税抜の限り")
+    assert any("収まると示せません" in m for m in msgs(chk(bad), ERROR))
+    ok = CONVERT.replace("convert 税込(x: 非負金額) -> 非負金額 = x + x", "convert 税込(x: 税抜の限り) -> 非負金額 = x + x")
+    assert chk(ok).ready
+    assert "保証違反(\"税込\"" not in generate(chk(ok))
