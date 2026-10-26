@@ -580,3 +580,53 @@ def test_減らした後に確かめた不足の集まりは古い():
     src = mutate(CODE, up, up + chk_line + up)
     assert chk(mutate(CODE, up, up)).ok
     assert any("反例" in m for m in msgs(chk(src), ERROR))
+
+
+# ---- 外部作用とフローの重複・矛盾 ----
+FOR = """
+deed 引当 {
+  input 明細: 商品 → int 1..99, 注文ID: id
+  result 待ち解除結果
+  effects 倉庫.引当
+
+  for (k, v) in 明細 {
+    request 倉庫.引当(k, v, idempotency_key = KEY)
+  }
+  return 反映済
+}
+
+nexus 引当の流れ {
+  引当: 反映済 → reply, 注文なし → reply, 状態違い → reply
+}
+"""
+
+
+def with_for(key):
+    src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))",
+                 'effect 決済.請求(注文ID: id, 金額: money(円))\neffect 倉庫.引当(商品ID: id, 数: int 1..99) no_wait "試し"')
+    return chk(src + FOR.replace("KEY", key))
+
+
+def test_for_の中の冪等キーは回す値によらないと止まる():
+    assert any("for で回す値によりません" in m for m in msgs(with_for("注文ID"), ERROR))
+    assert not any("冪等" in m for m in msgs(with_for("k"), ERROR))
+
+
+def test_冪等キーは_ID_か文字列():
+    ck = chk(mutate(CODE, "idempotency_key = 注文ID)", "idempotency_key = 1)"))
+    assert any("冪等キーは ID か文字列" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ結果に行き先を2つ書くと止まる():
+    ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
+    assert any("行き先が2つ以上" in m for m in msgs(ck, ERROR))
+
+
+def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():
+    ck = chk(CODE + "\nnexus 二重 {\n  受注: 受付 → reply, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply\n}\n")
+    assert any("違う行き先" in m for m in msgs(ck, ERROR))
+
+
+def test_失敗の理由を宣言して待たないのは矛盾():
+    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(円))", 'effect 決済.請求(注文ID: id, 金額: money(円)) failures 残高不足 no_wait "試し"'))
+    assert any("no_wait" in m for m in msgs(ck, ERROR))

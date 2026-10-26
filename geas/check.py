@@ -189,16 +189,21 @@ class Checker:
                         self.d(ERROR, "名前", f"状態 {s.name}", f"拒否に書かれた「{x}」は状態にありません")
 
     def check_flows(self):
-        in_flow = set()
+        in_flow = {}  # 処理 → (最初に書いたフロー, 行き先)
         for fl in self.p.flows:
             for proc, routes in fl.entries:
                 where = f"フロー {fl.name} / {proc}"
                 if proc not in self.procs:
                     self.d(ERROR, "行き先", where, f"処理「{proc}」が未定義です")
                     continue
-                in_flow.add(proc)
-                rdef = self.results.get(self.procs[proc].result)
                 names = [v for v, _ in routes]
+                for v in dict.fromkeys(v for v in names if names.count(v) > 1):
+                    self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が2つ以上あります（どちらへ進むか決まりません）")
+                # 行き先は処理の結果で決まる。同じ処理を別の行き先で2回書くと、どちらへ進むか決まらない
+                if proc in in_flow and in_flow[proc][1] != dict(routes):
+                    self.d(ERROR, "行き先", where, f"処理 {proc} は、フロー {in_flow[proc][0]} にも違う行き先で書かれています")
+                in_flow.setdefault(proc, (fl.name, dict(routes)))
+                rdef = self.results.get(self.procs[proc].result)
                 if rdef:
                     for v, _ in rdef.variants:
                         if v not in names:
@@ -227,6 +232,10 @@ class Checker:
                     if d.startswith("待つ "):
                         waits.setdefault(proc, set()).add(d.split(" ", 1)[1])
         triggers = {t.name: t for t in self.p.triggers}
+        for e in self.p.effects:
+            if e.failures and e.no_wait is not None:
+                self.d(ERROR, "失敗", f"外部作用 {e.name}", "失敗の理由を宣言しながら no_wait（待たない）にしています。"
+                       "待たないと、理由ごとの応答を受ける先がありません（どちらかにしてください）")
         for proc, info in self.infos.items():
             for eff in sorted({e for e, _ in info.effects}):
                 decl = self.effects.get(eff)
@@ -471,6 +480,21 @@ class Checker:
             self.invariant_status.append((text, rows))
 
 
+def names_in(e) -> set:
+    """式に出てくる変数の名前"""
+    if isinstance(e, Name):
+        return {e.n}
+    if isinstance(e, Attr):
+        return names_in(e.e)
+    if isinstance(e, Index):
+        return names_in(e.e)
+    if isinstance(e, Call):
+        return set().union(*map(names_in, e.args)) if e.args else set()
+    if isinstance(e, Bin):
+        return names_in(e.l) | names_in(e.r)
+    return set()
+
+
 # ---- 値の範囲（区間）。None は「限りなし」 ----
 def iv_add(a, b):
     return (None if None in (a[0], b[0]) else a[0] + b[0], None if None in (a[1], b[1]) else a[1] + b[1])
@@ -518,6 +542,7 @@ class ProcChecker:
         # 分かっている下限。(束縛, 項目) → 下限、または ("#不足", データ, 項目, 回した元) → 0（減らす量が足りていると確かめ済み）
         self.facts: dict[tuple, object] = {}
         self.var_iv: dict[str, tuple] = {}  # let の変数 → 値の範囲
+        self.loop_deps: set[str] = set()  # for の中で、回すたびに違う値の変数
         self.shortage_sets: dict[str, tuple[str, str, str]] = {}  # { k | (k, v) in 元, D[k].f < v } の変数 → (D, f, 元)
         self.accessed_vars: set[str] = set()
         self.created: set[str] = set()
@@ -831,6 +856,8 @@ class ProcChecker:
                 self.bind_var(st.name)
                 self.var_iv.pop(st.name, None)
                 self.shortage_sets.pop(st.name, None)
+                if names_in(st.e.e) & self.loop_deps:
+                    self.loop_deps.add(st.name)
                 info.exist_reads.add(st.e.d)
                 if st.absent is None:
                     self.d(QUESTION, "存在", f"{show(st.e)} が存在しないとき、どうしますか（else {{ return … }} が必要です）", st.line)
@@ -914,12 +941,15 @@ class ProcChecker:
             env2 = self.bind(st.binder)
             saved = self.env
             self.env = env2
+            # 要求ごとに違う値：回すキー（写像なら k）と、それで引いたもの
+            self.loop_deps = {st.binder.names[0]}
             for inner in st.body:
                 if isinstance(inner, Request) or (isinstance(inner, Assign) and isinstance(inner.e, Index)):
                     self.stmt(inner, pos)
                 else:
                     self.d(ERROR, "型", "for … { } の中に書けるのは、データを引く文と、要求だけです", st.line)
             self.env = saved
+            self.loop_deps = set()
 
     def check_transition(self, data, fname, dst, line, var):
         sname = next(f.type.target for f in self.ck.data[data].fields if f.name == fname)
@@ -1144,7 +1174,13 @@ class ProcChecker:
         if st.idem is None:
             self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（idempotency_key = … が必須です）", st.line)
         else:
-            self.ty(st.idem)
+            kt = self.ty(st.idem)
+            if kt not in ("ID", "Str", "?"):
+                self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キーは ID か文字列にしてください（{kt}）", st.line)
+            # for の中では、要求ごとにキーが違わないと、2件目からが1件目の重複として捨てられる
+            if self.loop_deps and not (names_in(st.idem) & self.loop_deps):
+                self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キー「{show(st.idem)}」が、for で回す値によりません"
+                       "（どの要求も同じキーになり、2件目からが重複として捨てられます）", st.line)
         info.effects.append((st.effect, show(st.idem) if st.idem is not None else ""))
 
     def finish(self):
