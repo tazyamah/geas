@@ -95,6 +95,7 @@ class Parser:
     # ---- 全体 ----
     def program(self) -> Program:
         p = Program()
+        stores: list[tuple[str, str, int]] = []
         self.skip_nl()
         while self.peek().kind != "EOF":
             line = self.peek().line
@@ -105,6 +106,8 @@ class Parser:
                 raise ParseError("data は entity に改名しました（entity 名 { … } と書きます）", line)
             elif kw == "ltype":
                 self.ltype(line)
+            elif kw == "store":
+                stores.append(self.store_decl(line))
             elif kw == "state":
                 p.states.append(self.state(line))
             elif kw == "result":
@@ -128,8 +131,26 @@ class Parser:
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
+        self.apply_stores(p, stores)
         self.add_sync_state(p)
         return p
+
+    def store_decl(self, line):
+        """store データ名 in 保存先：データの保存先。データの宣言とは別に、要件に応じて書く（書かなければ保存しない）"""
+        data = self.name()
+        self.expect("in")
+        where = self.name()
+        self.end_line()
+        return data, where, line
+
+    def apply_stores(self, p: Program, stores):
+        by_name = {d.name: d for d in p.data}
+        for data, where, line in stores:
+            if data not in by_name:
+                raise ParseError(f"store の対象「{data}」という entity がありません", line)
+            if by_name[data].store:
+                raise ParseError(f"entity「{data}」の store が2つ以上あります", line)
+            by_name[data].store = where
 
     def add_sync_state(self, p: Program):
         """保存先（外部）を持つデータには、未同期かどうかの状態「記録」を言語が足す（J63）。人は宣言しない"""
@@ -166,7 +187,8 @@ class Parser:
     # ---- データ ----
     def data(self, line) -> Data:
         name = self.name()
-        store = self.name() if self.accept("store") else None
+        if self.is_("store"):
+            raise self.err(f"保存先は entity の中ではなく、別の行で store {name} in 保存先 と書きます")
         self.block_open()
         fields = []
         while not self.accept("}"):
@@ -184,7 +206,7 @@ class Parser:
                     raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
             fields.append(f)
             self.end_line()
-        return Data(name, fields, line, store)
+        return Data(name, fields, line)
 
     def range_opt(self):
         if self.peek().kind == "NUM":

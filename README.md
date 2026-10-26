@@ -40,6 +40,7 @@ python -m pytest tests                            # テスト
 ltype 数量 = int 1..99                                    // 論理型：範囲や組み合わせは、必ず名前を付けてから使う（使う場所より前に書く）
 ltype 商品数量 = 商品 → 数量
 entity 注文 { 注文ID: id unique, 状態: 注文状態 ... }      // 組み込みの型：id text time bytes int ratio money(円) ref X（範囲・組み合わせは ltype）
+store 注文 in 外部DB                                      // 保存先は entity の外に書く（保存しない要件なら書かない）。外に置くものは、未同期の状態「記録」を言語が足す
 deed 決済要求 {
   input 注文ID: id required                             // 宣言：input slot reads writes transition result effects
   reads 注文.状態
