@@ -298,7 +298,8 @@ class Gen:
             if f is None:
                 self.w(f"                書込::{d}_新規(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
             else:
-                self.w(f"                書込::{d}_{f}(id, v) => {{ self.{d}.get_mut(&id).expect(\"書込先が無い\").{f} = v; }}")
+                # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
+                self.w(f"                書込::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
         self.w("            }\n        }\n    }")
         self.w("    pub fn 差分(&self, 後: &保存) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
         for d in self.p.data:
@@ -465,7 +466,8 @@ class ProcGen:
             return f"{self.ck.variants[e.n]}::{e.n}"
         if isinstance(e, Attr):
             if self.nullable(e):  # 検査で、null でないと確かめてある
-                return self.wrap(self.tok(e), f'{self.place(e)}.clone().expect("検査で確かめた値")')
+                # 検査で、null でないと確かめてある（No.28：示せた所は実行時に確かめない）
+                return self.wrap(self.tok(e), f'unsafe {{ {self.place(e)}.clone().unwrap_unchecked() }}')
             return self.wrap(self.tok(e), self.place(e))
         if isinstance(e, Index):
             return self.place(e)
@@ -534,8 +536,14 @@ class ProcGen:
         v = f"{self.rdef.name}::{r.variant}" + (f"({args})" if r.args else "")
         return f"{self.proc.name}出力 {{ 結果: {v}, 書込: 書込列, 外部: 外部列 }}"
 
-    def conv(self, t: Type, x: str, name: str) -> str:
-        """i128 の式を、項目の物理数へ。範囲の宣言があれば検査を付ける。"""
+    def conv(self, t: Type, x: str, name: str, proven: bool = False) -> str:
+        """i128 の式を、項目の物理数へ。proven なら、範囲は検査で示してある（実行時には確かめない）。
+        上限か下限が決まっていない範囲は、物理数に収まるかまでは示せないので、そこだけ確かめる"""
+        if proven:
+            r = t.range
+            if r and r.lo is not None and r.hi is not None:
+                return f"(({x}) as {phys(t)})"  # 範囲は検査で示した。範囲から選んだ物理数には必ず収まる
+            return f'{phys(t)}::try_from({x}).expect("物理数に収まらない")'
         r = t.range
         lo = r.lo if r else None
         hi = r.hi if r else None
@@ -594,7 +602,7 @@ class ProcGen:
             if isinstance(st.value, Null):
                 self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, None));")
             elif ft.kind in ("整数", "金額"):
-                v = self.conv(ft, '新値', d + '.' + f)
+                v = self.conv(ft, '新値', d + '.' + f, proven=True)
                 self.L(f"        let 新値: i128 = {new};")
                 self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({v})' if ft.optional else v}));")
             else:
@@ -606,7 +614,7 @@ class ProcGen:
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
             t = self.field_type(d, st.f)
-            v = self.conv(t, self.rx(st.e), f"{d}.{st.f}") if t.kind in ("整数", "金額") else self.rx(st.e)
+            v = self.conv(t, self.rx(st.e), f"{d}.{st.f}", proven=True) if t.kind in ("整数", "金額") else self.rx(st.e)
             if t.optional and not isinstance(st.e, Null):
                 v = f"Some({v})"
             self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
@@ -623,7 +631,7 @@ class ProcGen:
                     if isinstance(e, Null):
                         v = "None"
                     elif f.type.kind in ("整数", "金額"):
-                        v = self.conv(f.type, self.rx(e), f"{st.data}.{f.name}")
+                        v = self.conv(f.type, self.rx(e), f"{st.data}.{f.name}", proven=True)
                     else:
                         v = self.rx(e)
                     if f.type.optional and not isinstance(e, Null):

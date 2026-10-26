@@ -119,9 +119,9 @@ impl 保存 {
     pub fn 適用(&mut self, 書込列: Vec<書込>) {
         for w in 書込列 {
             match w {
-                書込::商品_在庫(id, v) => { self.商品.get_mut(&id).expect("書込先が無い").在庫 = v; }
+                書込::商品_在庫(id, v) => { unsafe { self.商品.get_mut(&id).unwrap_unchecked() }.在庫 = v; }
                 書込::注文_新規(r) => { self.注文.insert(r.注文ID.clone(), r); }
-                書込::注文_状態(id, v) => { self.注文.get_mut(&id).expect("書込先が無い").状態 = v; }
+                書込::注文_状態(id, v) => { unsafe { self.注文.get_mut(&id).unwrap_unchecked() }.状態 = v; }
             }
         }
     }
@@ -321,7 +321,7 @@ pub fn 受注(ctx: &受注文脈, 保存: &保存, 入力: &受注入力) -> 受
         let v: i128 = *v_ as i128;
         {
             let 新値: i128 = (保存.商品[&(k.clone())].在庫 as i128) - v;
-            書込列.push(書込::商品_在庫(k.clone(), u64::try_from(範囲内("商品.在庫", 新値, Some(0), None)).expect("物理数に収まらない")));
+            書込列.push(書込::商品_在庫(k.clone(), u64::try_from(新値).expect("物理数に収まらない")));
         }
     }
     let 小計: i128 = { let mut 集め: i128 = 0; for (k_, v_) in 入力.明細.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; 集め += ((保存.商品[&(k.clone())].単価 as i128) * v); } 集め };
@@ -330,7 +330,7 @@ pub fn 受注(ctx: &受注文脈, 保存: &保存, 入力: &受注入力) -> 受
         注文ID: ctx.新注文ID.clone(),
         顧客: 入力.顧客ID.clone(),
         明細: 入力.明細.clone(),
-        合計: i64::try_from(範囲内("注文.合計", 合計, Some(0), None)).expect("物理数に収まらない"),
+        合計: i64::try_from(合計).expect("物理数に収まらない"),
         状態: 注文状態::受付,
     };
     書込列.push(書込::注文_新規(注文.clone()));
