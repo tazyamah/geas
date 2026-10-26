@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない（コードから geas が毎回生成する）。
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, dead_code, unused_variables, unused_mut)]
 #![allow(uncommon_codepoints, mixed_script_confusables, unused_parens)]

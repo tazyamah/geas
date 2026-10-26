@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """①の具体例を、コンパイルしたコードで実際に動かして確かめる。
 具体例の表から Rust の実行用 bin を生成し、cargo で動かして、結果・変化・外部作用を①の期待と比べる。"""
 import shutil

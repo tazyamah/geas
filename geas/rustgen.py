@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
 from dataclasses import replace
@@ -5,7 +6,8 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, column_type, phys, tok_of
 
-PRELUDE = r'''// 自動生成。手で編集しない（コードから geas が毎回生成する）。
+PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
+// 自動生成。手で編集しない（コードから geas が毎回生成する）。
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, dead_code, unused_variables, unused_mut)]
 #![allow(uncommon_codepoints, mixed_script_confusables, unused_parens)]
 use std::collections::{BTreeMap, BTreeSet};
