@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """初回の対話で仕様を作るための台帳（出典：Cockburn が提唱したユースケース手法。Writing Effective Use Cases, 2000）（ledger）。会話の進め方は skills/plan-interview/SKILL.md。
 
 台帳は JSON。AI が一問ごとに答えを書き込み、`status` が次に聞くことを示し、`render` が plan の仕様書（①）の会話の部分を Markdown にする。

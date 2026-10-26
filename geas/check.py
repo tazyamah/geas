@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """検査器。型の推論つき。宣言（読む・書く・遷移・外部・結果）と本体のずれ、
 行き先の漏れ、丸めの指定漏れ、冪等キーの漏れなどを見つける。"""
 from dataclasses import dataclass, field, replace

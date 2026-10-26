@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """構文木。"""
 from dataclasses import dataclass, field
 from typing import Optional

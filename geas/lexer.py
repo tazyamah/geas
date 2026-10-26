@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """字句解析。名前は、空白と記号以外の連なり（日本語の名前をそのまま使える）。"""
 from dataclasses import dataclass
 

@@ -77,6 +77,10 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
+## ライセンス
+
+geas 本体は GPL-3.0-or-later です。使うのは自由で、改変して配るときはその改変も公開します。生成された Rust とバイナリは制限なく自由に使えます。生成コードへ写される部品だけは MIT OR Apache-2.0 です。詳しくは [docs/license.md](docs/license.md)、貢献の条件は [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 状態
 
 試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。キーワードは英語にしました（名前と、構文木の中身は日本語のまま）。

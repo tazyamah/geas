@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """ブラウザ（WASM）から【処理】を呼ぶための橋渡し host.rs の生成。
 JSON の文字列で（名前, 文脈, 保存, 入力）を受け取り、処理を実行して書込を適用し、（結果, 外部作用, 新しい保存）を JSON で返す。
 フローの行き先とトリガの宣言は、生成時に JSON 定義として埋め込む。待ち・期限・外部作用の実行は、JS 側の基盤（runtime.js）の仕事。"""
@@ -9,7 +10,8 @@ from .check import Checker, phys
 from .rustgen import opt
 from .spec import fmt_cause
 
-JSON_PRELUDE = r'''// 自動生成。手で編集しない。
+JSON_PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
+// 自動生成。手で編集しない。
 #![allow(non_snake_case, non_camel_case_types, dead_code, unused_variables, unused_mut)]
 use crate::*;
 use std::collections::{BTreeMap, BTreeSet};

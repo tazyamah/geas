@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """plan の仕様書（①）の読み取りと、生成した仕様書（③）との突合。
 ①は固定の見出しと表を持つ Markdown。◆の欄だけを機械が突合し、それ以外（文章・来歴）は読み飛ばす。"""
 import re
