@@ -203,9 +203,21 @@ def host_source(ck: Checker) -> str:
         vals = ", ".join(f'js_str("{n}"), {to_j(t, n)}' for n, t in e.params)
         w(f'        外部作用::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"冪等キー\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(冪等キー)),')
     w("    }\n}")
+    # 結果の中身（名前つき）。ネクサスの次の処理へは、これをそのまま入力として渡す
+    for r in p.results:
+        w(f"fn {r.name}_中身(r: &{r.name}) -> String {{\n    match r {{")
+        for v, ps in r.variants:
+            if ps:
+                names = [f"a{i}" for i in range(len(ps))]
+                fmt = ",".join("{}:{}" for _ in ps)
+                vals = ", ".join(f'js_str("{n}"), {to_j(t, a)}' for (n, t), a in zip(ps, names))
+                w(f'        {r.name}::{v}({", ".join(names)}) => format!("{{{{{fmt}}}}}", {vals}),')
+            else:
+                w(f'        {r.name}::{v} => "{{}}".to_string(),')
+        w("    }\n}")
     # 処理の呼び出し
-    w("fn 結果を書く(名前: &str, 引数: Vec<String>, 外部: Vec<String>, 保存: &保存) -> String {\n"
-      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 外部.join(","), 保存を書く(保存))\n}')
+    w("fn 結果を書く(名前: &str, 引数: Vec<String>, 中身: String, 外部: Vec<String>, 保存: &保存) -> String {\n"
+      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 中身, 外部.join(","), 保存を書く(保存))\n}')
     w("fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存) -> Result<String, String> {\n    match 名前 {")
     for proc in p.processes:
         info = ck.infos[proc.name]
@@ -214,7 +226,7 @@ def host_source(ck: Checker) -> str:
         inf = [f"{x}: {from_j(t, f'入力.get(\"{x}\")?')}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
         w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
-        w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
+        w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
@@ -226,7 +238,7 @@ def host_source(ck: Checker) -> str:
             inf.append(f"{x}: {e}")
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
-        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, vec![], 保存))\n        }}')
+        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
     w("pub fn 呼ぶ(要求: &str) -> Result<String, String> {\n"
       '    let r = parse(要求)?;\n    let mut s = 保存を読む(r.get("保存")?)?;\n'

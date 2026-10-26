@@ -27,9 +27,9 @@ state 注文状態 {
 }
 
 result 受注結果 {
-  受付(id)
-  在庫不足(set of id)
-  商品なし(set of id)
+  受付(注文ID: id)
+  在庫不足(不足: set of id)
+  商品なし(未登録: set of id)
   顧客なし
 }
 

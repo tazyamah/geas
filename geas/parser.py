@@ -216,6 +216,13 @@ class Parser:
             self.end_line()
         return s
 
+    def named_type(self):
+        """名前: 型。結果の中身は名前つき（次の処理の入力と、名前と型で突き合わせる）"""
+        n = self.name()
+        if not self.accept(":"):
+            raise self.err(f"結果の中身には名前を付けてください（「{n}」ではなく「名前: {n}」の形）")
+        return n, self.type()
+
     # ---- 結果 ----
     def result_def(self, line) -> ResultDef:
         name = self.name()
@@ -226,7 +233,7 @@ class Parser:
             v = self.name()
             payload = []
             if self.accept("("):
-                payload = self.comma_list(self.type)
+                payload = self.comma_list(self.named_type)
                 self.expect(")")
             variants.append((v, payload))
             self.accept(",")

@@ -191,9 +191,10 @@ class Checker:
         self.check_unique([v for s in p.states for v in [s.initial, *s.middle, *s.final] if v], "全体", "状態名")
         for r in p.results:
             self.check_unique([v for v, _ in r.variants], f"結果 {r.name}", "種類")
-            for v, ts in r.variants:
-                for t in ts:
-                    self.check_type(t, f"結果 {r.name} / {v}")
+            for v, ps in r.variants:
+                self.check_unique([n for n, _ in ps], f"結果 {r.name} / {v}", "中身の名前")
+                for n, t in ps:
+                    self.check_type(t, f"結果 {r.name} / {v} / {n}")
         for e in p.effects:
             self.check_unique([n for n, _ in e.params], f"外部作用 {e.name}", "引数")
             for n, t in e.params:
@@ -250,6 +251,8 @@ class Checker:
                         self.check_wait(where, proc, base)
                     elif base != "応答" and base not in self.procs:
                         self.d(ERROR, "行き先", where, f"結果「{v}」の行き先「{base}」が未定義の処理です")
+                    elif base != "応答" and rdef:
+                        self.check_pass(where, rdef, v, self.procs[base])
         for name in self.procs:
             if name not in in_flow:
                 self.d(WARN, "行き先", f"処理 {name}", "どのフローにも入っていません")
@@ -382,6 +385,21 @@ class Checker:
             for x in sorted(declared - actual):
                 self.d(ERROR, "宣言", where, f"宣言（読む）に「{x}」がありますが、使っていません")
             self.query_reads[q.name] = actual
+
+    def check_pass(self, where, rdef, v, nxt):
+        """結果の中身を、次の処理の入力へ名前と型で渡せるか（過不足も型違いも許さない）"""
+        ps = next((ps for x, ps in rdef.variants if x == v), None)
+        if ps is None:
+            return
+        have, want = {n: show_type(t) for n, t in ps}, {n: show_type(t) for n, t in nxt.inputs}
+        for n in want:
+            if n not in have:
+                self.d(ERROR, "行き先", where, f"処理 {nxt.name} の入力「{n}」が、結果「{v}」の中身にありません")
+            elif have[n] != want[n]:
+                self.d(ERROR, "行き先", where, f"結果「{v}」の中身「{n}」の型（{have[n]}）が、処理 {nxt.name} の入力（{want[n]}）と違います")
+        for n in have:
+            if n not in want:
+                self.d(ERROR, "行き先", where, f"結果「{v}」の中身「{n}」を、処理 {nxt.name} は入力にもっていません")
 
     def check_wait(self, where, proc, trig):
         tg = self.triggers.get(trig)
@@ -837,7 +855,7 @@ class ProcChecker:
         if len(v[1]) != len(r.args):
             self.d(ERROR, "結果", f"結果「{r.variant}」の引数は {len(v[1])} 個です", r.line)
             return
-        for t, a in zip(v[1], r.args):
+        for (_, t), a in zip(v[1], r.args):
             at = self.ty(a)
             if at != tok_of(t) and at != "?":
                 self.d(ERROR, "型", f"結果「{r.variant}」の引数の型が違います（{at}）", r.line)

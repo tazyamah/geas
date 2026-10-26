@@ -683,3 +683,29 @@ def test_使わない外部作用と届かない状態は警告():
     assert any("どの処理からも要求されていません" in m for m in msgs(ck, "警告"))
     ck = chk(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 受付"))
     assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
+
+
+# ---- ネクサスで次の処理へは、結果の中身を名前と型で渡す ----
+def test_結果の中身には名前が要る():
+    with pytest.raises(ParseError, match="名前を付けて"):
+        parse(mutate(CODE, "  受付(注文ID: id)\n", "  受付(id)\n"))
+
+
+def test_結果の中身と次の処理の入力は名前と型で突き合わせる():
+    assert any("中身「不足」を、処理 決済要求 は入力にもっていません" in m
+               for m in msgs(chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → 決済要求, 商品なし")), ERROR))
+    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(番号: id)\n"))
+    assert any("入力「注文ID」が、結果「受付」の中身にありません" in m for m in msgs(ck, ERROR))
+    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(注文ID: set of id)\n"))
+    assert any("型" in m and "受付" in m for m in msgs(ck, ERROR))
+
+
+@needs_cargo
+def test_ホストは結果の中身を名前つきで返す(tmp_path):
+    ck = chk(CODE)
+    req = ('{"名前":"受注","文脈":{"税率":"1/10","新注文ID":"N1"},"入力":{"顧客ID":"C1","明細":{"A":2}},'
+           '"保存":{"商品":{"A":{"商品ID":"A","在庫":5,"単価":100}},"顧客":{"C1":{"顧客ID":"C1"}}}}')
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert '"中身":{"注文ID":"N1"}' in r.stdout, r.stdout
