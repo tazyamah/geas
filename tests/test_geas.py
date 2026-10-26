@@ -302,3 +302,34 @@ def test_日本語の古いキーワードや_body_は受け付けない():
 def test_if_の本体は改行して書いてもよい():
     ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 {\n    return 合計ゼロ\n  }\n"))
     assert not msgs(ck, ERROR)
+
+
+# ---- 条件つきの状態変更 ----
+GUARD = "  if 注文.状態 != 受付 { return 状態違い }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n  注文.状態 = 決済要求済\n"
+COND = "  if 注文.合計 <= 0 { return 合計ゼロ }\n  if 注文.状態 == 受付 {\n    注文.状態 = 決済要求済\n  }\n"
+
+
+def test_if_の中で元の状態を確かめてから変えるのは通る():
+    ck = chk(mutate(CODE, GUARD, COND))
+    assert not [d for d in ck.diags if d.level == ERROR and d.code == "遷移"]
+
+
+def test_if_の中でも元の状態を確かめていないと止まる():
+    ck = chk(mutate(CODE, GUARD, "  if 注文.合計 > 0 {\n    注文.状態 = 決済要求済\n  }\n"))
+    assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_if_の中の確認は外へ持ち出さない():
+    ck = chk(mutate(CODE, GUARD, "  if 注文.状態 == 受付 {\n    request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n  }\n  注文.状態 = 決済要求済\n"))
+    assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
+
+
+def test_if_の中に_let_は書けない():
+    ck = chk(mutate(CODE, GUARD, "  if 注文.状態 == 受付 {\n    let x = 注文[注文ID] else { return 注文なし }\n  }\n"))
+    assert any("if の中" in m for m in msgs(ck, ERROR))
+
+
+def test_条件つきの変更は_Rust_の_if_の中に出る():
+    prog = parse(mutate(CODE, GUARD, COND))
+    src = generate(check(prog))
+    assert "    if (注文.状態 == 注文状態::受付) {\n        書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::決済要求済));\n    }" in src
