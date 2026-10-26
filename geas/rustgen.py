@@ -184,7 +184,7 @@ def show_expr(t: Type, x: str) -> str:
     return x
 
 
-CONVERSIONS = ("money", "int")
+CONVERSIONS = ("money", "int", "time")
 
 
 def opt(v):
@@ -561,7 +561,9 @@ class ProcGen:
             saved = dict(self.scope)
             for n, t in pt.params:
                 self.scope[n] = ("local", tok_of(t))
+            self.fills = {(n, c): v for n, t in pt.params for c, v in (t.fills or ())}
             call = self.rx(pt.body)
+            self.fills = {}
             self.scope = saved
         else:
             call = f"部品.{e.n}({', '.join(args)})"
@@ -611,6 +613,8 @@ class ProcGen:
                 return self.wrap(tok, x)
             return f"{self.ck.variants[e.n]}::{e.n}"
         if isinstance(e, Attr):
+            if isinstance(e.e, Name) and (e.e.n, e.n) in getattr(self, "fills", {}):  # 補うルールがある成分
+                return self.wrap(self.tok(e), f"{self.place(e)}.unwrap_or({self.fills[(e.e.n, e.n)]})")
             if self.nullable(e):  # 検査で、null でないと確かめてある
                 # 検査で、null でないと確かめてある（No.28：示せた所は実行時に確かめない）
                 return self.wrap(self.tok(e), f'unsafe {{ {self.place(e)}.clone().unwrap_unchecked() }}')
@@ -642,7 +646,7 @@ class ProcGen:
             return c if e.kind == "空" else f"!{c}"
         if isinstance(e, Call):
             if e.n in CONVERSIONS:  # 整数 ⇄ 金額 の変換は、意味の型を変えるだけ（物理の値はそのまま）
-                return self.rx(e.args[0])
+                return f"(({self.rx(e.args[0])}) as i64)" if e.n == "time" else self.rx(e.args[0])
             if e.n in self.ck.parts:
                 return self.part_call(e)
             return f"{e.args[1].n}({self.rx(e.args[0])})"

@@ -9,7 +9,7 @@ from .ast import *  # noqa: F401,F403
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("切り捨て", "切り上げ", "四捨五入")
-CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int")}  # 名前 → (変える前, 変えた後)
+CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
 @dataclass
@@ -212,18 +212,20 @@ class Checker:
         if "result" in names:
             self.d(ERROR, "名前", where, "引数の名前に result は使えません（戻り値の名前です）")
         for n, t in [*pt.params, ("result", pt.ret)]:
-            self.check_type(t, f"{where} / {n}")
-            if t.kind not in ("整数", "金額", "割合", "ID", "文字列", "日時"):
+            self.check_type(t, f"{where} / {n}", comp_ok=pt.body is not None and n != "result")
+            if t.kind not in ("整数", "金額", "割合", "ID", "文字列", "日時") and not (pt.body is not None and t.kind == "合成" and n != "result"):
                 self.d(ERROR, "型", where, f"部品の引数と戻り値に使えるのは数・割合・ID・文字列・日時です（{n}）")
         pc = ProcChecker(self, Process(pt.name))
         pc.where = where
         if pt.body is not None:  # convert：式が定義。式の型が戻り値の型と合うことを確かめる（範囲は呼ぶたびに生成コードで確かめる）
-            b = pc.ty(pt.body, {n: tok_of(t) for n, t in pt.params})
-            if b not in (tok_of(pt.ret), "?") and not (isinstance(pt.body, Num) and tok_of(pt.ret) in ("Int", "Money")):
-                self.d(ERROR, "型", where, f"変換の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
             for n, t in pt.params:
                 if t.kind in ("整数", "金額", "割合"):
                     pc.var_iv[n] = iv_of(t)
+                if t.fills:
+                    self.check_fills(where, n, t, pc)
+            b = pc.ty(pt.body, {n: tok_of(t) for n, t in pt.params})
+            if b not in (tok_of(pt.ret), "?") and not (isinstance(pt.body, Num) and tok_of(pt.ret) in ("Int", "Money")):
+                self.d(ERROR, "型", where, f"変換の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
             r = pt.ret.range
             if pt.ret.kind in ("整数", "金額", "割合") and r is not None:  # 範囲は静的に示す。示せなければ、実行時に確かめず検査で止める
                 lo, hi = pc.interval(pt.body)
@@ -241,6 +243,22 @@ class Checker:
         if "result" not in names_in(pt.guarantee):
             self.d(ERROR, "保証", where, "保証が戻り値（result）を使っていません。何も確かめない保証は書けません")
         self.part_types.update(pc.info.types)
+
+    def check_fills(self, where, pname, t: Type, pc):
+        """fill：未指定にできる成分に、補う値を示す。補った成分は指定されている扱い（読む前の null の確かめが要らない）"""
+        ct = self.comps.get(t.target) if t.kind == "合成" else None
+        if ct is None:
+            self.d(ERROR, "型", where, f"fill は合成型の引数にだけ書けます（{pname}）")
+            return
+        for cn, v in t.fills:
+            pt = next((x for n, x in ct.parts if n == cn), None)
+            if pt is None or not pt.optional:
+                self.d(ERROR, "名前", where, f"fill の「{cn}」は、{t.target} の未指定にできる成分ではありません")
+                continue
+            r = pt.range
+            if r is not None and ((r.lo is not None and v < r.lo) or (r.hi is not None and v > r.hi)):
+                self.d(ERROR, "範囲", where, f"fill の「{cn}」の値 {v} が、成分の範囲{show_range(r)}に収まりません")
+            pc.present.add((("#成分", pname), cn))
 
     def check_defs(self):
         p = self.p

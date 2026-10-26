@@ -20,6 +20,7 @@ class Type:
     unit: Optional[str] = None
     optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
     chars: Optional[tuple] = None  # 文字列の使える文字。(下限, 上限) のコードポイントの組を、小さい順につないだもの
+    fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     parts: Optional[tuple] = None  # 合成型の成分。((名前, 型), …)。target は論理型の名前
 
 
