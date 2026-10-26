@@ -9,7 +9,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 受注文脈 { 税率: 有理 { 分子: 1, 分母: 10 }, 新注文ID: "N1".to_string() };
         let 入力 = 受注入力 { 顧客ID: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]) };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX1\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 受注(&ctx, &保存, &入力);
@@ -25,7 +25,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 受注文脈 { 税率: 有理 { 分子: 1, 分母: 10 }, 新注文ID: "N1".to_string() };
         let 入力 = 受注入力 { 顧客ID: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 6u8)]) };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX2\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 受注(&ctx, &保存, &入力);
@@ -41,7 +41,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 受注文脈 { 税率: 有理 { 分子: 1, 分母: 10 }, 新注文ID: "N1".to_string() };
         let 入力 = 受注入力 { 顧客ID: "C9".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]) };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX3\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 受注(&ctx, &保存, &入力);
@@ -57,7 +57,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 受注文脈 { 税率: 有理 { 分子: 1, 分母: 10 }, 新注文ID: "N1".to_string() };
         let 入力 = 受注入力 { 顧客ID: "C1".to_string(), 明細: BTreeMap::from([("Z".to_string(), 1u8)]) };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX5\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 受注(&ctx, &保存, &入力);
@@ -73,7 +73,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 受注文脈 { 税率: 有理 { 分子: 1, 分母: 10 }, 新注文ID: "N1".to_string() };
         let 入力 = 受注入力 { 顧客ID: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 1u8)]) };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX6\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 受注(&ctx, &保存, &入力);
@@ -88,7 +88,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]), 合計: 220i64, 状態: 注文状態::受付 });
         let ctx = 決済要求文脈 {  };
         let 入力 = 決済要求入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX7\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済要求(&ctx, &保存, &入力);
@@ -103,7 +103,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]), 合計: 220i64, 状態: 注文状態::決済要求済 });
         let ctx = 決済要求文脈 {  };
         let 入力 = 決済要求入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX8\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済要求(&ctx, &保存, &入力);
@@ -118,7 +118,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::new(), 合計: 0i64, 状態: 注文状態::受付 });
         let ctx = 決済要求文脈 {  };
         let 入力 = 決済要求入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX9\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済要求(&ctx, &保存, &入力);
@@ -133,7 +133,7 @@ fn main() {
         保存.顧客.insert("C1".to_string(), 顧客 { 顧客ID: "C1".to_string() });
         let ctx = 決済要求文脈 {  };
         let 入力 = 決済要求入力 { 注文ID: "N9".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX10\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済要求(&ctx, &保存, &入力);
@@ -148,7 +148,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]), 合計: 220i64, 状態: 注文状態::決済要求済 });
         let ctx = 決済結果の反映文脈 {  };
         let 入力 = 決済結果の反映入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX11\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済結果の反映(&ctx, &保存, &入力);
@@ -163,7 +163,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]), 合計: 220i64, 状態: 注文状態::決済要求済 });
         let ctx = 決済の期限切れ文脈 {  };
         let 入力 = 決済の期限切れ入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX12\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済の期限切れ(&ctx, &保存, &入力);
@@ -178,7 +178,7 @@ fn main() {
         保存.注文.insert("N1".to_string(), 注文 { 注文ID: "N1".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 2u8)]), 合計: 220i64, 状態: 注文状態::完了 });
         let ctx = 決済の期限切れ文脈 {  };
         let 入力 = 決済の期限切れ入力 { 注文ID: "N1".to_string() };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX13\t入力不正({})\t\t", e),
             Ok(()) => {
                 let 出力 = 決済の期限切れ(&ctx, &保存, &入力);
@@ -195,7 +195,7 @@ fn main() {
         保存.注文.insert("N2".to_string(), 注文 { 注文ID: "N2".to_string(), 顧客: "C1".to_string(), 明細: BTreeMap::from([("A".to_string(), 1u8)]), 合計: 100i64, 状態: 注文状態::キャンセル });
         let ctx = 注文一覧文脈 {  };
         let 入力 = 注文一覧入力 {  };
-        match 入力.検査() {
+        match ctx.検査().and_then(|_| 入力.検査()) {
             Err(e) => println!("EX14\t入力不正({})\t\t", e),
             Ok(()) => println!("EX14\t一覧({})\t\t", 注文一覧(&ctx, &保存, &入力).iter().map(|x| x.表示()).collect::<Vec<_>>().join(",")),
         }

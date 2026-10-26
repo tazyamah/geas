@@ -949,6 +949,44 @@ def test_ホストは無いかもしれない入力のキー無しと_null_を�
     assert ok(got[7], "書いた") and '\\"題\\":null' in got[7], got[7]  # 無い入力は、そのまま null の項目へ
 
 
+SLOT = """data 品 {
+  品ID: id unique
+  数: int 0..1000 required
+}
+result 置いた結果 {
+  置いた(品ID: id)
+}
+deed 置く {
+  input 数: int 0..10 required
+  slot 倍率: int 1..100
+  writes 品
+  result 置いた結果
+  effects none
+
+  let 品 = create 品 { 数: 数 * 倍率 }
+  return 置いた(品.品ID)
+}
+nexus 流れ {
+  置く: 置いた → reply
+}
+"""
+
+
+@needs_cargo
+def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
+    ck = chk(SLOT)
+    assert ck.ready, ck.diags
+    call = lambda k: f'{{"名前":"置く","文脈":{{"倍率":{k},"新品ID":"A"}},"入力":{{"数":10}},"保存":{{}}}}'
+    main = "fn main() {\n" + "".join(f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{call(k)}"#));\n' for k in (100, 101, 0)) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert got[0].startswith("Ok(") and '\\"数\\":1000' in got[0], got[0]  # 範囲の端は通る
+    assert got[1].startswith("Err(") and "倍率" in got[1], got[1]  # 宣言の外は処理を走らせない
+    assert got[2].startswith("Err(") and "倍率" in got[2], got[2]
+
+
 NULLQ = """data 人 {
   人ID: id unique
   名前: text

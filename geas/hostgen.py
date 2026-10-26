@@ -238,7 +238,7 @@ def host_source(ck: Checker) -> str:
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'新{d}ID: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
-        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
+        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
         w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
         w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
     for q in p.queries:
@@ -246,7 +246,7 @@ def host_source(ck: Checker) -> str:
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
         shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
-        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            i.検査()?;')
+        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
         w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
     w("pub fn 呼ぶ(要求: &str) -> Result<String, String> {\n"
