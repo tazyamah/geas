@@ -1,8 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。
 キーワードは英語。構文木の中身（型の種類や結果の行き先など）は、仕様書の言葉に合わせた日本語のまま持つ。"""
+import copy
+
 from .ast import *  # noqa: F401,F403
 from .lexer import Tok, lex
+
+
+# 論理型の名前に使えない、組み込みの型の名前
+BUILTIN_TYPE_NAMES = {"id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref"}
 
 
 class ParseError(Exception):
@@ -25,6 +31,7 @@ class Parser:
     def __init__(self, toks: list[Tok]):
         self.t = toks
         self.i = 0
+        self.ltypes: dict[str, Type] = {}
 
     # ---- 部品 ----
     def peek(self, k=0) -> Tok:
@@ -91,8 +98,12 @@ class Parser:
         while self.peek().kind != "EOF":
             line = self.peek().line
             kw = self.name()
-            if kw == "data":
+            if kw == "entity":
                 p.data.append(self.data(line))
+            elif kw == "data":
+                raise ParseError("data は entity に改名しました（entity 名 { … } と書きます）", line)
+            elif kw == "ltype":
+                self.ltype(line)
             elif kw == "state":
                 p.states.append(self.state(line))
             elif kw == "result":
@@ -135,6 +146,19 @@ class Parser:
     def block_open(self):
         self.expect("{")
         self.end_line()
+
+    # ---- 論理型 ----
+    def ltype(self, line):
+        """ltype 名前 = 型：範囲や組み合わせに名前を付ける。使う場所より前に書く（使った場所には定義が写される）"""
+        name = self.name()
+        if name in BUILTIN_TYPE_NAMES:
+            raise ParseError(f"「{name}」は組み込みの型の名前なので、論理型の名前には使えません", line)
+        if name in self.ltypes:
+            raise ParseError(f"論理型「{name}」が2つ以上あります", line)
+        self.expect("=")
+        t = self.type()
+        self.end_line()
+        self.ltypes[name] = t
 
     # ---- データ ----
     def data(self, line) -> Data:
@@ -233,6 +257,8 @@ class Parser:
             return Type("参照", target=self.name())
         if self.accept("→"):
             return Type("写像", key=tok, value=self.type())
+        if tok in self.ltypes:
+            return copy.deepcopy(self.ltypes[tok])
         return Type("名前", target=tok)
 
     # ---- 状態 ----
