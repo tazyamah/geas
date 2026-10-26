@@ -593,7 +593,7 @@ def test_減らした後に確かめた不足の集まりは古い():
 # ---- 外部作用とフローの重複・矛盾 ----
 FOR = """
 deed 引当 {
-  input 明細: 商品 → int 1..99, 注文ID: id
+  input 明細: 商品 → int 1..99 required, 注文ID: id required
   result 待ち解除結果
   effects 倉庫.引当
 
@@ -615,9 +615,29 @@ def with_for(key):
     return chk(src + FOR.replace("KEY", key))
 
 
-def test_for_の中の冪等キーは回す値によらないと止まる():
+def test_for_の中の冪等キーは回す値と外の値の組にする():
     assert any("for で回す値によりません" in m for m in msgs(with_for("注文ID"), ERROR))
-    assert not any("冪等" in m for m in msgs(with_for("k"), ERROR))
+    assert any("for で回す値だけです" in m for m in msgs(with_for("k"), ERROR))  # 別の注文で同じ商品を回すとぶつかる
+    assert not any("冪等" in m for m in msgs(with_for("(注文ID, k)"), ERROR))
+    assert not any("冪等" in m for m in msgs(with_for("(k, 注文ID)"), ERROR))
+    assert any("冪等キーは ID か文字列" in m for m in msgs(with_for("(注文ID, v)"), ERROR))
+
+
+@needs_cargo
+def test_冪等キーの組は区切りがあいまいにならない(tmp_path):
+    ck = with_for("(注文ID, k)")
+    assert ck.ready, ck.diags
+    main = """fn main() {
+    println!("{}", geas_app::冪等キーの組(&["a,b".to_string(), "c".to_string()]));
+    println!("{}", geas_app::冪等キーの組(&["a".to_string(), "b\\",\\"c".to_string()]));
+    println!("{}", geas_app::冪等キーの組(&["O1".to_string(), "P1".to_string()]));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    a, b, c = r.stdout.splitlines()
+    assert a != b and c == '["O1","P1"]', (a, b, c)
 
 
 def test_冪等キーは_ID_か文字列():

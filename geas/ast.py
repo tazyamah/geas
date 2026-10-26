@@ -166,6 +166,12 @@ class Num:
 
 
 @dataclass
+class Tuple:
+    """値の組。いまは冪等キーだけに使う（idempotency_key = (注文ID, k)）"""
+    items: list
+
+
+@dataclass
 class Null:
     """無いかもしれない項目が、実際に無いこと（null の値）。1件や項目そのものが無いこと（undefined）とは別"""
 
@@ -331,6 +337,8 @@ def show(e) -> str:
         return str(e.v)
     if isinstance(e, Null):
         return "null"
+    if isinstance(e, Tuple):
+        return "(" + ", ".join(map(show, e.items)) + ")"
     if isinstance(e, Name):
         return e.n
     if isinstance(e, Attr):

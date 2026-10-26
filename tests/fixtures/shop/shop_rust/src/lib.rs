@@ -33,6 +33,11 @@ pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
     }
     Ok(())
 }
+/// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
+pub fn 冪等キーの組(xs: &[String]) -> String {
+    let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    format!("[{}]", q.join(","))
+}
 pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
     範囲検査(名, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
     x

@@ -417,7 +417,7 @@ class Parser:
                 if self.is_("idempotency_key") and self.is_("=", 1):
                     self.next()
                     self.next()
-                    idem = self.expr()
+                    idem = self.idem_key()
                 else:
                     args.append(self.expr())
                 if not self.accept(","):
@@ -504,6 +504,17 @@ class Parser:
         cond = self.expr() if self.accept(",") else None
         self.expect("}")
         return elem, b, cond
+
+    def idem_key(self):
+        """冪等キー。1つの値か、値の組 (a, b, …)"""
+        if not self.is_("("):
+            return self.expr()
+        self.next()
+        items = [self.expr()]
+        while self.accept(","):
+            items.append(self.expr())
+        self.expect(")")
+        return items[0] if len(items) == 1 else Tuple(items)
 
     def primary(self):
         t = self.peek()

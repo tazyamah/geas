@@ -572,6 +572,8 @@ def names_in(e) -> set:
         return set().union(*map(names_in, e.args)) if e.args else set()
     if isinstance(e, Bin):
         return names_in(e.l) | names_in(e.r)
+    if isinstance(e, Tuple):
+        return set().union(*map(names_in, e.items))
     return set()
 
 
@@ -1415,13 +1417,22 @@ class ProcChecker:
         if st.idem is None:
             self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（idempotency_key = … が必須です）", st.line)
         else:
-            kt = self.ty(st.idem)
-            if kt not in ("ID", "Str", "?"):
-                self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キーは ID か文字列にしてください（{kt}）", st.line)
-            # for の中では、要求ごとにキーが違わないと、2件目からが1件目の重複として捨てられる
-            if self.loop_deps and not (names_in(st.idem) & self.loop_deps):
-                self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キー「{show(st.idem)}」が、for で回す値によりません"
-                       "（どの要求も同じキーになり、2件目からが重複として捨てられます）", st.line)
+            parts = st.idem.items if isinstance(st.idem, Tuple) else [st.idem]
+            for x in parts:
+                kt = self.ty(x)
+                if kt not in ("ID", "Str", "?"):
+                    self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キーは ID か文字列（の組）にしてください（{show(x)}: {kt}）", st.line)
+            if self.loop_deps:
+                # for の中では、回すたびに違う値と、for の外で決まる値の両方が要る。
+                # 回す値だけだと、別の処理（別の注文など）で同じ値を回したときにキーがぶつかり、外で重複として捨てられる
+                inner = any(names_in(x) & self.loop_deps for x in parts)
+                outer = any(names_in(x) and not (names_in(x) & self.loop_deps) for x in parts)
+                if not inner:
+                    self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キー「{show(st.idem)}」が、for で回す値によりません"
+                           "（どの要求も同じキーになり、2件目からが重複として捨てられます）", st.line)
+                elif not outer:
+                    self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キー「{show(st.idem)}」が、for で回す値だけです。"
+                           "別の処理で同じ値を回すとキーがぶつかるので、for の外で決まる値との組にしてください（idempotency_key = (注文ID, k) など）", st.line)
         info.effects.append((st.effect, show(st.idem) if st.idem is not None else ""))
 
     def finish(self):
