@@ -32,6 +32,11 @@ python -m geas compare examples/shop.geas examples/shop_plan.md  # 計画書と�
 python -m pytest tests                                           # テスト
 ```
 
+## 例
+
+- [お店](examples/shop.geas)：短い見本です（計画書は [examples/shop_plan.md](examples/shop_plan.md)）。
+- ひとり用つぶやき：会話から計画書を作り、コード、Rust/WASM、画面まで試した例です。[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
+
 ## 状態
 
 試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。言語のキーワードは、今は日本語の仮のままです（英語化と、処理→Deed などの置き換えは、別の決定として進めます）。
