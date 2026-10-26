@@ -951,6 +951,19 @@ def test_ホストは無いかもしれない入力のキー無しと_null_を�
     assert ok(got[7], "書いた") and '\\"題\\":null' in got[7], got[7]  # 無い入力は、そのまま null の項目へ
 
 
+def test_ホストは宣言にない入力の項目を無いものとして扱う(tmp_path):
+    ck = chk(NULLIN)
+    calls = ['{"本文":"a","重さ":3}', '{"本文":"a","重さ":3,"余分":"x","題名":"typo"}']
+    main = "fn main() {\n" + "".join(
+        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"書く","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        for i in calls) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    got = r.stdout.splitlines()
+    assert got[0] == got[1] and '\\"結果\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
+
+
 SLOT = """data 品 {
   品ID: id unique
   数: int 0..1000 required
