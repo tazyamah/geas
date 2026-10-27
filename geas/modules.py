@@ -49,6 +49,7 @@ class Loaded:
         self.origin: dict[str, tuple[str, str]] = {}
         self.files: dict[Path, str] = {}  # 読んだファイル → モジュール名
         self.names: dict[str, dict[str, str]] = {}  # モジュール名 → {元の名前: 付け替えた名前}
+        self.versions: dict[str, str] = {}  # モジュール名 → version（`module 名前 version "1.0.0"`。書かなければ空）
 
 
 def split_uses(toks: list[Tok]):
@@ -113,8 +114,14 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
             if n in declared:
                 raise ModuleError(f"モジュール {mod} に「{n}」が2つあります", t.line)
             declared[n] = mangle(mod, n)
-    # モジュールの先頭の `module 名前`（2字句）を除く
-    toks = toks[:starts[0]] + toks[starts[0] + 2:]
+    # モジュールの先頭の `module 名前 [version "文字列"]` を除く
+    head = 2
+    if toks[starts[0] + 2].kind == "NAME" and toks[starts[0] + 2].val == "version":
+        if toks[starts[0] + 3].kind != "STR":
+            raise ModuleError('version の後に、"1.0.0" のような文字列を書きます', toks[starts[0]].line)
+        loaded.versions[mod] = toks[starts[0] + 3].val
+        head = 4
+    toks = toks[:starts[0]] + toks[starts[0] + head:]
     toks = replace_refs(toks, visible)
     toks = [Tok(t.kind, declared[t.val], t.line, t.doc) if t.kind == "NAME" and t.val in declared else t for t in toks]
     loaded.files[path] = mod
@@ -142,3 +149,12 @@ def expand(toks: list[Tok], path: Path | None) -> tuple[list[Tok], dict[str, tup
     loaded = Loaded()
     visible = use_all(uses, Path(path).resolve(), loaded, [Path(path).resolve()])
     return loaded.toks + replace_refs(toks, visible), loaded.origin
+
+
+def load_standalone(path) -> tuple[list[Tok], dict[str, tuple[str, str]], str, Loaded]:
+    """モジュールのファイルだけを読む（パッケージを作るとき）。(字句の列, 付け替えた名前の対応, モジュール名, 読んだ結果)"""
+    path = Path(path).resolve()
+    loaded = Loaded()
+    mod = load_module(path, loaded, [], 0)
+    last = loaded.toks[-1].line if loaded.toks else 0
+    return loaded.toks + [Tok("EOF", "", last)], loaded.origin, mod, loaded

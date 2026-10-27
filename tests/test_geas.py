@@ -2088,3 +2088,37 @@ def test_表示名の無い名前は警告で教える(tmp_path):
     assert not any("「Dots」" in d.msg for d in gaps)  # /// 位置の数 がある
     # 表示名があれば警告しない。名前の書式を検査しない時（check の既定）も警告しない
     assert not [d for d in check(parse(open(EX / "shop.geas").read())).diags if d.code == "表示名"]
+
+
+# ---- モジュールのパッケージ ----
+def test_パッケージはインターフェースとcrateとソースを出し_ハッシュが合う(tmp_path):
+    import hashlib
+    import json
+
+    from geas.package import build_package
+
+    mod_dir(tmp_path, geo=GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n'))
+    iface, digest = build_package(tmp_path / "geo.geas", tmp_path / "out")
+    j = json.loads(iface.read_text())
+    assert (j["module"], j["version"], j["format"]) == ("Geo", "1.2.0", 1)
+    assert j["ltypes"]["Geo_Dots"]["range"] == {"lo": 0, "hi": 100}  # 下限の 0 を落とさない
+    assert j["converts"][0]["name"] == "Geo_same" and "body" not in j["converts"][0]  # 中身は出さない
+    assert j["source_sha256"] == hashlib.sha256((tmp_path / "geo.geas").read_bytes()).hexdigest()
+    lib = (tmp_path / "out" / "crate" / "src" / "lib.rs").read_text()
+    assert j["crate_sha256"] == hashlib.sha256(lib.encode()).hexdigest() and "pub struct Geo_Pos" in lib
+    assert digest == hashlib.sha256(iface.read_bytes()).hexdigest()
+    assert (tmp_path / "out" / "geo.geas").exists()  # 既定でソースを同梱する
+
+
+def test_パッケージはソースを外せるが_検査のエラーと取り込むモジュールは断る(tmp_path):
+    from geas.package import PackageError, build_package
+
+    mod_dir(tmp_path, geo=GEO)
+    build_package(tmp_path / "geo.geas", tmp_path / "out", no_source=True)
+    assert not (tmp_path / "out" / "geo.geas").exists()
+    mod_dir(tmp_path, bad=GEO.replace("module Geo", "module Bad").replace("Dots", "dots"))
+    with pytest.raises(PackageError, match="検査にエラー"):
+        build_package(tmp_path / "bad.geas", tmp_path / "o2")
+    mod_dir(tmp_path, geo=GEO, user='use "geo.geas"\nmodule User\nltype Few = int 0..5\n')
+    with pytest.raises(PackageError, match="取り込むモジュール"):
+        build_package(tmp_path / "user.geas", tmp_path / "o3")

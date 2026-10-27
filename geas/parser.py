@@ -162,6 +162,7 @@ class Parser:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
         p.ltype_names = list(self.ltypes)
+        p.ltype_defs = dict(self.ltypes)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
@@ -983,10 +984,14 @@ def collect_labels(toks: list[Tok]) -> dict:
     return labels
 
 
-def parse(src: str, path=None) -> Program:
-    """path は、use でモジュールを取り込むときの基準になるファイル（文字列から読むときは無し）"""
-    toks, origin = expand(lex(src), path)
+def parse_toks(toks, origin) -> Program:
     p = Parser(toks).program()
     p.labels = collect_labels(toks)
     p.origin = origin
     return p
+
+
+def parse(src: str, path=None) -> Program:
+    """path は、use でモジュールを取り込むときの基準になるファイル（文字列から読むときは無し）"""
+    toks, origin = expand(lex(src), path)
+    return parse_toks(toks, origin)
