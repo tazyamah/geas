@@ -957,6 +957,10 @@ class Parser:
             kind = self.name()
             if kind == "reply":
                 kind, key = "reply", self.name()
+            elif kind == "all":  # all reply A, B → 処理：全部の応答がそろったら進む（待ち合わせ）。reply だけの行は、先に来た1つで進む
+                if self.name() != "reply":
+                    raise self.err("all の後ろには、reply と応答の名前を並べます（例：all reply 決済成功, 在庫確保 → 出荷）")
+                key = ",".join(self.comma_list(self.name))
             elif kind == "deadline":
                 kind = "deadline"
                 if self.accept("now"):  # 「now + 30 min」。now は動的具体化の【参照】
@@ -964,7 +968,7 @@ class Parser:
                 n = self.num()
                 key = str(n * UNITS[self.unit()])
             else:
-                raise self.err(f"トリガの要因は「reply」か「deadline」です（「{kind}」は使えません）")
+                raise self.err(f"トリガの要因は「reply」「all reply」「deadline」です（「{kind}」は使えません）")
             self.expect("→")
             causes.append((kind, key, self.name()))
             self.end_line()
@@ -984,6 +988,8 @@ def collect_labels(toks: list[Tok]) -> dict:
         if not t.doc:
             continue
         target = toks[i + 1] if t.kind == "NAME" and t.val in DECL_KEYWORDS and i + 1 < len(toks) else t
+        if t.kind == "NAME" and t.val == "all" and i + 2 < len(toks) and toks[i + 1].val == "reply":
+            target = toks[i + 2]  # all reply A, B：最初の応答の名前に付く
         if target.kind != "NAME":
             raise ParseError("説明コメント（///）は名前の前に書きます", t.line)
         new = parse_labels(t.doc)

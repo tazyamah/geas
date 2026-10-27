@@ -110,7 +110,7 @@ class Trigger:
     """待ちの宣言。要因（応答／期限）ごとに行き先の処理を持つ。先に起きた要因が勝つ。"""
     name: str
     params: list[tuple[str, Type]]
-    causes: list[tuple[str, str, str]]  # (種別 応答／期限, 要因 応答名／秒数, 行き先の処理)
+    causes: list[tuple[str, str, str]]  # (種別 応答／期限／全部の応答, 要因 応答名／秒数／「A,B」（全部そろったら）, 行き先の処理)
     line: int = 0
 
 

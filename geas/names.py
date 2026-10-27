@@ -17,7 +17,7 @@ RESERVED = {
     "null", "absent", "nonempty", "empty", "true", "false",
     "let", "return", "if", "else", "for", "in", "create", "update", "request", "reply", "wait", "par",
     "entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger", "query", "event",
-    "tz_offset", "timezone", "input", "slot", "reads", "writes", "transition", "effects", "initial", "middle", "final", "reject", "required", "unique", "optional",
+    "tz_offset", "timezone", "all", "input", "slot", "reads", "writes", "transition", "effects", "initial", "middle", "final", "reject", "required", "unique", "optional",
 }
 
 

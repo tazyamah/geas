@@ -89,7 +89,8 @@ pub enum Dest {
 }
 pub struct TriggerDef {
     pub name: &'static str,
-    /// (種別, 要因, 行き先の処理)。期限の要因は秒数。先に起きた要因が勝つ（実行は基盤）。
+    /// (種別, 要因, 行き先の処理)。種別は reply／deadline／all。期限の要因は秒数、all の要因は「A,B」（全部の応答がそろったら進む）。
+    /// 先に成り立った行が勝つ（実行は基盤）。
     pub causes: &'static [(&'static str, &'static str, &'static str)],
 }
 '''
