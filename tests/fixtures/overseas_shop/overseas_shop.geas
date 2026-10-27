@@ -179,7 +179,7 @@ effect Payment. /// 与信の取り消し
 /// 倉庫
 effect Warehouse. /// 在庫の確保
   hold(order_id: id, /// 届け先
-    to: Address) no_wait "倉庫の返事（StockSettled）は、決済待ちの合流で受ける"
+    to: Address) joins OrderPending
 /// 配送
 effect Shipping. /// 出荷
   ship(order_id: id, /// 届け先
@@ -249,6 +249,20 @@ deed request_stock_hold {
   return HoldRequested
 }
 
+/// キャンペーンポイントの加算
+deed grant_campaign_points {
+  input order_id: id required
+  reads Order.customer, Customer.points
+  writes Customer.points
+  result PointsResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  let customer = Customer[order.customer] else { return NoSuchCustomer }
+  customer.points += 5
+  return Granted
+}
+
 /// ポイントの加算
 deed grant_points {
   input order_id: id required
@@ -259,7 +273,7 @@ deed grant_points {
 
   let order = Order[order_id] else { return NoSuchOrder }
   let customer = Customer[order.customer] else { return NoSuchCustomer }
-  customer.points = customer.points + 10
+  customer.points += 10
   return Granted
 }
 
@@ -366,10 +380,11 @@ query price_by_jan {
 
 /// 注文受付
 nexus Intake {
-  place_order: Received → par { request_payment, request_stock_hold, grant_points }, OutOfStock → reply, OtherCurrency → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  place_order: Received → par { request_payment, request_stock_hold, grant_points, grant_campaign_points }, OutOfStock → reply, OtherCurrency → reply, NoSuchProduct → reply, NoSuchCustomer → reply
   request_payment: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
   request_stock_hold: HoldRequested → reply, NoSuchOrder → reply
   grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
+  grant_campaign_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
 }
 
 // 決済の返事と倉庫の返事がそろったら見立てる。そろわないまま30分たったら取り消す
