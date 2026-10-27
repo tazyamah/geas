@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .ast import show
+from .ast import Range, ResultDef, Type, show
 from .check import check
 from .modules import ModuleError, load_standalone
 from .parser import parse_toks
@@ -78,3 +78,26 @@ def build_package(src: Path, out: Path, no_source: bool = False) -> tuple[Path, 
     if not no_source:
         (out / src.name).write_bytes(source)
     return iface, sha256(iface.read_bytes())
+
+
+def type_from(d: dict) -> Type:
+    """インターフェースの型（plain の逆）"""
+    t = Type(d["kind"])
+    for k, v in d.items():
+        if k == "range":
+            t.range = Range(v.get("lo"), v.get("hi"))
+        elif k == "value":
+            t.value = type_from(v)
+        elif k == "parts":
+            t.parts = tuple((n, type_from(x)) for n, x in v)
+        elif k in ("chars",):
+            t.chars = tuple(v)
+        elif k == "fills":
+            t.fills = tuple(tuple(x) for x in v)
+        elif k != "kind":
+            setattr(t, k, v)
+    return t
+
+
+def result_from(d: dict) -> ResultDef:
+    return ResultDef(d["name"], [(v, [(n, type_from(t)) for n, t in fs]) for v, fs in d["variants"]])

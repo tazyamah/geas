@@ -204,6 +204,8 @@ class Gen:
     # ---- 全体 ----
     def lib(self) -> str:
         self.out = [PRELUDE]
+        for crate, _ in self.p.extern_crates:
+            self.w(f"pub use {crate}::*;  // ソースなしのパッケージ：型と結果の形の定義はパッケージの crate にある")
         self.states()
         self.records()
         self.writes_enum()
@@ -355,6 +357,8 @@ class Gen:
 
     def records(self):
         for c in self.p.composites:
+            if c.target in self.p.extern_names:
+                continue  # ソースなしのパッケージの型は、パッケージの crate にある
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {c.target} {{")
             for pn, pt in c.parts:
@@ -451,6 +455,8 @@ class Gen:
 
     def results(self):
         for r in self.p.results:
+            if r.name in self.p.extern_names:
+                continue
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub enum {r.name} {{")
             vs = [(v, [t for _, t in ps]) for v, ps in r.variants]  # Rust では位置で持つ（名前は検査と受け渡しの定義に使う）
@@ -873,7 +879,7 @@ class ProcGen:
         g.w("}\n")
 
 
-def cargo_toml(name: str, host: bool = False) -> str:
+def cargo_toml(name: str, host: bool = False, crates=()) -> str:
     crate_type = 'crate-type = ["cdylib", "rlib"]\n' if host else ""
     opt = 'opt-level = "s"\n' if host else ""
     return f'''[package]
@@ -884,6 +890,8 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 {crate_type}
+[dependencies]
+{"".join(f'{c} = {{ path = "{path}" }}' + chr(10) for c, path in crates)}
 [profile.release]
 {opt}overflow-checks = true
 '''

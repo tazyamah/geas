@@ -179,7 +179,7 @@ HOST_MOD = "\npub mod host;\n"
 
 def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bool = False):
     (dest / "src" / "bin").mkdir(parents=True, exist_ok=True)
-    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host))
+    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host, ck.p.extern_crates))
     (dest / "src" / "lib.rs").write_text(lib_src + (HOST_MOD if host else ""))
     if host:
         from .hostgen import host_source

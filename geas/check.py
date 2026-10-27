@@ -177,6 +177,9 @@ class Checker:
                 self.diags.append(Diag(ERROR, "名前", where, msg))  # 名前そのものの指摘なので、表示名に置き換えない
             for where, n in label_gaps(self.p, self.p.ltype_names):
                 self.diags.append(Diag(WARN, "表示名", where, f"「{self.p.origin.get(n, (None, n))[1]}」に表示名（直前の /// ）がありません。仕様書には名前のまま出ます"))
+        for mod, ver, sha, quiet in self.p.sourceless:
+            if not quiet:
+                self.d(WARN, "パッケージ", f"パッケージ {mod}", f"ソースが同梱されていないので、中身を確かめられません（頼りはハッシュの固定だけ。version {ver or '不明'}、sha256 {sha[:12]}…）。承知のうえなら、use の末尾に sourceless と書くと警告を消せます")
         self.check_defs()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
