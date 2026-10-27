@@ -165,7 +165,9 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
     loaded.files[path] = mod
     loaded.names[mod] = declared
     loaded.origin.update({m: (mod, n) for n, m in declared.items()})
-    loaded.toks += [t for t in toks if not (t.kind == "NL" and loaded.toks and loaded.toks[-1].kind == "NL")] + [Tok("NL", "\n", toks[-1].line if toks else 0)]
+    for t in [*toks, Tok("NL", "\n", toks[-1].line if toks else 0)]:  # 改行の連続は1つにつなぐ
+        if not (t.kind == "NL" and loaded.toks and loaded.toks[-1].kind == "NL"):
+            loaded.toks.append(t)
     return mod
 
 

@@ -2115,9 +2115,37 @@ def test_パッケージは検査のエラーと取り込むモジュールを�
     mod_dir(tmp_path, bad=GEO.replace("module Geo", "module Bad").replace("Dots", "dots"))
     with pytest.raises(PackageError, match="検査にエラー"):
         build_package(tmp_path / "bad.geas", tmp_path / "o2")
-    mod_dir(tmp_path, geo=GEO, user='use "geo.geas"\nmodule User\nltype Few = int 0..5\n')
-    with pytest.raises(PackageError, match="取り込むモジュール"):
-        build_package(tmp_path / "user.geas", tmp_path / "o3")
+
+
+USER = 'use "geo.geas"\nmodule User version "0.3.0"\nltype Few = int 0..5\nconvert pick(d: Geo.Dots) -> Geo.Dots = Geo.same(d)\n'
+
+
+def test_使っているモジュールのあるモジュールは_依存の名前とversionとソースを明示してパッケージになる(tmp_path):
+    import json
+
+    from geas.package import PackageError, build_package
+
+    mod_dir(tmp_path, geo=GEO, user=USER)
+    with pytest.raises(PackageError, match="version がありません"):
+        build_package(tmp_path / "user.geas", tmp_path / "o1")
+    mod_dir(tmp_path, geo=GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n'))
+    iface, _ = build_package(tmp_path / "user.geas", tmp_path / "o2")
+    j = json.loads(iface.read_text())
+    assert [(d["module"], d["version"], d["source_file"]) for d in j["dependencies"]] == [("Geo", "1.2.0", "geo.geas")]
+    assert (tmp_path / "o2" / "geo.geas").exists() and (tmp_path / "o2" / "user.geas").exists()
+    # 使う側：依存ごとハッシュを確かめて取り込め、依存のソースが書き換わると止まる
+    digest = hashlib_sha(iface)
+    (tmp_path / "app.geas").write_text(f'use "o2/user.geasi" sha256 "{digest}"\nltype T = int 0..3\n')
+    assert "Geo_Dots" in parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas").ltype_names
+    (tmp_path / "o2" / "geo.geas").write_text(GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n').replace("0..100", "0..999"))
+    with pytest.raises(ModuleError, match="一致しません|違います"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+
+
+def hashlib_sha(path):
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def pkg_app(tmp_path, sha, path="out/geo.geasi"):
