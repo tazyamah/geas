@@ -162,7 +162,6 @@ class Parser:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
         p.ltype_names = list(self.ltypes)
-        p.ltype_defs = dict(self.ltypes)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
