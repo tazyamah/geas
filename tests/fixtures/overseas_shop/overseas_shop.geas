@@ -21,7 +21,7 @@ ltype PostalCode = text 3..10 of "0-9A-Z-"
 /// 住所の行
 ltype AddressLine = text 1..80
 /// JANコード
-ltype JanCode = text 13..13 of "0-9"
+ltype JanCode = text 13..13 of "0-9" check gtin
 /// 配送先
 ltype Address {
   /// 国
@@ -344,6 +344,30 @@ deed refund_and_cancel {
   return Applied
 }
 
+/// 決済状況の引き直し結果
+result RecheckResult {
+  /// 引き直し済
+  Rechecked
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+// スマホや PC のアプリが、つながりを取り戻したときに呼ばれる。決済の返事を取りこぼしたかもしれない注文に、同じ冪等キーで請求を出し直して、決済の返事（PaymentSettled）をもう一度受ける。二重には請求されない
+/// 決済状況の引き直し
+deed recheck_payment {
+  input order_id: id required
+  reads Order.total, Order.currency, Order.status
+  result RecheckResult
+  effects Payment.charge
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  request Payment.charge(order_id, order.currency, order.total, idempotency_key = order_id)
+  return Rechecked
+}
+
 /// 期限切れの取り消し
 deed expire_order {
   input order_id: id required
@@ -366,6 +390,13 @@ query order_list {
   select order_id, customer.customer_id as customer, sum(items) as /// 点数
     item_count
   reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
+}
+
+/// 決済の返事待ちの注文
+query awaiting_payment {
+  from Order
+  where status == PaymentRequested
+  reads Order.status
 }
 
 // ブラウザ拡張が使う。Amazon の ASIN から JAN への変換は拡張の側（クライアント）の仕事で、サーバーは JAN で引く
@@ -401,6 +432,17 @@ nexus Settlement {
   cancel_unpaid: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
   refund_and_cancel: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
   expire_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+}
+
+/// 決済状況の引き直しの流れ
+nexus Recheck {
+  recheck_payment: Rechecked → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply
+}
+
+// アプリの「つながりが戻った」は、サーバーの外で起きる出来事。サーバーは、返事待ちの注文1件ずつに引き直しを起こす
+/// つながりが戻った
+event Reconnected {
+  each awaiting_payment → recheck_payment
 }
 
 invariant Product: stock >= 0

@@ -288,7 +288,7 @@ class Checker:
                 if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
                     self.d(ERROR, "範囲", where, f"変換の結果が戻り値の範囲{show_range(r)}に収まると示せません"
                            f"（式の範囲 {iv_show((lo, hi))}）。引数の型か式を見直してください")
-            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None):
+            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None or pt.ret.check is not None):
                 self.d(ERROR, "範囲", where, "長さや文字種が決まっている文字列を返す変換は、まだ静的に示せません")
             self.part_types.update(pc.info.types)
             return
@@ -1740,7 +1740,7 @@ class ProcChecker:
     def check_text_fit(self, e, dst: Type, where: str, line: int):
         """長さか使える文字が決まっている文字列の項目へ書くとき、書く値の長さと文字が収まると示せるか。
         示せるのは、宣言のある入力・項目・slot と、部品の戻り値を、そのまま書く場合だけ（外から来る値は、境界で確かめてある）"""
-        if dst.kind != "文字列" or (dst.range is None and dst.chars is None) or isinstance(e, Null):
+        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.check is None) or isinstance(e, Null):
             return
         if isinstance(e, Call) and e.n in self.ck.parts:
             src = self.ck.parts[e.n].ret
@@ -1757,6 +1757,9 @@ class ProcChecker:
         if dst.chars is not None and (src.chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in src.chars)):
             self.d(ERROR, "文字種", f"{where} に書く文字列の文字が、項目の使える文字に収まると示せません"
                    f"（書く値{'の文字は制限なし' if src.chars is None else ' [' + show_chars(src.chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
+        if dst.check is not None and src.check != dst.check:
+            self.d(ERROR, "検査数字", f"{where} に書く文字列が、検査数字（{dst.check}）を満たすと示せません"
+                   f"（書く値{'は検査数字なし' if src.check is None else 'の検査数字は ' + src.check} ／ 項目は {dst.check}）", line)
 
     def create(self, st: Create):
         ck, info = self.ck, self.info

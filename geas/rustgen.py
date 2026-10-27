@@ -50,6 +50,15 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
         None => Ok(()),
     }
 }
+/// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
+pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
+    let ds: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
+    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d * 3 } else { *d }).sum();
+    if ds.len() != s.chars().count() || sum % 10 != 0 {
+        return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
+    }
+    Ok(())
+}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
@@ -137,6 +146,8 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "文字列" and t.chars is not None:
         chk.append(f'check_chars("{label}", &{x}, {chars_rust(t.chars)})?;')
+    if t.kind == "文字列" and t.check == "gtin":
+        chk.append(f'check_gtin("{label}", &{x})?;')
     if t.kind == "バイト列" and t.range:
         chk.append(f'check_range("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind in ("整数", "金額") and t.range:
@@ -594,6 +605,8 @@ class ProcGen:
             lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ guarantee_violated("{e.n}", &m) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
             lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ guarantee_violated("{e.n}", &m) }}')
+        if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
+            lines.append(f'if let Err(m) = check_gtin("result", &result) {{ guarantee_violated("{e.n}", &m) }}')
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))
