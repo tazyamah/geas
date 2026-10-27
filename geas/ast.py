@@ -172,6 +172,7 @@ class Program:
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
+    origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
 
@@ -189,9 +190,10 @@ class Program:
 
     def show_names(self, text: str) -> str:
         """人に見せる文字列の中の名前を表示名（日本語、無ければ既定）に置き換える。生成する Rust には使わない"""
-        if not self.labels:
+        if not self.labels and not self.origin:
             return text
-        table = {n: ls.get("ja") or ls.get("") for n, ls in self.labels.items() if ls.get("ja") or ls.get("")}
+        table = {m: f"{mod}.{n}" for m, (mod, n) in self.origin.items()}  # モジュールの定義は、表示名が無ければ 名前.定義名
+        table |= {n: ls.get("ja") or ls.get("") for n, ls in self.labels.items() if ls.get("ja") or ls.get("")}
         return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", lambda m: table.get(m.group(0), m.group(0)), text)
 
 

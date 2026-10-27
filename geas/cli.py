@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .check import ERROR, check
 from .examples import ExampleError, compare_examples, run_crate, runner_source, write_crate
+from .modules import ModuleError
 from .parser import ParseError, parse
 from .plan import EXAMPLE, UNSPEC, Finding, compare_static, read_plan
 from .lexer import LexError
@@ -16,8 +17,8 @@ from . import interview
 
 def load(path):
     try:
-        return check(parse(Path(path).read_text()), strict_names=True)
-    except (ParseError, LexError) as e:
+        return check(parse(Path(path).read_text(), path), strict_names=True)
+    except (ParseError, LexError, ModuleError) as e:
         print(f"構文エラー: {e}", file=sys.stderr)
         sys.exit(2)
 
