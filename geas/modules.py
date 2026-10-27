@@ -62,8 +62,12 @@ def split_uses(toks: list[Tok]):
         if i in starts and t.kind == "NAME" and t.val == "use":
             if i + 1 >= len(toks) or toks[i + 1].kind != "STR":
                 raise ModuleError('use の後に、取り込むファイルを "path" の形で書きます', t.line)
-            uses.append((toks[i + 1].val, t.line))
-            skip_to = i + 2
+            sha, skip_to = None, i + 2
+            if skip_to + 1 < len(toks) and toks[skip_to].kind == "NAME" and toks[skip_to].val == "sha256":  # パッケージのハッシュの固定
+                if toks[skip_to + 1].kind != "STR":
+                    raise ModuleError('sha256 の後に、ハッシュを "…" の形で書きます', t.line)
+                sha, skip_to = toks[skip_to + 1].val, skip_to + 2
+            uses.append((toks[i + 1].val, t.line, sha))
             continue
         keep.append(t)
     return uses, keep
@@ -84,6 +88,39 @@ def replace_refs(toks: list[Tok], visible: dict[str, dict[str, str]]) -> list[To
             out.append(t)
             i += 1
     return out
+
+
+def open_package(iface: Path, sha: str | None, line: int) -> Path:
+    """パッケージ（インターフェース .geasi）を照合して、同梱のソースの場所を返す。
+    ハッシュの固定が必須。ソースがあれば、ソースのハッシュと、ソースから作り直したインターフェースの一致も確かめる"""
+    import json
+    import tempfile
+
+    from .package import CHECKER_VERSION, INTERFACE_FORMAT, PackageError, build_package, sha256
+
+    if sha is None:
+        raise ModuleError(f'パッケージ {iface.name} の取り込みには、ハッシュの固定が必要です（use "{iface.name}" sha256 "…"）', line)
+    if not iface.exists():
+        raise ModuleError(f"パッケージのファイル {iface.name} がありません", line)
+    data = iface.read_bytes()
+    if sha256(data) != sha:
+        raise ModuleError(f"パッケージ {iface.name} のハッシュが固定した値と違います（中身が変わっています）", line)
+    j = json.loads(data)
+    if j.get("format") != INTERFACE_FORMAT or j.get("checker") != CHECKER_VERSION:
+        raise ModuleError(f"パッケージ {iface.name} は、この検査器（version {CHECKER_VERSION}）と合わない形式か version です", line)
+    src = iface.parent / j.get("source_file", "")
+    if not j.get("source_file") or not src.exists():
+        raise ModuleError(f"パッケージ {iface.name} にソースが同梱されていません。ソースなしのパッケージは、まだ取り込めません（インターフェースだけでの検査は、次の段階）", line)
+    if sha256(src.read_bytes()) != j["source_sha256"]:
+        raise ModuleError(f"パッケージ {iface.name} のソースが、インターフェースの記録と違います", line)
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            made, _ = build_package(src, Path(tmp), no_source=True)
+        except PackageError as e:
+            raise ModuleError(f"パッケージ {iface.name} のソースを検査できません: {e}", line)
+        if made.read_bytes() != data:
+            raise ModuleError(f"パッケージ {iface.name} のインターフェースが、同梱のソースから作ったものと一致しません", line)
+    return src
 
 
 def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str:
@@ -133,8 +170,13 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
 
 def use_all(uses, base: Path, loaded: Loaded, stack: list[Path]) -> dict[str, dict[str, str]]:
     visible: dict[str, dict[str, str]] = {}
-    for rel, line in uses:
-        mod = load_module(base.parent / rel, loaded, stack, line)
+    for rel, line, sha in uses:
+        target = base.parent / rel
+        if rel.endswith(".geasi"):
+            target = open_package(target, sha, line)
+        elif sha is not None:
+            raise ModuleError("sha256 を付けられるのは、パッケージ（.geasi）の取り込みだけです", line)
+        mod = load_module(target, loaded, stack, line)
         visible[mod] = loaded.names[mod]
     return visible
 

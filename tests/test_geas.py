@@ -2122,3 +2122,42 @@ def test_パッケージはソースを外せるが_検査のエラーと取り�
     mod_dir(tmp_path, geo=GEO, user='use "geo.geas"\nmodule User\nltype Few = int 0..5\n')
     with pytest.raises(PackageError, match="取り込むモジュール"):
         build_package(tmp_path / "user.geas", tmp_path / "o3")
+
+
+def pkg_app(tmp_path, sha, no_source=False, path="out/geo.geasi"):
+    from geas.package import build_package
+
+    mod_dir(tmp_path, geo=GEO)
+    _, digest = build_package(tmp_path / "geo.geas", tmp_path / "out", no_source=no_source)
+    app = GEO_APP.replace('use "geo.geas"', f'use "{path}" sha256 "{sha or digest}"' if sha != "" else f'use "{path}"')
+    (tmp_path / "app.geas").write_text(app)
+    return digest
+
+
+def test_パッケージをハッシュを固定して取り込める(tmp_path):
+    pkg_app(tmp_path, None)
+    ck = load_strict(tmp_path)
+    assert ck.ok, ck.diags
+    assert "Geo_Pos" in ck.p.ltype_names
+
+
+def test_パッケージのハッシュが無い_違う_ソースが変わると取り込めない(tmp_path):
+    pkg_app(tmp_path, "")
+    with pytest.raises(ModuleError, match="ハッシュの固定が必要"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    pkg_app(tmp_path, "0" * 64)
+    with pytest.raises(ModuleError, match="ハッシュが固定した値と違います"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    digest = pkg_app(tmp_path, None)
+    (tmp_path / "out" / "geo.geas").write_text(GEO + "\nltype Extra = int 0..5\n")  # 同梱のソースだけが書き換わった
+    with pytest.raises(ModuleError, match="ソースが、インターフェースの記録と違います"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+
+
+def test_ソースなしのパッケージは今は取り込めず_sha256は_geas_には付けられない(tmp_path):
+    pkg_app(tmp_path, None, no_source=True)
+    with pytest.raises(ModuleError, match="ソースなしのパッケージは、まだ取り込めません"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    mod_dir(tmp_path, geo=GEO, app=GEO_APP.replace('"geo.geas"', '"geo.geas" sha256 "abc"'))
+    with pytest.raises(ModuleError, match="パッケージ（.geasi）の取り込みだけ"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
