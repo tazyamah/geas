@@ -91,6 +91,8 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 `invariant` に書けるのは「項目 >= 数」と「状態の項目 == 状態 implies 項目 > 数」の形です。検査は、項目へ書き込むたびに、その場で値の範囲から約束が守れることを示し、示せなければエラーにします（項目の論理型の範囲 `ltype 在庫数 = int 0..` なども同じように示します）。値の範囲は、入力と項目の範囲、`if x.項目 <= 0 { return … }` のような確認、減らす前の不足の確認から分かります。
 
+問い合わせの `filter 項目 equals 入力` は、文字列・ID・整数の完全一致です（キー以外の項目で1件を引くとき。例：JANコードから価格を引く）。
+
 他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## ライセンス

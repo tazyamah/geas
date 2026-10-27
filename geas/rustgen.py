@@ -289,6 +289,8 @@ class Gen:
                 folds = op[3:-1].split(",") if "(" in op else []
                 flags = ", ".join("true" if k in folds else "false" for k in ("大小無視", "かな無視", "幅無視"))
                 cond = f"fold_text(&{v}, {flags}).contains(&fold_text(x, {flags}))" if folds else f"{v}.contains(x.as_str())"
+            elif op == "一致":
+                cond = f"{v} == *x" if fields[f].type.kind in ("文字列", "ID") else f"({v} as i128) == (*x as i128)"
             else:
                 cond = {"以上": f"({v} as i128) >= (*x as i128)", "以下": f"({v} as i128) <= (*x as i128)"}[op]  # 物理数の幅が違っても比べられる
             cond = guard(cond)

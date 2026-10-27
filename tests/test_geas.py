@@ -705,9 +705,64 @@ def test_同じ結果に処理を続けて書くと_書いた順に起こす行�
     assert "vec![Dest::Deed(\"メール通知\"), Dest::Deed(\"プッシュ通知\")]" in src
 
 
-def test_par_の枝がデータを書くと止まる():
+def test_par_の枝は書く項目が重ならなければデータを書いてよい():
     ck = fanout(FANOUT[0], "place_order: Received → par { メール通知, request_payment }, OutOfStock")
-    assert any("par の枝「決済要求」は、データを書いています" in m for m in msgs(ck, ERROR))
+    assert ck.ready, ck.diags
+
+
+def test_par_の枝が同じ項目に書くか_書かれる項目を読むと止まる():
+    ck = fanout(FANOUT[0], "place_order: Received → par { request_payment, expire_payment }, OutOfStock")
+    assert any("同じ項目「注文.状態」に書いています" in m for m in msgs(ck, ERROR)), ck.diags
+    assert any("どちらも 注文 の状態を動かします" in m for m in msgs(ck, ERROR))
+    ck = fanout(FANOUT[0], "place_order: Received → par { request_payment, place_order }, OutOfStock")
+    assert any("par の枝" in m and "新規作成する" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+STOCK_DEEDS = """
+result 減らす結果 {
+  Reduced
+  Short
+}
+deed 在庫を減らすA {
+  input items: ProductQuantity required
+  reads Product.stock
+  writes Product.stock
+  result 減らす結果
+  effects none
+
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return Short }
+  update { Product[k].stock -= v | (k, v) in items }
+  return Reduced
+}
+deed 在庫を減らすB {
+  input items: ProductQuantity required
+  reads Product.stock
+  writes Product.stock
+  result 減らす結果
+  effects none
+
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return Short }
+  update { Product[k].stock -= v | (k, v) in items }
+  return Reduced
+}
+nexus 減らすA {
+  在庫を減らすA: Reduced → reply, Short → reply
+}
+nexus 減らすB {
+  在庫を減らすB: Reduced → reply, Short → reply
+}
+"""
+
+
+def test_par_の枝は加算減算の更新だけなら同じ項目に書いてよい():
+    edit = (FANOUT[0], "place_order: Received → par { 在庫を減らすA, 在庫を減らすB }, OutOfStock")
+    ck = chk(mutate(CODE + STOCK_DEEDS, *edit))
+    # place_order の結果の中身（受付の注文ID）と合わないので、行き先の受け渡しの誤りだけが出る。並列の誤りは出ない
+    assert not any("par の枝" in m for m in msgs(ck, ERROR)), ck.diags
+    # 片方が = で書くと、順序で結果が変わるので止まる
+    assert any("同じ項目" in m for m in msgs(fanout(FANOUT[0], "place_order: Received → par { request_payment, expire_payment }, OutOfStock"), ERROR))
 
 
 @needs_cargo
@@ -1551,9 +1606,11 @@ def test_合成型の誤りは止まる():
     assert any("成分「z」がありません" in m for m in msgs(ck, ERROR))
 
 
-def test_合成型は結果の中身には使えない():
+def test_合成型は問い合わせの入力と部品にはまだ使えない():
     ck = chk(mutate(COMP, "読んだ(地図ID: id)", "読んだ(地図ID: id, 場所: 点)"))
-    assert any("いまは項目と処理の入力・slot にだけ" in m for m in msgs(ck, ERROR)), ck.diags
+    assert not any("合成型" in m and "にだけ" in m for m in msgs(ck, ERROR)), ck.diags  # 結果の中身には使える
+    ck = chk(COMP + "\nquery 点を探す {\n  input 位置: 点\n  from 地図\n  reads 地図.地図ID\n}\n")
+    assert any("にだけ使えます" in m for m in msgs(ck, ERROR)), ck.diags
 
 
 def test_合成型の宣言の誤りは止まる():
@@ -2239,3 +2296,142 @@ def test_待ち合わせでは全部の応答の中身が渡り_名前が重な�
 
 def test_使われない応答の宣言は警告():
     assert any("使われていません" in m for m in msgs(chk(REPLY_SRC.replace("reply PaymentDeclined", "reply Unused")), WARN))
+
+
+# ---- 金額の単位 ----
+USD_SRC = SHOP_SRC.replace("  unit_price: NonNegMoney required\n", "  unit_price: NonNegMoney required\n  price_usd: money(USD) required\n  note_usd: money(USD)\n")
+
+
+def usd_deed(body, reads="Product.unit_price, Product.price_usd", writes=""):
+    w = f"  writes {writes}\n" if writes else ""
+    return USD_SRC + f"""
+deed usd_probe {{
+  input product_id: id required
+  reads {reads}
+{w}  result ReleaseResult
+  effects none
+
+  let p = Product[product_id] else {{ return NoSuchOrder }}
+{body}
+  return Applied
+}}
+"""
+
+
+def unit_errors(src):
+    return [m for m in msgs(chk(src), ERROR) if "金額" in m and "単位" in m or "換算" in m]
+
+
+def test_円とドルの金額は足せず比べられない():
+    assert unit_errors(usd_deed("  let t = p.unit_price + p.price_usd"))
+    assert unit_errors(usd_deed("  if p.unit_price > p.price_usd { return WrongStatus }"))
+    assert not unit_errors(usd_deed("  let t = p.price_usd + p.price_usd\n  if t > p.price_usd { return WrongStatus }"))
+
+
+def test_金額を入れる先の単位が違うと止まる():
+    bad = usd_deed("  p.note_usd = p.unit_price", writes="Product.note_usd")
+    assert any("ドルの金額ですが、円の金額" in m for m in msgs(chk(bad), ERROR)), msgs(chk(bad), ERROR)
+    assert not unit_errors(usd_deed("  p.note_usd = p.price_usd * 2", writes="Product.note_usd"))
+    # let の変数、掛け算、丸めを通しても単位は引き継がれる
+    assert unit_errors(usd_deed("  let t = p.unit_price * 3\n  p.note_usd = t", writes="Product.note_usd"))
+
+
+def test_ドルの金額に_0以外の数字は直接書けず_money_で最小単位から作る():
+    assert any("直接書けません" in m for m in msgs(chk(usd_deed("  p.note_usd = 500", writes="Product.note_usd")), ERROR))
+    assert not unit_errors(usd_deed("  p.note_usd = money(500, USD)", writes="Product.note_usd"))
+    assert any("直接書けません" in m for m in msgs(chk(usd_deed("  if p.price_usd > 100 { return WrongStatus }")), ERROR))
+    assert not unit_errors(usd_deed("  if p.price_usd > 0 { return WrongStatus }"))
+    assert any("単位" in m for m in msgs(chk(usd_deed("  p.note_usd = money(500, GBP)", writes="Product.note_usd")), ERROR))
+
+
+def test_丸めの単位は金額の単位と合わせる():
+    ok = usd_deed("  p.note_usd = round(p.price_usd * 0.5, floor, USD)".replace("0.5", "tax"), writes="Product.note_usd")
+    ok = ok.replace("input product_id: id required", "input product_id: id required\n  slot tax: TaxRateValue")
+    assert not unit_errors(ok)
+    assert any("単位で丸めています" in m for m in msgs(chk(ok.replace("floor, USD", "floor, JPY")), ERROR))
+
+
+# ---- 合成型を使える場所 ----
+ADDR_SRC = SHOP_SRC.replace("/// 商品\nentity Product", 'ltype Zip = text 7..7 of "0-9"\nltype Line = text 1..50\nltype Addr { zip: Zip, line: Line }\n/// 商品\nentity Product', 1)
+ADDR_SRC = ADDR_SRC.replace("  NoSuchCustomer\n}", "  NoSuchCustomer\n  Shipped(to: Addr)\n}", 1)
+ADDR_SRC = ADDR_SRC.replace("/// 決済\neffect Payment.", 'effect Ship. send(order_id: id, to: Addr) no_wait "配送の失敗は人が見る"\n\n/// 決済\neffect Payment.', 1)
+ADDR_SRC = ADDR_SRC.replace("place_order: Received → request_payment,", "place_order: Shipped → reply, Received → request_payment,")
+ADDR_SRC += '''
+deed ship_order {
+  input order_id: id required, addr: Addr required
+  reads Order.status
+  result PlaceOrderResult
+  effects Ship.send
+
+  let order = Order[order_id] else { return NoSuchCustomer }
+  if order.status != Received { return NoSuchCustomer }
+  request Ship.send(order_id, addr, idempotency_key = order_id)
+  return Shipped(addr)
+}
+
+nexus ShipFlow {
+  ship_order: Shipped → reply, NoSuchCustomer → reply, Received → reply, OutOfStock → reply, NoSuchProduct → reply
+}
+'''
+
+
+def test_合成型は結果の中身_外部作用の引数_応答の中身にも使える():
+    ck = chk(ADDR_SRC)
+    assert ck.ready, ck.diags
+    assert "Shipped(" in generate(ck) and "pub to: Addr" in generate(ck).replace("\n", " ") or "to: Addr" in generate(ck)
+    from geas.hostgen import host_source
+    assert 'js_str("zip")' in host_source(ck)  # 画面とやりとりする JSON にも、成分が平らに出る
+    with_reply = ADDR_SRC.replace("/// 待ち解除結果", "reply Delivered(to: Addr required)\n\n/// 待ち解除結果")
+    assert not [m for m in msgs(chk(with_reply), ERROR) if "合成型" in m]
+
+
+# ---- 海外にも売るお店（残件4件を使う題材） ----
+from geas.check import route_map  # noqa: E402
+OVERSEAS = (EX.parent / "overseas_shop" / "overseas_shop.geas").read_text()
+
+
+def test_海外店の例は通り_4件の機能がそろって使われる():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert not msgs(ck, WARN), msgs(ck, WARN)
+    assert any(len(ds) > 1 for fl in ck.p.flows for _, routes in fl.entries for ds in route_map(routes).values())  # par
+    assert any(i.writes for d in ("request_payment_jpy", "grant_points") for i in [ck.infos[d]])  # par の枝が書く
+    assert [r.name for r in ck.p.replies] == ["PaymentSettled", "StockSettled"]  # 応答の中身
+    assert {t.kind for t in ck.p.composites} == {"合成"}  # 合成型 Address を結果・外部作用・項目に使う
+    assert generate(ck) == generate(chk(OVERSEAS))
+
+
+def test_海外店の例_円とドルを混ぜると止まる():
+    assert not any("単位" in m for m in msgs(chk(OVERSEAS), ERROR))
+    wrong = OVERSEAS.replace("sum { Product[k].price_usd * v", "sum { Product[k].price_jpy * v")
+    assert any("円の金額とドルの金額" in m for m in msgs(chk(wrong), ERROR)), msgs(chk(wrong), ERROR)
+
+
+def test_海外店の例_par_の枝が同じ項目を書くと止まる():
+    clash = OVERSEAS.replace("request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy",
+                             "request_stock_hold, cancel_unpaid }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy")
+    clash = clash.replace("par { request_payment_jpy, request_stock_hold, cancel_unpaid }", "par { request_payment_jpy, cancel_unpaid, request_stock_hold }")
+    assert any("par の枝" in m for m in msgs(chk(clash), ERROR)), msgs(chk(clash), ERROR)
+
+
+def test_海外店の例_応答の中身が行き先の入力と合わないと止まる():
+    bad = OVERSEAS.replace("input order_id: id required, auth_id: id, short: IdSet\n  reads Order.status\n  result SettleResult", "input order_id: id required, short: IdSet\n  reads Order.status\n  result SettleResult")
+    bad = bad.replace("  let auth = auth_id else { return PaymentFailed(order_id) }\n  let lacking = short else { return Approved(order_id) }\n  return StockShort(order_id, auth)", "  let lacking = short else { return Approved(order_id) }\n  return PaymentFailed(order_id)")
+    assert any("応答の中身" in m for m in msgs(chk(bad), ERROR)), msgs(chk(bad), ERROR)
+
+
+@needs_cargo
+def test_海外店の例は生成したRustがビルドできる(tmp_path):
+    ck = chk(OVERSEAS)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_問い合わせは_equals_で文字列やIDの完全一致で絞れる():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert "jan 一致 jan" in "".join(str(x) for x in build(ck)["問い合わせ"]) or any("JANコード" in str(x) for x in build(ck)["問い合わせ"])
+    assert "r.jan == *x" in generate(ck)
+    bad = OVERSEAS.replace("filter jan equals jan", "filter price_jpy equals jan")
+    assert any("同じ種類" in m for m in msgs(chk(bad), ERROR))

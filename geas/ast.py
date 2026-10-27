@@ -6,7 +6,7 @@ from typing import Optional
 
 
 # 仕様書に出す日本語の呼び名（言語の名前は半角英数、人に見せる所だけ日本語にする）
-SHOW_JA = {"JPY": "円", "floor": "切り捨て", "ceil": "切り上げ", "half_up": "四捨五入"}
+SHOW_JA = {"JPY": "円", "USD": "ドル", "EUR": "ユーロ", "floor": "切り捨て", "ceil": "切り上げ", "half_up": "四捨五入"}
 
 
 @dataclass

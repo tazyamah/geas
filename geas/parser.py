@@ -840,7 +840,7 @@ class Parser:
         return unit
 
     # ---- 問い合わせ（読むだけの処理） ----
-    FILTER_OPS = {"at_least": "以上", "at_most": "以下"}
+    FILTER_OPS = {"at_least": "以上", "at_most": "以下", "equals": "一致"}
     FOLDS = {"ignore_case": "大小無視", "ignore_kana": "かな無視", "ignore_width": "幅無視"}
     ORDERS = {"newest": "新しい順", "oldest": "古い順"}
 
@@ -887,7 +887,7 @@ class Parser:
                 elif op in self.FILTER_OPS:
                     q.filters.append((f, self.FILTER_OPS[op], self.name()))
                 else:
-                    raise self.err(f"filter の種類「{op}」は使えません（at_least・at_most・contains・within）")
+                    raise self.err(f"filter の種類「{op}」は使えません（equals・at_least・at_most・contains・within）")
             elif kw == "order":
                 f = self.name()
                 d = self.name()
