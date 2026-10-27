@@ -239,6 +239,21 @@ class Checker:
                     pc.var_iv[n] = iv_of(t)
                 if t.fills:
                     self.check_fills(where, n, t, pc)
+            seen_default = False
+            for n, t in pt.params:  # デフォルト値：後ろの引数は、すべてデフォルト値を持つ。値は引数の型と範囲に収まる
+                if n not in pt.defaults:
+                    if seen_default:
+                        self.d(ERROR, "型", where, f"引数「{n}」にもデフォルト値が要ります（デフォルト値のある引数より後ろは、すべて省けるようにします）")
+                    continue
+                seen_default = True
+                dt = pc.ty(pt.defaults[n], {})
+                if dt not in (tok_of(t), "?") and not (isinstance(pt.defaults[n], Num) and tok_of(t) in ("Int", "Money")):
+                    self.d(ERROR, "型", where, f"引数「{n}」のデフォルト値の型（{dt}）が引数の型（{tok_of(t)}）と違います")
+                elif t.kind in ("整数", "金額") and t.range is not None:
+                    lo, hi = pc.interval(pt.defaults[n])
+                    r = t.range
+                    if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
+                        self.d(ERROR, "範囲", where, f"引数「{n}」のデフォルト値が、引数の範囲{show_range(r)}に収まりません")
             b = pc.ty(pt.body, {n: tok_of(t) for n, t in pt.params})
             if b not in (tok_of(pt.ret), "?") and not (isinstance(pt.body, Num) and tok_of(pt.ret) in ("Int", "Money")):
                 self.d(ERROR, "型", where, f"変換の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
@@ -853,8 +868,10 @@ class ProcChecker:
             return dst
         if isinstance(e, Call) and e.n in ck.parts:
             pt = ck.parts[e.n]
+            if len(e.args) < len(pt.params) and all(n in pt.defaults for n, _ in pt.params[len(e.args):]):
+                e.args = [*e.args, *(pt.defaults[n] for n, _ in pt.params[len(e.args):])]  # 省いた引数は、デフォルト値で補う
             if len(e.args) != len(pt.params):
-                self.d(ERROR, "型", f"部品 {e.n} の引数は {len(pt.params)} 個です")
+                self.d(ERROR, "型", f"部品 {e.n} の引数は {len(pt.params)} 個です" + ("（デフォルト値のある引数だけ省けます）" if pt.defaults else ""))
                 return tok_of(pt.ret)
             for a, (n, t) in zip(e.args, pt.params):
                 at = self.ty(a, env)
