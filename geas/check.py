@@ -80,6 +80,7 @@ class ProcInfo:
     exist_reads: set = field(default_factory=set)
     writes: set = field(default_factory=set)
     write_list: list = field(default_factory=list)
+    write_ops: dict = field(default_factory=dict)  # "データ.項目" → 書き方の集合（"=", "+=", "-="）。並列の枝の書き込みが重なってよいか見る
     transitions: set = field(default_factory=set)  # (データ, 元, 先)
     effects: list = field(default_factory=list)  # (名前, 冪等キー)
     returns: set = field(default_factory=set)
@@ -369,13 +370,9 @@ class Checker:
                     for v in names:
                         if v not in [x for x, _ in rdef.variants]:
                             self.d(ERROR, "名前", where, f"「{v}」は結果 {rdef.name} にありません")
-                for v, ds in rm.items():  # par の枝は、データを書かない（排他制御を要らなくし、書き込みは応答を受ける別の処理でやる）
+                for v, ds in rm.items():  # par の枝の書き込みは、重ならない（または可換な更新だけ）なら許す。実行する順で結果が変わらないため
                     if len(ds) > 1:
-                        for d in ds:
-                            info = self.infos.get(d)
-                            if info is not None and (info.writes or info.transitions or info.new_ids):
-                                self.d(ERROR, "並列", where, f"par の枝「{d}」は、データを書いています（{'、'.join(sorted(info.writes))}）。"
-                                       "par の枝は、読むことと外部作用の要求だけにして、書き込みは応答を受ける別の処理に回してください")
+                        self.check_par_branches(where, v, [(d, self.infos[d]) for d in ds if d in self.infos])
                 for v, dest in routes:
                     base = dest.split(" ", 1)[1] if dest.startswith("wait ") else dest
                     if dest.startswith("wait "):
@@ -387,6 +384,37 @@ class Checker:
         for name in self.procs:
             if name not in in_flow:
                 self.d(WARN, "行き先", f"処理 {name}", "どのフローにも入っていません")
+
+    def check_par_branches(self, where, v, branches):
+        """par の枝どうしで、書く項目が重ならないこと（実行する順で結果が変わらない）。重なってよいのは、どちらも加算・減算だけの更新。
+        ほかの枝が読む項目を書く枝は、読む側が書く前か後かで結果が変わるので止める。データ全体を書く（新規作成）枝は、
+        同じデータをほかの枝が触れないようにする"""
+        def data_of(x):
+            return x.split(".")[0]
+
+        def touched(info):
+            return {data_of(x) for x in [*info.field_reads, *info.writes, *info.exist_reads]}
+
+        for i, (a, ia) in enumerate(branches):
+            for b, ib in branches[i + 1:]:
+                for w in sorted(ia.writes):
+                    if "." in w:
+                        if w in ib.writes:
+                            if not (ia.write_ops.get(w, set()) | ib.write_ops.get(w, set())) <= {"+=", "-="}:
+                                self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{a}」と「{b}」が、同じ項目「{w}」に書いています（加算・減算の更新だけなら重なってよい）")
+                        elif w in ib.field_reads or data_of(w) in ib.new_ids:
+                            self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{a}」が書く「{w}」を、枝「{b}」が読んでいます（読む前か後かで結果が変わります）")
+                    elif data_of(w) in touched(ib):
+                        self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{a}」が新規作成する「{w}」を、枝「{b}」も触っています（採番と読み書きの順が結果に効きます）")
+                for w in sorted(ib.writes):
+                    if "." in w and w in ia.field_reads and w not in ia.writes:
+                        self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{b}」が書く「{w}」を、枝「{a}」が読んでいます（読む前か後かで結果が変わります）")
+                    elif "." not in w and data_of(w) in touched(ia):
+                        self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{b}」が新規作成する「{w}」を、枝「{a}」も触っています（採番と読み書きの順が結果に効きます）")
+                for ta in ia.transitions:
+                    for tb in ib.transitions:
+                        if ta[0] == tb[0] and ta[1] != "(新規)" and tb[1] != "(新規)":
+                            self.d(ERROR, "並列", where, f"結果「{v}」の par の枝「{a}」と「{b}」が、どちらも {ta[0]} の状態を動かします")
 
     def check_effect_waits(self):
         """外部作用を要求する処理は、結果を待つ経路（フローの「待つ」）を持つか、待たない理由を宣言する。
@@ -1467,6 +1495,7 @@ class ProcChecker:
                 self.fit_unit(st.value, tf.type, f"{tgt.e.d}.{tgt.n}", st.line)
             info.writes.add(f"{tgt.e.d}.{tgt.n}")
             info.write_list.append(f"{tgt.e.d}.{tgt.n}")
+            info.write_ops.setdefault(f"{tgt.e.d}.{tgt.n}", set()).add(st.op)
             if tf is not None and tf.type.kind in ("整数", "金額", "割合") and vt != "Null":
                 self.check_update(st, env2)
             self.forget(tgt.e.d, tgt.n)
@@ -1495,6 +1524,7 @@ class ProcChecker:
                 self.set_null(data, st.f, b, False)
                 info.writes.add(f"{data}.{st.f}")
                 info.write_list.append(f"{data}.{st.f}")
+                info.write_ops.setdefault(f"{data}.{st.f}", set()).add("=")
                 return
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
@@ -1519,6 +1549,7 @@ class ProcChecker:
                     self.facts[(b, st.f)] = iv[0]
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
+            info.write_ops.setdefault(f"{data}.{st.f}", set()).add("=")
             if fld.type.kind == "名前":
                 if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
                     self.d(ERROR, "遷移", f"{data}.{st.f} は状態名で書いてください（「{show(st.e)}」では、どの遷移か確かめられません）", st.line)

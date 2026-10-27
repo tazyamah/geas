@@ -705,9 +705,64 @@ def test_同じ結果に処理を続けて書くと_書いた順に起こす行�
     assert "vec![Dest::Deed(\"メール通知\"), Dest::Deed(\"プッシュ通知\")]" in src
 
 
-def test_par_の枝がデータを書くと止まる():
+def test_par_の枝は書く項目が重ならなければデータを書いてよい():
     ck = fanout(FANOUT[0], "place_order: Received → par { メール通知, request_payment }, OutOfStock")
-    assert any("par の枝「決済要求」は、データを書いています" in m for m in msgs(ck, ERROR))
+    assert ck.ready, ck.diags
+
+
+def test_par_の枝が同じ項目に書くか_書かれる項目を読むと止まる():
+    ck = fanout(FANOUT[0], "place_order: Received → par { request_payment, expire_payment }, OutOfStock")
+    assert any("同じ項目「注文.状態」に書いています" in m for m in msgs(ck, ERROR)), ck.diags
+    assert any("どちらも 注文 の状態を動かします" in m for m in msgs(ck, ERROR))
+    ck = fanout(FANOUT[0], "place_order: Received → par { request_payment, place_order }, OutOfStock")
+    assert any("par の枝" in m and "新規作成する" in m for m in msgs(ck, ERROR)), ck.diags
+
+
+STOCK_DEEDS = """
+result 減らす結果 {
+  Reduced
+  Short
+}
+deed 在庫を減らすA {
+  input items: ProductQuantity required
+  reads Product.stock
+  writes Product.stock
+  result 減らす結果
+  effects none
+
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return Short }
+  update { Product[k].stock -= v | (k, v) in items }
+  return Reduced
+}
+deed 在庫を減らすB {
+  input items: ProductQuantity required
+  reads Product.stock
+  writes Product.stock
+  result 減らす結果
+  effects none
+
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return Short }
+  update { Product[k].stock -= v | (k, v) in items }
+  return Reduced
+}
+nexus 減らすA {
+  在庫を減らすA: Reduced → reply, Short → reply
+}
+nexus 減らすB {
+  在庫を減らすB: Reduced → reply, Short → reply
+}
+"""
+
+
+def test_par_の枝は加算減算の更新だけなら同じ項目に書いてよい():
+    edit = (FANOUT[0], "place_order: Received → par { 在庫を減らすA, 在庫を減らすB }, OutOfStock")
+    ck = chk(mutate(CODE + STOCK_DEEDS, *edit))
+    # place_order の結果の中身（受付の注文ID）と合わないので、行き先の受け渡しの誤りだけが出る。並列の誤りは出ない
+    assert not any("par の枝" in m for m in msgs(ck, ERROR)), ck.diags
+    # 片方が = で書くと、順序で結果が変わるので止まる
+    assert any("同じ項目" in m for m in msgs(fanout(FANOUT[0], "place_order: Received → par { request_payment, expire_payment }, OutOfStock"), ERROR))
 
 
 @needs_cargo
