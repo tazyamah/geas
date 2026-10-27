@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """モジュール（状態を持たない部品の集まり）の取り込み。docs/modules.md の段階1：ソースのまま取り込んで、全体を1つのプログラムにする。
-モジュールのファイルは `module 名前` で始まり、論理型・変換・部品・結果の形だけを書ける。
+モジュールのファイルは `module 名前` で始まり、論理型・変換・部品・結果の形と、状態に触れない処理（deed）だけを書ける。
 取り込む側は `use "path"` と書き、モジュールの名前は `名前.定義名` で指す。
 内部では、モジュールの定義名を `名前_定義名` に付け替えて、1つの字句の列につなげる（大文字で始まる名前には _ が入らず、
 小文字の名前は大文字で始まらないので、利用者の名前とは重ならない）。"""
@@ -9,7 +9,7 @@ from pathlib import Path
 from .lexer import Tok, lex
 
 # モジュールに書ける宣言（状態を持たないもの）
-MODULE_DECLS = {"ltype", "convert", "part", "result"}
+MODULE_DECLS = {"ltype", "convert", "part", "result", "deed"}
 # 宣言を始めるキーワード（モジュールには書けないものを見つけるため）
 ALL_DECLS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger",
              "query", "event", "data"}

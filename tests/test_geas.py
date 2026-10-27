@@ -1987,7 +1987,7 @@ def test_モジュールを使ったコードがビルドでき_動く(tmp_path)
 
 
 def test_モジュールには状態を持つ宣言を書けない(tmp_path):
-    for decl in ("entity Item {\n  item_id: id unique\n}", "deed run {\n  result Shown\n  effects none\n\n  return Big\n}", "invariant Item: item_id == 1"):
+    for decl in ("entity Item {\n  item_id: id unique\n}", "invariant Item: item_id == 1", "nexus Flow {\n  show: Big → reply\n}"):
         mod_dir(tmp_path, geo=GEO + "\n" + decl + "\n", app=GEO_APP)
         with pytest.raises(ModuleError, match="状態は持てません"):
             parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
@@ -2023,3 +2023,58 @@ def test_モジュールがモジュールを取り込み_同じモジュール�
     ck = load_strict(tmp_path)
     assert ck.ok, ck.diags
     assert [x for x in ck.p.ltype_names].count("Base_Count") == 1
+
+
+def test_モジュールの処理は入力から結果を返すだけなら書け_アプリのフローにつなげられる(tmp_path):
+    mod_dir(tmp_path, judge="""module Judge
+
+ltype Score = int 0..100
+/// 判定
+result Verdict {
+  Pass
+  Fail
+}
+/// 合否
+deed grade {
+  input score: Score required
+  result Verdict
+  effects none
+
+  if score >= 60 { return Pass }
+  return Fail
+}
+""", app="""use "judge.geas"
+
+nexus Flow {
+  Judge.grade: Pass → reply, Fail → reply
+}
+""")
+    ck = load_strict(tmp_path)
+    assert ck.ok, ck.diags
+    assert "Judge_grade" in ck.procs and ck.p.show_names("Judge_grade") == "合否"
+
+
+def test_モジュールの処理がデータや外部作用に触れるとエラー(tmp_path):
+    mod_dir(tmp_path, bad="""module Bad
+
+result Done {
+  Ok
+}
+deed touch {
+  input item_id: id required
+  result Done
+  effects none
+
+  let item = Item[item_id] else { return Ok }
+  return Ok
+}
+""", app="""use "bad.geas"
+
+ltype Digit = int 0..9
+entity Item {
+  item_id: id unique
+  count: Digit
+}
+""")
+    ck = load_strict(tmp_path)
+    assert not ck.ok and any("モジュールの処理は" in d.msg and "データを読む" in d.msg for d in ck.diags), ck.diags
