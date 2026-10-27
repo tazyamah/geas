@@ -2426,3 +2426,12 @@ def test_海外店の例は生成したRustがビルドできる(tmp_path):
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+def test_問い合わせは_equals_で文字列やIDの完全一致で絞れる():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert "jan 一致 jan" in "".join(str(x) for x in build(ck)["問い合わせ"]) or any("JANコード" in str(x) for x in build(ck)["問い合わせ"])
+    assert "r.jan == *x" in generate(ck)
+    bad = OVERSEAS.replace("filter jan equals jan", "filter price_jpy equals jan")
+    assert any("同じ種類" in m for m in msgs(chk(bad), ERROR))

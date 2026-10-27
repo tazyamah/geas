@@ -24,6 +24,8 @@ ltype CountryCode = text 2..2 of "A-Z"
 ltype PostalCode = text 3..10 of "0-9A-Z-"
 /// 住所の行
 ltype AddressLine = text 1..80
+/// JANコード
+ltype JanCode = text 13..13 of "0-9"
 /// 配送先
 ltype Address {
   /// 国
@@ -38,6 +40,8 @@ ltype Address {
 entity Product {
   /// 商品ID
   product_id: id unique
+  /// JANコード
+  jan: JanCode required
   /// 在庫
   stock: StockCount required
   /// 円の価格
@@ -384,6 +388,16 @@ query order_list {
   select order_id, customer.customer_id as customer, sum(items) as /// 点数
     item_count
   reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
+}
+
+// ブラウザ拡張が使う。Amazon の ASIN から JAN への変換は拡張の側（クライアント）の仕事で、サーバーは JAN で引く
+/// JANコードから価格を引く
+query price_by_jan {
+  input jan: JanCode required
+  from Product
+  filter jan equals jan
+  select product_id, price_jpy, price_usd
+  reads Product.jan, Product.product_id, Product.price_jpy, Product.price_usd
 }
 
 /// 円の注文受付
