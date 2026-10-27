@@ -449,6 +449,9 @@ class Parser:
         failures = []
         if self.accept("failures"):
             failures = self.comma_list(self.name)
+        joins = None
+        if self.accept("joins"):  # joins トリガ名：この外部作用の返事は、そのトリガに合流する（トリガの引数は、要求する処理の入力から決まる）
+            joins = self.name()
         no_wait = None
         if self.accept("no_wait"):
             t = self.next()
@@ -456,7 +459,7 @@ class Parser:
                 raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
             no_wait = t.val
         self.end_line()
-        return EffectDecl(name, params, line, failures, no_wait)
+        return EffectDecl(name, params, line, failures, no_wait, joins)
 
     def part(self, line) -> Part:
         name = self.name()
@@ -675,8 +678,12 @@ class Parser:
             if not self.accept("."):
                 raise self.err(f"文の始まりが分かりません（「{n}」。変数は let で作り、項目の更新は 名前.項目 = 値 と書きます）")
             f = self.name()
-            self.expect("=")
-            s = SetField(n, f, self.expr(), line)
+            if self.peek().val in ("+=", "-="):  # x.f += e は x.f = x.f + e（読む項目にも数える）。並列の枝で重なってよい可換な更新の印を残す
+                op = self.next().val
+                s = SetField(n, f, Bin(op[0], Attr(Name(n), f), self.expr()), line, op)
+            else:
+                self.expect("=")
+                s = SetField(n, f, self.expr(), line)
         self.end_stmt()
         return s
 

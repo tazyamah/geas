@@ -122,6 +122,7 @@ def build_raw(ck: Checker) -> dict:
     spec["問い合わせ"] = [query_rows(q) for q in p.queries]
     spec["トリガ"] = [(tg.name, f"{ja_kind(k)} {fmt_cause(k, key)}", d) for tg in p.triggers for k, key, d in tg.causes]
     spec["応答"] = [(rp.name, ", ".join(input_names(rp.params))) for rp in p.replies]
+    spec["合流"] = [(e.name, e.joins) for e in p.effects if e.joins]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     spec["出来事"] = [(ev.name, (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
@@ -196,6 +197,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["応答"]:
         out += ["", "## 応答の中身（外から返ってくる内容。入出力型）", "", "| 応答 | ◆中身 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["応答"]]
+    if spec["合流"]:
+        out += ["", "## 返事の合流先（外部作用の返事が入るトリガ）", "", "| 外部作用 | ◆合流先のトリガ |", "|---|---|"]
+        out += [f"| {a} | {b} |" for a, b in spec["合流"]]
     if spec["外部作用"]:
         out += ["", "## 外部作用（外へ出す内容。入出力型）", "", "| 外部作用 | ◆出す内容 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["外部作用"]]

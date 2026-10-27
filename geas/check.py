@@ -462,10 +462,19 @@ class Checker:
                     if d.startswith("wait "):
                         waits.setdefault(proc, set()).add(d.split(" ", 1)[1])
         triggers = {t.name: t for t in self.p.triggers}
+        groups = [ds for fl in self.p.flows for _, routes in fl.entries for ds in route_map(routes).values() if len(ds) > 1]
         used = {e for info in self.infos.values() for e, _ in info.effects}
         for e in self.p.effects:
             if e.name not in used:
                 self.d(WARN, "外部作用", f"外部作用 {e.name}", "どの処理からも要求されていません")
+            if e.joins is not None and e.no_wait is not None:
+                self.d(ERROR, "合流", f"外部作用 {e.name}", "返事の合流先（joins）を宣言しながら no_wait（待たない）にしています。どちらかにしてください")
+            if e.joins is not None:
+                tg = triggers.get(e.joins)
+                if tg is None:
+                    self.d(ERROR, "合流", f"外部作用 {e.name}", f"合流先のトリガ「{e.joins}」が未定義です")
+                elif not any(k in ("reply", "all") for k, _, _ in tg.causes):
+                    self.d(ERROR, "合流", f"外部作用 {e.name}", f"合流先のトリガ {e.joins} に、応答を受ける行がありません")
             if e.failures and e.no_wait is not None:
                 self.d(ERROR, "失敗", f"外部作用 {e.name}", "失敗の理由を宣言しながら no_wait（待たない）にしています。"
                        "待たないと、理由ごとの応答を受ける先がありません（どちらかにしてください）")
@@ -473,6 +482,9 @@ class Checker:
             for eff in sorted({e for e, _ in info.effects}):
                 decl = self.effects.get(eff)
                 if decl is None or decl.no_wait is not None:
+                    continue
+                if decl.joins is not None:
+                    self.check_join(proc, decl, triggers.get(decl.joins), waits, groups)
                     continue
                 if proc not in waits:
                     self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の扱いが決まっていません（ネクサスで「wait」へ進めるか、外部作用の宣言に no_wait \"人が決めた理由\" を書いてください）")
@@ -483,6 +495,22 @@ class Checker:
                     for reason in decl.failures:
                         if reason not in answered:
                             self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の理由「{reason}」への応答が、トリガ {tname} にありません")
+
+    def check_join(self, proc, decl, tg, waits, groups):
+        """返事の合流先を宣言した外部作用。トリガの引数（どの待ちか）が要求する処理の入力から決まり、
+        同じトリガを待つ処理が、この処理自身か、同じ並列の枝にあること（待ちが無いと、返事の行き場が無い）"""
+        if tg is None:
+            return
+        mine = {n: t for n, t in self.procs[proc].inputs}
+        for n, t in tg.params:
+            if n not in mine or show_type(mine[n]) != show_type(t) or mine[n].optional:
+                self.d(ERROR, "合流", f"処理 {proc}", f"外部作用 {decl.name} の返事が合流するトリガ {tg.name} の引数「{n}」を、処理 {proc} は同じ型の必須の入力にもっていません（どの待ちか決まりません）")
+        if tg.name in waits.get(proc, set()):
+            return
+        for ds in groups:
+            if proc in ds and any(tg.name in waits.get(d, set()) for d in ds if d != proc):
+                return
+        self.d(ERROR, "合流", f"処理 {proc}", f"外部作用 {decl.name} の返事はトリガ {tg.name} に合流しますが、{tg.name} を待つ処理が、この処理自身にも、同じ並列（par）の枝にもありません")
 
     def check_queries(self):
         """問い合わせ（読むだけの処理）の検査。使う項目の型、入力との型の一致、宣言した「読む」と実際のずれ。"""
@@ -1625,7 +1653,7 @@ class ProcChecker:
                 self.set_null(data, st.f, b, False)
                 info.writes.add(f"{data}.{st.f}")
                 info.write_list.append(f"{data}.{st.f}")
-                info.write_ops.setdefault(f"{data}.{st.f}", set()).add("=")
+                info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
                 return
             if vt == "Rational":
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
@@ -1650,7 +1678,7 @@ class ProcChecker:
                     self.facts[(b, st.f)] = iv[0]
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
-            info.write_ops.setdefault(f"{data}.{st.f}", set()).add("=")
+            info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
             if fld.type.kind == "名前" and not self.ck.states[fld.type.target].plain:
                 if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
                     self.d(ERROR, "遷移", f"{data}.{st.f} は状態名で書いてください（「{show(st.e)}」では、どの遷移か確かめられません）", st.line)

@@ -73,6 +73,7 @@ class EffectDecl:
     line: int = 0
     failures: list[str] = field(default_factory=list)  # 論理的な失敗の理由（相手の拒否など）。待つ先のトリガに、理由ごとの応答が要る
     no_wait: Optional[str] = None  # 待たない理由（人が決めた根拠）。None なら、結果を待つ経路が必須
+    joins: Optional[str] = None  # 返事が合流するトリガの名前。要求する処理が待たなくても、同じ並列の枝がそのトリガを待つ
 
 
 @dataclass
@@ -355,6 +356,7 @@ class SetField:
     f: str
     e: object
     line: int = 0
+    op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印
 
 
 @dataclass
