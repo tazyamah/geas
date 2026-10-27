@@ -55,6 +55,7 @@ class State:
     final: list[str] = field(default_factory=list)
     rejects: list[tuple[str, str, str]] = field(default_factory=list)
     endless: bool = False  # 「終了 なし」：行き来を繰り返し、終わらない状態（記録済 ⇄ 端末保存済 など）
+    plain: bool = False  # 遷移の無い列挙（組み込みの通貨 currency）。初期・終了や遷移の宣言を要らない
     line: int = 0
 
 
@@ -404,7 +405,8 @@ def show_type(t: Type) -> str:
     if k == "割合":
         return "割合" + show_range(t.range)
     if k == "金額":
-        return f"金額({SHOW_JA.get(t.unit or 'JPY', t.unit)})" + show_range(t.range)
+        u = t.unit or "JPY"
+        return (f"金額(通貨:{u[1:]})" if u.startswith("$") else f"金額({SHOW_JA.get(u, u)})") + show_range(t.range)
     if k == "参照":
         return f"{t.target} を参照"
     if k == "名前":

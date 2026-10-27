@@ -167,6 +167,8 @@ class Parser:
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
+        if "currency" in self.used_builtin:
+            p.states.append(State("Currency", initial="JPY", middle=["USD", "EUR"], plain=True))
         self.apply_stores(p, stores)
         self.add_sync_state(p)
         return p
@@ -363,8 +365,13 @@ class Parser:
             unit = "JPY"
             if self.accept("("):
                 unit = self.name()
+                if unit[0].islower():  # money(currency)：同じ入力・slot・項目・引数にある通貨コードの名前
+                    unit = "$" + unit
                 self.expect(")")
             return Type("金額", range=self.range_opt(), unit=unit)
+        if tok == "currency":  # 通貨コード（JPY・USD・EUR）。遷移の無い列挙で、slot や項目に持てる
+            self.used_builtin.add(tok)
+            return Type("名前", target="Currency")
         if tok == "ref":  # ref Data
             return Type("参照", target=self.name())
         if self.accept("→"):

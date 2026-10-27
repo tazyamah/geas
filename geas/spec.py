@@ -83,7 +83,7 @@ def build_raw(ck: Checker) -> dict:
     states, trans, rejects = [], [], []
     for d in p.data:
         for f in d.fields:
-            if f.type.kind == "名前":
+            if f.type.kind == "名前" and not ck.states[f.type.target].plain:
                 s = ck.states[f.type.target]
                 states.append((d.name, s.initial, "初期"))
                 states += [(d.name, x, "中間") for x in s.middle]

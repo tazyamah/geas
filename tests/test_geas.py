@@ -2435,3 +2435,63 @@ def test_問い合わせは_equals_で文字列やIDの完全一致で絞れる(
     assert "r.jan == *x" in generate(ck)
     bad = OVERSEAS.replace("filter jan equals jan", "filter price_jpy equals jan")
     assert any("同じ種類" in m for m in msgs(chk(bad), ERROR))
+
+
+# ---- 通貨コードを slot で渡す金額（money(currency)） ----
+def shop_currency():
+    s = SHOP_SRC
+    s = s.replace("/// 単価\n  unit_price: NonNegMoney required\n", "/// 通貨\n  currency: currency required\n  /// 単価\n  unit_price: money(currency) required\n", 1)
+    s = s.replace("  total: NonNegMoney required\n", "  total: money(currency) required\n  /// 通貨\n  currency: currency required\n", 1)
+    s = s.replace("  slot tax_rate: TaxRateValue\n", "  slot tax_rate: TaxRateValue\n  slot currency: currency\n", 1)
+    s = s.replace("  reads Product.stock, Product.unit_price, Customer\n", "  reads Product.stock, Product.unit_price, Product.currency, Customer\n", 1)
+    s = s.replace("  let short = { k | (k, v) in items, Product[k].stock < v }\n",
+                  "  let wrong = { k | (k, v) in items, Product[k].currency != currency }\n  if wrong is nonempty { return OutOfStock(wrong) }\n"
+                  "  let short = { k | (k, v) in items, Product[k].stock < v }\n", 1)
+    s = s.replace("create Order { customer: customer_id,", "create Order { currency: currency, customer: customer_id,")
+    s = s.replace("round(subtotal * tax_rate, floor, JPY)", "round(subtotal * tax_rate, floor, currency)")
+    s = s.replace("  reads Order.total, Order.status\n  writes Order.status\n  transition Order: Received → PaymentRequested",
+                  "  reads Order.total, Order.currency, Order.status\n  writes Order.status\n  transition Order: Received → PaymentRequested")
+    s = s.replace("amount: money(JPY))", "amount: money(currency), currency: currency)")
+    s = s.replace("request Payment.charge(order_id, order.total, idempotency_key = order_id)", "request Payment.charge(order_id, order.total, order.currency, idempotency_key = order_id)")
+    return s
+
+
+SHOP_CUR = shop_currency()
+
+
+def test_通貨コードの_slot_で金額を扱える_単位は同じ_slot_の通貨どうし():
+    ck = chk(SHOP_CUR)
+    assert ck.ready, ck.diags
+    assert "pub enum Currency" in generate(ck)
+    assert "金額(通貨:" in " ".join(str(x) for x in build(ck)["データ"])
+
+
+def test_通貨が同じと確かめずに_集まりの金額を使うと止まる():
+    no_check = SHOP_CUR.replace("  let wrong = { k | (k, v) in items, Product[k].currency != currency }\n  if wrong is nonempty { return OutOfStock(wrong) }\n", "")
+    assert any("別の通貨の金額" in m or "別の通貨" in m for m in msgs(chk(no_check), ERROR)), msgs(chk(no_check), ERROR)
+
+
+def test_保存した金額を_固定の円の引数へ渡すと止まる():
+    jpy_only = SHOP_CUR.replace("amount: money(currency), currency: currency)", "amount: money(JPY))").replace("order.total, order.currency, idempotency_key", "order.total, idempotency_key")
+    assert any("円の金額ですが、別の通貨の金額" in m for m in msgs(chk(jpy_only), ERROR)), msgs(chk(jpy_only), ERROR)
+
+
+def test_通貨を取り違えて渡すと止まる_固定の通貨を渡すと別の単位():
+    other = SHOP_CUR.replace("order.total, order.currency, idempotency_key", "order.total, JPY, idempotency_key")
+    assert any("金額ですが" in m for m in msgs(chk(other), ERROR)), msgs(chk(other), ERROR)
+
+
+def test_money_の通貨の名前が同じ並びに無いと止まる():
+    bad = SHOP_CUR + "\neffect Foo. bar(a: money(currency)) no_wait \"試し\"\n"
+    assert any("同じ並びにありません" in m for m in msgs(chk(bad), ERROR))
+
+
+def test_保存した1件の通貨を_slot_と同じと確かめれば_その金額を使える():
+    # 通貨の確認なしで slot の金額と足すと止まり、確認すれば通る（x.通貨 != 通貨 なら返す）
+    base = SHOP_CUR.replace("deed apply_payment_result {\n  input order_id: id required\n  reads Order.status",
+                            "deed apply_payment_result {\n  input order_id: id required, price: money(currency) required\n  slot currency: currency\n  reads Order.total, Order.currency, Order.status")
+    base = base.replace("  let order = Order[order_id] else { return NoSuchOrder }\n  if order.status != PaymentRequested { return WrongStatus }\n  order.status = Completed",
+                        "  let order = Order[order_id] else { return NoSuchOrder }\n  if order.status != PaymentRequested { return WrongStatus }\n  if order.total > price { return WrongStatus }\n  order.status = Completed")
+    assert any("別の通貨" in m for m in msgs(chk(base), ERROR)), msgs(chk(base), ERROR)
+    ok = base.replace("  if order.total > price { return WrongStatus }", "  if order.currency != currency { return WrongStatus }\n  if order.total > price { return WrongStatus }")
+    assert not [m for m in msgs(chk(ok), ERROR) if "通貨" in m and "金額" in m], msgs(chk(ok), ERROR)
