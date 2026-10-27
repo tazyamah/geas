@@ -799,12 +799,12 @@ def test_結果の中身と次の処理の入力は名前と型で突き合わ�
 @needs_cargo
 def test_ホストは結果の中身を名前つきで返す(tmp_path):
     ck = chk(CODE)
-    req = ('{"名前":"place_order","文脈":{"tax_rate":"1/10","新OrderID":"N1"},"入力":{"customer_id":"C1","items":{"A":2}},'
-           '"保存":{"Product":{"A":{"product_id":"A","stock":5,"unit_price":100}},"Customer":{"C1":{"customer_id":"C1"}}}}')
+    req = ('{"name":"place_order","ctx":{"tax_rate":"1/10","new_Order_id":"N1"},"input":{"customer_id":"C1","items":{"A":2}},'
+           '"store":{"Product":{"A":{"product_id":"A","stock":5,"unit_price":100}},"Customer":{"C1":{"customer_id":"C1"}}}}')
     write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
-    assert '"中身":{"order_id":"N1"}' in r.stdout, r.stdout
+    assert '"body":{"order_id":"N1"}' in r.stdout, r.stdout
 
 
 # ---- 整数と金額は違う型。そのままでは混ぜず、money( )・int( ) で変えてから計算する ----
@@ -934,7 +934,7 @@ def test_仕様書の必須は_required_とキーと状態():
 @needs_cargo
 def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     ck = chk(NOTE)
-    call = lambda store: '{"名前":"題を見る","文脈":{},"入力":{"メモID":"M1"},"保存":{"メモ":{"M1":' + store + '}}}'
+    call = lambda store: '{"name":"題を見る","ctx":{},"input":{"メモID":"M1"},"store":{"メモ":{"M1":' + store + '}}}'
     main = "fn main() {\n" + "".join(
         f'    println!("{{:?}}", geas_app::host::call(r#"{call(s)}"#));\n'
         for s in ['{"メモID":"M1","本文":"a","題":"t","重さ":null}', '{"メモID":"M1","本文":"a","題":null,"重さ":null}',
@@ -943,8 +943,8 @@ def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     got = r.stdout.splitlines()
-    assert '\\"結果\\":\\"題あり\\"' in got[0] and '\\"中身\\":{\\"題\\":\\"t\\"}' in got[0], got[0]
-    assert '\\"結果\\":\\"題なし\\"' in got[1], got[1]
+    assert '\\"result\\":\\"題あり\\"' in got[0] and '\\"body\\":{\\"題\\":\\"t\\"}' in got[0], got[0]
+    assert '\\"result\\":\\"題なし\\"' in got[1], got[1]
     assert got[2].startswith("Err(") and "題" in got[2], got[2]
 
 
@@ -1009,13 +1009,13 @@ def test_ホストは無いかもしれない入力のキー無しと_null_を�
              ("書く", '{"本文":"a","題":"","重さ":3}'), ("書く", '{"題":"t","重さ":3}'), ("書く", '{"本文":null,"題":"t","重さ":3}'),
              ("書く", '{"本文":"a","題":"t","重さ":10}'), ("下書き", '{"本文":"a"}')]
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"{n}","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"name":"{n}","ctx":{{"new_メモ_id":"M1"}},"input":{i},"store":{{}}}}"#));\n'
         for n, i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     got = r.stdout.splitlines()
-    ok = lambda x, v: f'\\"結果\\":\\"{v}\\"' in x
+    ok = lambda x, v: f'\\"result\\":\\"{v}\\"' in x
     assert ok(got[0], "書いた") and ok(got[1], "無題") and ok(got[2], "無題"), got[:3]
     assert ok(got[3], "書いた"), got[3]  # 空文字は「ある」
     assert all(g.startswith("Err(") for g in got[4:7]), got[4:7]  # 必須の入力が無い・null、範囲の外は入力不正
@@ -1026,13 +1026,13 @@ def test_ホストは宣言にない入力の項目を無いものとして扱�
     ck = chk(NULLIN)
     calls = ['{"本文":"a","重さ":3}', '{"本文":"a","重さ":3,"余分":"x","題名":"typo"}']
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"書く","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"name":"書く","ctx":{{"new_メモ_id":"M1"}},"input":{i},"store":{{}}}}"#));\n'
         for i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     got = r.stdout.splitlines()
-    assert got[0] == got[1] and '\\"結果\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
+    assert got[0] == got[1] and '\\"result\\":\\"無題\\"' in got[0], got  # 宣言にない項目は、来ていないのと同じ
 
 
 TEXT = """ltype 利用者名 = text 1..20 of "a-z0-9_"
@@ -1095,7 +1095,7 @@ def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
     ck = chk(TEXT)
     calls = ['{"名":"abc_09"}', '{"名":""}', '{"名":"' + "a" * 21 + '"}', '{"名":"ABC"}', '{"名":"あ"}', '{"名":"' + "a" * 20 + '"}']
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"登録する","文脈":{{"新利用者ID":"U1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"name":"登録する","ctx":{{"new_利用者_id":"U1"}},"input":{i},"store":{{}}}}"#));\n'
         for i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1151,7 +1151,7 @@ def test_ホストは時刻の計算をして_範囲外の時刻は境界で止�
     ck = chk(TIMEC)
     calls = [(1000, 400), (1000, 10**16), (10**16, 400)]
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"約束する","文脈":{{"新約束ID":"K1","現在":{n}}},"入力":{{"開始":{b}}},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"name":"約束する","ctx":{{"new_約束_id":"K1","現在":{n}}},"input":{{"開始":{b}}},"store":{{}}}}"#));\n'
         for n, b in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1192,7 +1192,7 @@ nexus 流れ {
 def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     ck = chk(SLOT)
     assert ck.ready, ck.diags
-    call = lambda k: f'{{"名前":"置く","文脈":{{"倍率":{k},"新品ID":"A"}},"入力":{{"数":10}},"保存":{{}}}}'
+    call = lambda k: f'{{"name":"置く","ctx":{{"倍率":{k},"new_品_id":"A"}},"input":{{"数":10}},"store":{{}}}}'
     main = "fn main() {\n" + "".join(f'    println!("{{:?}}", geas_app::host::call(r#"{call(k)}"#));\n' for k in (100, 101, 0)) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1256,7 +1256,7 @@ impl Parts for 良い { fn 税込(&self, x: i64) -> i64 { x + x / 10 } }
 struct 悪い;
 impl Parts for 悪い { fn 税込(&self, x: i64) -> i64 { x - 1 } }
 fn main() {
-    let req = r#"{"名前":"置く","文脈":{"新品ID":"A"},"入力":{"税抜":1000},"保存":{}}"#;
+    let req = r#"{"name":"置く","ctx":{"new_品_id":"A"},"input":{"税抜":1000},"store":{}}"#;
     println!("{:?}", call(req, &良い));
     println!("{:?}", call(req, &悪い));
 }
@@ -1567,13 +1567,13 @@ def test_合成型の宣言の誤りは止まる():
 @needs_cargo
 def test_合成型はホストの境界で成分ごとに確かめる(tmp_path):
     ck = chk(COMP)
-    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"name":"' + n + '","ctx":' + ctx + ',"input":' + i + ',"store":' + store + '}"#));\n')
     rec = lambda x: '{"地図":{"G1":{"地図ID":"G1","位置":{"x":1,"y":2},"道":{"始点":{"x":1,"y":2},"終点":{"x":' + str(x) + ',"y":5}}}}}'
     main = "fn main() {\n" + "".join([
-        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":20}}', "{}"),
-        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":200}}', "{}"),
-        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10}}', "{}"),
-        call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":20,"z":1}}', "{}"),
+        call("置く", '{"new_地図_id":"G1"}', '{"位置":{"x":10,"y":20}}', "{}"),
+        call("置く", '{"new_地図_id":"G1"}', '{"位置":{"x":10,"y":200}}', "{}"),
+        call("置く", '{"new_地図_id":"G1"}', '{"位置":{"x":10}}', "{}"),
+        call("置く", '{"new_地図_id":"G1"}', '{"位置":{"x":10,"y":20,"z":1}}', "{}"),
         call("横を見る", "{}", '{"地図ID":"G1"}', rec(5)),
         call("横を見る", "{}", '{"地図ID":"G1"}', rec(70)),
     ]) + "}\n"
@@ -1658,12 +1658,12 @@ def test_vtimeの成分の範囲は構造の上限だけ():
 @needs_cargo
 def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(tmp_path):
     ck = chk(VDT)
-    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"name":"' + n + '","ctx":' + ctx + ',"input":' + i + ',"store":' + store + '}"#));\n')
     rec = lambda body: '{"約束":{"A1":{"約束ID":"A1","期日":' + body + '}}}'
     main = "fn main() {\n" + "".join([
-        call("決める", '{"新約束ID":"A1"}', '{"期日":{"year":2026,"month":10}}', "{}"),
-        call("決める", '{"新約束ID":"A1"}', '{"期日":{"month":13}}', "{}"),
-        call("誕生日にする", '{"新約束ID":"A1"}', "{}", "{}"),
+        call("決める", '{"new_約束_id":"A1"}', '{"期日":{"year":2026,"month":10}}', "{}"),
+        call("決める", '{"new_約束_id":"A1"}', '{"期日":{"month":13}}', "{}"),
+        call("誕生日にする", '{"new_約束_id":"A1"}', "{}", "{}"),
         call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":null}')),
         call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":3}')),
         call("月を見る", "{}", '{"約束ID":"A1"}', rec('{"month":9}')),
@@ -1908,7 +1908,7 @@ def test_id_の写像も_ltype_で名前を付けてから使う():
 def test_id_の写像の値は合成型でも_ホストから受け取って足せる(tmp_path):
     ck = strict(IDMAP)
     assert ck.ok, ck.diags
-    req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}}},"保存":{}}'
+    req = '{"name":"show","ctx":{},"input":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}}},"store":{}}'
     write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
@@ -1977,7 +1977,7 @@ def test_モジュールの名前は_表示名が無ければ_モジュール名
 def test_モジュールを使ったコードがビルドでき_動く(tmp_path):
     mod_dir(tmp_path, geo=GEO, app=GEO_APP)
     ck = load_strict(tmp_path)
-    req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"保存":{}}'
+    req = '{"name":"show","ctx":{},"input":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"store":{}}'
     out = tmp_path / "crate"
     out.mkdir()
     write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', out, host=True)
