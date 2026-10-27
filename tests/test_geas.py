@@ -2496,3 +2496,13 @@ def test_保存した1件の通貨を_slot_と同じと確かめれば_その金
     assert any("別の通貨" in m for m in msgs(chk(base), ERROR)), msgs(chk(base), ERROR)
     ok = base.replace("  if order.total > price { return WrongStatus }", "  if order.currency != currency { return WrongStatus }\n  if order.total > price { return WrongStatus }")
     assert not [m for m in msgs(chk(ok), ERROR) if "通貨" in m and "金額" in m], msgs(chk(ok), ERROR)
+
+
+def test_海外店の例は計画書と突合して食い違いがない():
+    ov = EX.parent / "overseas_shop"
+    r = subprocess.run([sys.executable, "-m", "geas", "compare", str(ov / "overseas_shop.geas"), str(ov / "overseas_shop_plan.md"), "--no-run"],
+                       capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    plan = (ov / "overseas_shop_plan.md").read_text()
+    for form in ("ブラウザ", "PC アプリ", "スマホアプリ", "Chrome 拡張"):
+        assert form in plan  # 利用の形態の前提を、計画書に書いてある
