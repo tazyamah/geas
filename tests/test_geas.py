@@ -2383,3 +2383,46 @@ def test_合成型は結果の中身_外部作用の引数_応答の中身にも
     assert 'js_str("zip")' in host_source(ck)  # 画面とやりとりする JSON にも、成分が平らに出る
     with_reply = ADDR_SRC.replace("/// 待ち解除結果", "reply Delivered(to: Addr required)\n\n/// 待ち解除結果")
     assert not [m for m in msgs(chk(with_reply), ERROR) if "合成型" in m]
+
+
+# ---- 海外にも売るお店（残件4件を使う題材） ----
+from geas.check import route_map  # noqa: E402
+OVERSEAS = (EX.parent / "overseas_shop" / "overseas_shop.geas").read_text()
+
+
+def test_海外店の例は通り_4件の機能がそろって使われる():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert not msgs(ck, WARN), msgs(ck, WARN)
+    assert any(len(ds) > 1 for fl in ck.p.flows for _, routes in fl.entries for ds in route_map(routes).values())  # par
+    assert any(i.writes for d in ("request_payment_jpy", "grant_points") for i in [ck.infos[d]])  # par の枝が書く
+    assert [r.name for r in ck.p.replies] == ["PaymentSettled", "StockSettled"]  # 応答の中身
+    assert {t.kind for t in ck.p.composites} == {"合成"}  # 合成型 Address を結果・外部作用・項目に使う
+    assert generate(ck) == generate(chk(OVERSEAS))
+
+
+def test_海外店の例_円とドルを混ぜると止まる():
+    assert not any("単位" in m for m in msgs(chk(OVERSEAS), ERROR))
+    wrong = OVERSEAS.replace("sum { Product[k].price_usd * v", "sum { Product[k].price_jpy * v")
+    assert any("円の金額とドルの金額" in m for m in msgs(chk(wrong), ERROR)), msgs(chk(wrong), ERROR)
+
+
+def test_海外店の例_par_の枝が同じ項目を書くと止まる():
+    clash = OVERSEAS.replace("request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy",
+                             "request_stock_hold, cancel_unpaid }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy")
+    clash = clash.replace("par { request_payment_jpy, request_stock_hold, cancel_unpaid }", "par { request_payment_jpy, cancel_unpaid, request_stock_hold }")
+    assert any("par の枝" in m for m in msgs(chk(clash), ERROR)), msgs(chk(clash), ERROR)
+
+
+def test_海外店の例_応答の中身が行き先の入力と合わないと止まる():
+    bad = OVERSEAS.replace("input order_id: id required, auth_id: id, short: IdSet\n  reads Order.status\n  result SettleResult", "input order_id: id required, short: IdSet\n  reads Order.status\n  result SettleResult")
+    bad = bad.replace("  let auth = auth_id else { return PaymentFailed(order_id) }\n  let lacking = short else { return Approved(order_id) }\n  return StockShort(order_id, auth)", "  let lacking = short else { return Approved(order_id) }\n  return PaymentFailed(order_id)")
+    assert any("応答の中身" in m for m in msgs(chk(bad), ERROR)), msgs(chk(bad), ERROR)
+
+
+@needs_cargo
+def test_海外店の例は生成したRustがビルドできる(tmp_path):
+    ck = chk(OVERSEAS)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
+    r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]

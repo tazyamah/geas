@@ -1,0 +1,419 @@
+// 海外にも売るお店：円とドルの価格表、決済と在庫の確保を並行で待つ注文。
+// 「使うようになったら考える」だった4件（応答の中身・par の書き込み・合成型を使える場所・金額の単位）を使う題材。
+// お店の例（../shop/shop.geas）の続きで、名前は半角英数、日本語の表示名は /// で付ける。
+
+/// 在庫数
+ltype StockCount = int 0..
+/// 円の金額
+ltype JpyAmount = money(JPY) 0..
+/// ドルの金額
+ltype UsdAmount = money(USD) 0..
+/// 数量
+ltype Quantity = int 1..99
+/// 商品数量
+ltype ProductQuantity = Product → Quantity
+/// 税率値
+ltype TaxRateValue = ratio 0..1
+/// ID集合
+ltype IdSet = set of id
+/// ポイント
+ltype PointCount = int 0..
+/// 国コード
+ltype CountryCode = text 2..2 of "A-Z"
+/// 郵便番号
+ltype PostalCode = text 3..10 of "0-9A-Z-"
+/// 住所の行
+ltype AddressLine = text 1..80
+/// 配送先
+ltype Address {
+  /// 国
+  country: CountryCode
+  /// 郵便番号
+  postal_code: PostalCode
+  /// 住所
+  line: AddressLine
+}
+
+/// 商品
+entity Product {
+  /// 商品ID
+  product_id: id unique
+  /// 在庫
+  stock: StockCount required
+  /// 円の価格
+  price_jpy: JpyAmount required
+  /// ドルの価格
+  price_usd: UsdAmount required
+}
+
+/// 顧客
+entity Customer {
+  /// 顧客ID
+  customer_id: id unique
+  /// ポイント
+  points: PointCount required
+}
+
+/// 注文
+entity Order {
+  /// 注文ID
+  order_id: id unique
+  /// 顧客
+  customer: ref Customer required
+  /// 明細
+  items: ProductQuantity required
+  /// 配送先
+  ship_to: Address required
+  /// 円の合計
+  total_jpy: JpyAmount required
+  /// ドルの合計
+  total_usd: UsdAmount required
+  /// 状態
+  status: OrderStatus
+}
+
+/// 注文状態
+state OrderStatus {
+  /// 受付
+  initial Received
+  /// 決済要求済
+  middle PaymentRequested
+  final /// 完了
+    Completed, /// キャンセル
+    Canceled
+  reject Completed → Canceled reason "完了後は返品で扱う"
+}
+
+/// 受注結果
+result PlaceOrderResult {
+  /// 受付
+  Received(order_id: id)
+  /// 在庫不足
+  OutOfStock(/// 不足
+    short: IdSet)
+  /// 商品なし
+  NoSuchProduct(/// 未登録
+    unregistered: IdSet)
+  /// 顧客なし
+  NoSuchCustomer
+}
+
+/// 決済要求結果
+result RequestPaymentResult {
+  /// 要求済
+  Requested
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+  /// 合計ゼロ
+  ZeroTotal
+}
+
+/// 在庫確保の要求結果
+result HoldResult {
+  /// 要求済
+  HoldRequested
+  /// 注文なし
+  NoSuchOrder
+}
+
+/// ポイント結果
+result PointsResult {
+  /// 加算済
+  Granted
+  /// 注文なし
+  NoSuchOrder
+  /// 顧客なし
+  NoSuchCustomer
+}
+
+/// 決済と在庫の結果の見立て
+result SettleResult {
+  /// 承認
+  Approved(order_id: id)
+  /// 決済失敗
+  PaymentFailed(order_id: id)
+  /// 在庫を確保できず
+  StockShort(order_id: id, /// 与信
+    auth_id: id)
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+/// 取り消し結果
+result CancelResult {
+  /// 反映済
+  Applied
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+/// 確定結果
+result FinishResult {
+  /// 反映済
+  Applied
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+  /// 在庫が足りなかった
+  StockLacking
+}
+
+/// 決済
+effect Payment. /// 円の請求
+  charge_jpy(order_id: id, /// 金額
+    amount: JpyAmount)
+effect Payment. /// ドルの請求
+  charge_usd(order_id: id, /// 金額
+    amount: UsdAmount)
+effect Payment. /// 与信の取り消し
+  refund(order_id: id, /// 与信
+    auth_id: id) no_wait "返金の失敗は人が見る"
+/// 倉庫
+effect Warehouse. /// 在庫の確保
+  hold(order_id: id, /// 届け先
+    to: Address) no_wait "倉庫の返事（StockSettled）は、決済待ちの合流で受ける"
+/// 配送
+effect Shipping. /// 出荷
+  ship(order_id: id, /// 届け先
+    to: Address) no_wait "出荷の結果は追跡の画面で人が見る"
+
+/// 決済が済んだ（与信が取れたか、拒否か）
+reply PaymentSettled(/// 与信
+  auth_id: id)
+/// 倉庫の返事（足りない商品があれば入る）
+reply StockSettled(/// 不足
+  short: IdSet)
+
+/// 円の注文
+deed place_order_jpy {
+  input customer_id: id required, items: ProductQuantity required, ship_to: Address required
+  /// 税率
+  slot tax_rate: TaxRateValue
+  reads Product.stock, Product.price_jpy, Customer
+  writes Order
+  transition Order: (new) → Received
+  result PlaceOrderResult
+  effects none
+
+  let customer = Customer[customer_id] else { return NoSuchCustomer }
+  let unregistered = { k | (k, v) in items, Product[k] is absent }
+  if unregistered is nonempty { return NoSuchProduct(unregistered) }
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return OutOfStock(short) }
+  let subtotal = sum { Product[k].price_jpy * v | (k, v) in items }
+  let total = subtotal + round(subtotal * tax_rate, floor, JPY)
+  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, total_jpy: total, total_usd: 0, status: Received }
+  return Received(order.order_id)
+}
+
+/// ドルの注文
+deed place_order_usd {
+  input customer_id: id required, items: ProductQuantity required, ship_to: Address required
+  /// 送料
+  slot shipping_usd: UsdAmount
+  reads Product.stock, Product.price_usd, Customer
+  writes Order
+  transition Order: (new) → Received
+  result PlaceOrderResult
+  effects none
+
+  let customer = Customer[customer_id] else { return NoSuchCustomer }
+  let unregistered = { k | (k, v) in items, Product[k] is absent }
+  if unregistered is nonempty { return NoSuchProduct(unregistered) }
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return OutOfStock(short) }
+  let subtotal = sum { Product[k].price_usd * v | (k, v) in items }
+  let total = subtotal + shipping_usd
+  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, total_jpy: 0, total_usd: total, status: Received }
+  return Received(order.order_id)
+}
+
+/// 円の決済要求
+deed request_payment_jpy {
+  input order_id: id required
+  reads Order.total_jpy, Order.status
+  writes Order.status
+  transition Order: Received → PaymentRequested
+  result RequestPaymentResult
+  effects Payment.charge_jpy
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != Received { return WrongStatus }
+  if order.total_jpy <= 0 { return ZeroTotal }
+  order.status = PaymentRequested
+  request Payment.charge_jpy(order_id, order.total_jpy, idempotency_key = order_id)
+  return Requested
+}
+
+/// ドルの決済要求
+deed request_payment_usd {
+  input order_id: id required
+  reads Order.total_usd, Order.status
+  writes Order.status
+  transition Order: Received → PaymentRequested
+  result RequestPaymentResult
+  effects Payment.charge_usd
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != Received { return WrongStatus }
+  if order.total_usd <= 0 { return ZeroTotal }
+  order.status = PaymentRequested
+  request Payment.charge_usd(order_id, order.total_usd, idempotency_key = order_id)
+  return Requested
+}
+
+/// 在庫の確保要求
+deed request_stock_hold {
+  input order_id: id required
+  reads Order.ship_to
+  result HoldResult
+  effects Warehouse.hold
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  request Warehouse.hold(order_id, order.ship_to, idempotency_key = order_id)
+  return HoldRequested
+}
+
+/// ポイントの加算
+deed grant_points {
+  input order_id: id required
+  reads Order.customer, Customer.points
+  writes Customer.points
+  result PointsResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  let customer = Customer[order.customer] else { return NoSuchCustomer }
+  customer.points = customer.points + 10
+  return Granted
+}
+
+// 決済と倉庫の返事は、2つともそろってから見立てる。一部が失敗の中身で来ても、ここで判断する
+/// 決済と在庫の見立て
+deed settle_order {
+  input order_id: id required, auth_id: id, short: IdSet
+  reads Order.status
+  result SettleResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  let auth = auth_id else { return PaymentFailed(order_id) }
+  let lacking = short else { return Approved(order_id) }
+  return StockShort(order_id, auth)
+}
+
+/// 注文の確定
+deed complete_order {
+  input order_id: id required
+  reads Order.status, Order.items, Order.ship_to, Product.stock
+  writes Order.status, Product.stock
+  transition Order: PaymentRequested → Completed
+  result FinishResult
+  effects Shipping.ship
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  let unregistered = { k | (k, v) in order.items, Product[k] is absent }
+  if unregistered is nonempty { return StockLacking }
+  let short = { k | (k, v) in order.items, Product[k].stock < v }
+  if short is nonempty { return StockLacking }
+  update { Product[k].stock -= v | (k, v) in order.items }
+  order.status = Completed
+  request Shipping.ship(order_id, order.ship_to, idempotency_key = order_id)
+  return Applied
+}
+
+/// 決済失敗の取り消し
+deed cancel_unpaid {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  return Applied
+}
+
+/// 在庫不足の返金と取り消し
+deed refund_and_cancel {
+  input order_id: id required, auth_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects Payment.refund
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  request Payment.refund(order_id, auth_id, idempotency_key = order_id)
+  return Applied
+}
+
+/// 期限切れの取り消し
+deed expire_order {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  return Applied
+}
+
+/// 注文一覧
+query order_list {
+  from Order
+  where status != Canceled
+  select order_id, customer.customer_id as customer, sum(items) as /// 点数
+    item_count
+  reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
+}
+
+/// 円の注文受付
+nexus JpyIntake {
+  place_order_jpy: Received → par { request_payment_jpy, request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  request_payment_jpy: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
+  request_stock_hold: HoldRequested → reply, NoSuchOrder → reply
+  grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
+}
+
+/// ドルの注文受付
+nexus UsdIntake {
+  place_order_usd: Received → par { request_payment_usd, request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  request_payment_usd: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
+}
+
+// 決済の返事と倉庫の返事がそろったら見立てる。そろわないまま30分たったら取り消す
+/// 注文待ち
+trigger OrderPending(order_id: id) {
+  all reply PaymentSettled, StockSettled → settle_order
+  deadline now + 30 min → expire_order
+}
+
+/// 確定の流れ
+nexus Settlement {
+  settle_order: Approved → complete_order, PaymentFailed → cancel_unpaid, StockShort → refund_and_cancel, NoSuchOrder → reply, WrongStatus → reply
+  complete_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply, StockLacking → reply
+  cancel_unpaid: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+  refund_and_cancel: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+  expire_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+}
+
+invariant Product: stock >= 0
