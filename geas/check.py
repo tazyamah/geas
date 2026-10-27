@@ -319,6 +319,11 @@ class Checker:
         for tg in p.triggers:
             for n, t in tg.params:
                 self.check_type(t, f"トリガ {tg.name} / {n}")
+        self.check_unique([x.name for x in p.replies], "全体", "応答の宣言")
+        for rp in p.replies:
+            self.check_unique([n for n, _ in rp.params], f"応答 {rp.name}", "中身の名前")
+            for n, t in rp.params:
+                self.check_type(t, f"応答 {rp.name} / {n}")
         for dt in p.data:
             if self.key_field(dt.name) is None:
                 self.d(ERROR, "データ", f"データ {dt.name}", "「ID 一意」の項目（キー）がありません")
@@ -543,7 +548,24 @@ class Checker:
             if n in mine and mine[n] != show_type(t):
                 self.d(ERROR, "トリガ", where, f"トリガ {trig} の引数「{n}」の型が、処理 {proc} の入力と違います")
 
+    def cause_args(self, tg, kind, key, where):
+        """要因が成り立ったとき、行き先の処理へ渡るもの：トリガの引数に、起きた応答の中身（all は全部の応答の中身）を足したもの"""
+        reps = {x.name: x for x in self.p.replies}
+        names = key.split(",") if kind == "all" else [key] if kind == "reply" else []
+        args = list(tg.params)
+        for n in names:
+            for pn, pt in reps[n].params if n in reps else []:
+                if any(pn == a for a, _ in args):
+                    self.d(ERROR, "トリガ", where, f"応答「{n}」の中身「{pn}」が、トリガの引数か、ほかの応答の中身と同じ名前です（行き先の処理の入力として区別できません）")
+                else:
+                    args.append((pn, pt))
+        return args
+
     def check_triggers(self):
+        used = {x for tg in self.p.triggers for k, key, _ in tg.causes for x in (key.split(",") if k == "all" else [key] if k == "reply" else [])}
+        for rp in self.p.replies:
+            if rp.name not in used:
+                self.d(WARN, "トリガ", f"応答 {rp.name}", "どのトリガの要因にも使われていません")
         waited = set()
         for fl in self.p.flows:
             for _, routes in fl.entries:
@@ -578,15 +600,23 @@ class Checker:
                     in_all.add(n)
             seen = set()
             for k, key, dest in tg.causes:
-                key = ",".join(sorted(key.split(","))) if k == "all" else key  # all は、並べる順が違っても同じ要因
-                if (k, key) in seen:
-                    self.d(ERROR, "トリガ", where, f"要因「{k} {key}」が重複しています")
-                seen.add((k, key))
+                skey = ",".join(sorted(key.split(","))) if k == "all" else key  # all は、並べる順が違っても同じ要因
+                if (k, skey) in seen:
+                    self.d(ERROR, "トリガ", where, f"要因「{k} {skey}」が重複しています")
+                seen.add((k, skey))
                 proc = self.procs.get(dest)
                 if proc is None:
                     self.d(ERROR, "トリガ", where, f"要因「{k} {key}」の行き先「{dest}」が未定義の処理です")
-                elif [(n, show_type(t)) for n, t in proc.inputs] != [(n, show_type(t)) for n, t in tg.params]:
-                    self.d(ERROR, "トリガ", where, f"行き先の処理 {dest} の入力（名前と型）が、トリガの引数と合いません")
+                else:
+                    want = [(n, show_type(t)) for n, t in self.cause_args(tg, k, key, where)]
+                    have = [(n, show_type(t)) for n, t in proc.inputs]
+                    if len(want) == len(tg.params):
+                        bad = have != want
+                    else:  # 応答の中身が加わるときは、並びを問わない
+                        bad = sorted(have) != sorted(want)
+                    if bad:
+                        extra = "" if len(want) == len(tg.params) else "と応答の中身"
+                        self.d(ERROR, "トリガ", where, f"行き先の処理 {dest} の入力（名前と型）が、トリガの引数{extra}と合いません")
             if tg.name not in waited:
                 self.d(WARN, "トリガ", where, "どのネクサスからも「wait」で作られていません")
 

@@ -115,6 +115,14 @@ class Trigger:
 
 
 @dataclass
+class ReplyDef:
+    """応答の宣言。外の部品から返ってくる応答が運ぶ中身（名前と型）。宣言のない応答は中身を持たない。"""
+    name: str
+    params: list[tuple[str, Type]]
+    line: int = 0
+
+
+@dataclass
 class Process:
     name: str
     inputs: list[tuple[str, Type]] = field(default_factory=list)
@@ -175,6 +183,7 @@ class Program:
     processes: list[Process] = field(default_factory=list)
     flows: list[Flow] = field(default_factory=list)
     triggers: list[Trigger] = field(default_factory=list)
+    replies: list[ReplyDef] = field(default_factory=list)
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)

@@ -87,6 +87,11 @@ pub enum Dest {
     Wait(&'static str),
     Reply,
 }
+pub struct ReplyDef {
+    pub name: &'static str,
+    /// 応答が運ぶ中身：(名前, 型, 必須か)。外から返ってくる値なので、基盤が受け取るときに確かめる。
+    pub fields: &'static [(&'static str, &'static str, bool)],
+}
 pub struct TriggerDef {
     pub name: &'static str,
     /// (種別, 要因, 行き先の処理)。種別は reply／deadline／all。期限の要因は秒数、all の要因は「A,B」（全部の応答がそろったら進む）。
@@ -501,6 +506,12 @@ class Gen:
         if not self.p.triggers:
             return
         self.w("// 【トリガ】：待ちの宣言。要因ごとの行き先。作成・発火・期限の監視は基盤の仕事。")
+        if self.p.replies:
+            self.w("pub const replies: &[ReplyDef] = &[")
+            for rp in self.p.replies:
+                fs = ", ".join(f'("{n}", "{show_type(t)}", {"false" if t.optional else "true"})' for n, t in rp.params)
+                self.w(f'    ReplyDef {{ name: "{rp.name}", fields: &[{fs}] }},')
+            self.w("];")
         self.w("pub const triggers: &[TriggerDef] = &[")
         for tg in self.p.triggers:
             cs = ", ".join(f'("{k}", "{key}", "{d}")' for k, key, d in tg.causes)

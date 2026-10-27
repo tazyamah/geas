@@ -79,6 +79,11 @@ pub enum Dest {
     Wait(&'static str),
     Reply,
 }
+pub struct ReplyDef {
+    pub name: &'static str,
+    /// 応答が運ぶ中身：(名前, 型, 必須か)。外から返ってくる値なので、基盤が受け取るときに確かめる。
+    pub fields: &'static [(&'static str, &'static str, bool)],
+}
 pub struct TriggerDef {
     pub name: &'static str,
     /// (種別, 要因, 行き先の処理)。種別は reply／deadline／all。期限の要因は秒数、all の要因は「A,B」（全部の応答がそろったら進む）。
