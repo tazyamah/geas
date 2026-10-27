@@ -6,6 +6,7 @@
 小文字の名前は大文字で始まらないので、利用者の名前とは重ならない）。"""
 from pathlib import Path
 
+from .ast import Part
 from .lexer import Tok, lex
 
 # モジュールに書ける宣言（状態を持たないもの）
@@ -50,6 +51,7 @@ class Loaded:
         self.files: dict[Path, str] = {}  # 読んだファイル → モジュール名
         self.names: dict[str, dict[str, str]] = {}  # モジュール名 → {元の名前: 付け替えた名前}
         self.ltypes: dict = {}  # ソースなしのパッケージの論理型（付け替えた名前 → 型）
+        self.parts: list = []  # ソースなしのパッケージの変換（本体の無い Part）
         self.results: list = []  # ソースなしのパッケージの結果の形
         self.labels: dict = {}  # ソースなしのパッケージの表示名
         self.extern_names: set = set()
@@ -139,8 +141,12 @@ def load_interface(iface: Path, j: dict, sha: str, quiet: bool, loaded: Loaded, 
     mod = j["module"]
     if mod in loaded.names:
         return mod
-    if j["converts"] or j["parts"] or j["deeds"]:
-        raise ModuleError(f"パッケージ {iface.name} の変換・部品・処理は、ソースなしではまだ使えません（型と結果の形だけ使えます）", line)
+    if j["parts"] or j["deeds"]:
+        raise ModuleError(f"パッケージ {iface.name} の部品・処理は、ソースなしではまだ使えません（型・結果の形・変換は使えます）", line)
+    crate = f"geas_mod_{mod.lower()}"
+    for c in j["converts"]:
+        loaded.parts.append(Part(c["name"], [(n, type_from(t)) for n, t in c["params"]], type_from(c["ret"]), None, 0, None, crate))
+        loaded.extern_names.add(c["name"])
     names = {}
     for m, (md, n) in j["origin"].items():
         names[n] = m
@@ -154,7 +160,7 @@ def load_interface(iface: Path, j: dict, sha: str, quiet: bool, loaded: Loaded, 
         loaded.results.append(result_from(r))
         loaded.extern_names.add(r["name"])
     loaded.labels.update({n: ls for n, ls in j["labels"].items()})
-    loaded.extern_crates.append((f"geas_mod_{mod.lower()}", str((iface.parent / "crate").resolve())))
+    loaded.extern_crates.append((crate, str((iface.parent / "crate").resolve())))
     loaded.sourceless.append((mod, j["version"], sha, quiet))
     return mod
 

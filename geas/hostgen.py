@@ -251,7 +251,7 @@ def host_source(ck: Checker) -> str:
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
       '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}],\\"store\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
-    has_parts = any(pt.body is None for pt in p.parts)
+    has_parts = any(pt.external for pt in p.parts)
     w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n    match name {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
