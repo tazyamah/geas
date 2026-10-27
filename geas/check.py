@@ -560,10 +560,25 @@ class Checker:
                 self.d(ERROR, "トリガ", where, "期限は0より長くしてください")
             if not any(k == "deadline" for k, _, _ in tg.causes):
                 self.d(ERROR, "トリガ", where, "期限がありません（待ち続けないよう、期限と期限切れの行き先が必要です）")
-            if not any(k == "reply" for k, _, _ in tg.causes):
+            if not any(k in ("reply", "all") for k, _, _ in tg.causes):
                 self.d(WARN, "トリガ", where, "解く応答がありません（期限切れでしか終わらない待ちです）")
+            singles = {key for k, key, _ in tg.causes if k == "reply"}
+            in_all: set = set()
+            for k, key, _ in tg.causes:  # 待ち合わせ（all）：2つ以上の応答。ほかの行と同じ応答を使うと、先に来た1つで進むのか全部待つのか決まらない
+                if k != "all":
+                    continue
+                names = key.split(",")
+                if len(names) < 2 or len(set(names)) != len(names):
+                    self.d(ERROR, "トリガ", where, f"all の応答は、重ならない2つ以上を並べてください（{key}）。1つだけなら、all を付けない reply の行にします")
+                for n in names:
+                    if n in singles:
+                        self.d(ERROR, "トリガ", where, f"応答「{n}」が、all の行と単独の reply の行の両方にあります（先に来た1つで進むのか、全部待つのか、決まりません）")
+                    elif n in in_all:
+                        self.d(ERROR, "トリガ", where, f"応答「{n}」が、複数の all の行にあります（どの待ち合わせに数えるのか、決まりません）")
+                    in_all.add(n)
             seen = set()
             for k, key, dest in tg.causes:
+                key = ",".join(sorted(key.split(","))) if k == "all" else key  # all は、並べる順が違っても同じ要因
                 if (k, key) in seen:
                     self.d(ERROR, "トリガ", where, f"要因「{k} {key}」が重複しています")
                 seen.add((k, key))

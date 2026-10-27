@@ -1871,6 +1871,30 @@ fn main() {
     assert r.stdout.split() == [str(86400 - 9 * 3600)], r.stdout  # 日本時間の1970-01-02 0:00 は、UTC の前日 15:00
 
 
+SHOP_SRC = (EX / "shop.geas").read_text()
+JOIN = SHOP_SRC.replace("reply PaymentSucceeded → apply_payment_result", "all reply PaymentSucceeded, StockReserved → apply_payment_result")
+
+
+def test_待ち合わせ_all_は全部の応答がそろったら進む行として書ける():
+    ck = chk(JOIN)
+    assert ck.ready, ck.diags
+    tg = next(t for t in ck.p.triggers if t.name == "PaymentPending")
+    assert ("all", "PaymentSucceeded,StockReserved", "apply_payment_result") in tg.causes
+    assert ("決済待ち", "全部の応答 決済成功 ＋ StockReserved", "決済結果の反映") in build(ck)["トリガ"]  # 仕様書は表示名で出る
+    assert '("all", "PaymentSucceeded,StockReserved", "apply_payment_result")' in generate(ck)
+
+
+def test_待ち合わせの書き方の誤りは止まる():
+    one = SHOP_SRC.replace("reply PaymentSucceeded → apply_payment_result", "all reply PaymentSucceeded → apply_payment_result")
+    assert any("2つ以上" in m for m in msgs(chk(one), ERROR))
+    both = JOIN.replace("deadline now", "reply StockReserved → expire_payment\n  deadline now")
+    assert any("両方にあります" in m for m in msgs(chk(both), ERROR))
+    twice = JOIN.replace("deadline now", "all reply StockReserved, Other → expire_payment\n  deadline now")
+    assert any("複数の all の行" in m for m in msgs(chk(twice), ERROR))
+    with pytest.raises(ParseError, match="all の後ろには"):
+        parse(SHOP_SRC.replace("reply PaymentSucceeded → apply_payment_result", "all PaymentSucceeded, X → apply_payment_result"))
+
+
 def test_仕様書にフロー図が出る_並列は_プラスのゲートウェイ():
     ck = fanout(*FANOUT)
     md = render(ck, build(ck))

@@ -10,10 +10,12 @@ def ja_dest(d: str) -> str:
 
 
 def ja_kind(k: str) -> str:
-    return {"reply": "応答", "deadline": "期限"}.get(k, k)
+    return {"reply": "応答", "deadline": "期限", "all": "全部の応答"}.get(k, k)
 
 
 def fmt_cause(kind: str, key: str) -> str:
+    if kind == "all":
+        return " ＋ ".join(key.split(","))  # 全部そろったら
     if kind != "deadline":
         return key
     s = int(key)

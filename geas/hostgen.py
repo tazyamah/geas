@@ -200,7 +200,7 @@ def definitions(ck: Checker) -> dict:
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
-                  "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
+                  "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "replies": key.split(",") if k == "all" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
     }
 
 
