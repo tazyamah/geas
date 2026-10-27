@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """名前の書き方の検査。名前は半角英数にして、種類は大文字小文字で見分ける（記号は付けない）。
 型・entity・状態・結果の種類・フローなど「もの」の名前は UpperCamel、
-項目・変数・処理（deed）・入力など「動きと値」の名前は lower_snake。
+項目・変数・処理（deed）・入力・部品・変換（呼ぶと値が返る関数）など「動きと値」の名前は lower_snake。
 小文字の名前は、組み込みや予約語と同じにできない（大文字で始まる名前とは、綴りが同じにならないので重ならない）。
 日本語など仕様書に出す名前は、名前の前の /// で付ける（コンパイラは読まない）。"""
 import re
@@ -26,10 +26,12 @@ def name_problems(p: Program, ltype_names=()) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
 
     def upper(n: str, where: str):
+        n = p.origin.get(n, (None, n))[1]  # モジュールの定義は、付け替える前の名前で見る
         if not UPPER.fullmatch(n):
             out.append((where, f"名前「{n}」は、英大文字で始まる英数字（UpperCamel）で書きます"))
 
     def lower(n: str, where: str):
+        n = p.origin.get(n, (None, n))[1]
         if not LOWER.fullmatch(n):
             out.append((where, f"名前「{n}」は、英小文字で始まる英小文字・数字・_（lower_snake）で書きます"))
         elif n in RESERVED:
@@ -62,7 +64,7 @@ def name_problems(p: Program, ltype_names=()) -> list[tuple[str, str]]:
         for n, _ in e.params:
             lower(n, f"外部作用 {e.name}")
     for x in p.parts:
-        upper(x.name, f"部品 {x.name}")
+        lower(x.name, f"部品 {x.name}")
         for n, _ in x.params:
             lower(n, f"部品 {x.name}")
     for t in p.triggers:

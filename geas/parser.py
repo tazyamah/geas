@@ -5,6 +5,7 @@ import copy
 
 from .ast import *  # noqa: F401,F403
 from .lexer import Tok, lex
+from .modules import ModuleError, expand
 
 
 def parse_labels(doc: str) -> dict:
@@ -982,8 +983,10 @@ def collect_labels(toks: list[Tok]) -> dict:
     return labels
 
 
-def parse(src: str) -> Program:
-    toks = lex(src)
+def parse(src: str, path=None) -> Program:
+    """path は、use でモジュールを取り込むときの基準になるファイル（文字列から読むときは無し）"""
+    toks, origin = expand(lex(src), path)
     p = Parser(toks).program()
     p.labels = collect_labels(toks)
+    p.origin = origin
     return p

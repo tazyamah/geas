@@ -10,6 +10,7 @@ from geas.check import ERROR, QUESTION, check
 from geas.examples import HOST_MOD, compare_examples, run_crate, runner_source, write_crate
 from geas.hostgen import host_source
 from geas.spec import render
+from geas.modules import ModuleError
 from geas.parser import ParseError, parse
 from geas.plan import A_ONLY, B_ONLY, DIFF, compare_static, read_plan
 from geas.rustgen import generate
@@ -1912,3 +1913,113 @@ def test_id_の写像の値は合成型でも_ホストから受け取って足�
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6
+
+
+# ---- モジュール（状態を持たない部品の集まり。ソースのまま取り込む）----
+GEO = """module Geo
+
+/// 位置の数
+ltype Dots = int 0..100
+/// 位置
+ltype Pos { x: Dots, y: Dots optional }
+
+/// そのまま
+convert same(d: Dots) -> Dots = d
+"""
+GEO_APP = """use "geo.geas"
+
+ltype Table = id → Geo.Pos
+result Shown {
+  Big
+  Small
+}
+deed show {
+  input table: Table required, limit: Geo.Dots required
+  result Shown
+  effects none
+
+  let n = sum { v.x | (k, v) in table }
+  if n > Geo.same(limit) { return Big }
+  return Small
+}
+nexus Flow {
+  show: Big → reply, Small → reply
+}
+"""
+
+
+def mod_dir(tmp_path, **files):
+    for n, text in files.items():
+        (tmp_path / f"{n}.geas").write_text(text)
+    return tmp_path
+
+
+def load_strict(tmp_path, name="app"):
+    return check(parse((tmp_path / f"{name}.geas").read_text(), tmp_path / f"{name}.geas"), strict_names=True)
+
+
+def test_モジュールを取り込んで_名前空間つきで使える(tmp_path):
+    mod_dir(tmp_path, geo=GEO, app=GEO_APP)
+    ck = load_strict(tmp_path)
+    assert ck.ok, ck.diags
+    assert ck.p.origin["Geo_Pos"] == ("Geo", "Pos")
+    names = dict(build(ck)["名前"])
+    assert names["Geo_Pos"] == "既定: 位置" and names["Geo_same"] == "既定: そのまま"  # 表示名はモジュールの /// から
+
+
+def test_モジュールの名前は_表示名が無ければ_モジュール名と定義名で出る(tmp_path):
+    mod_dir(tmp_path, geo=GEO.replace("/// 位置\n", ""), app=GEO_APP)
+    ck = load_strict(tmp_path)
+    assert ck.p.show_names("Geo_Pos") == "Geo.Pos"
+
+
+@needs_cargo
+def test_モジュールを使ったコードがビルドでき_動く(tmp_path):
+    mod_dir(tmp_path, geo=GEO, app=GEO_APP)
+    ck = load_strict(tmp_path)
+    req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"保存":{}}'
+    out = tmp_path / "crate"
+    out.mkdir()
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', out, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=out, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6
+
+
+def test_モジュールには状態を持つ宣言を書けない(tmp_path):
+    for decl in ("entity Item {\n  item_id: id unique\n}", "deed run {\n  result Shown\n  effects none\n\n  return Big\n}", "invariant Item: item_id == 1"):
+        mod_dir(tmp_path, geo=GEO + "\n" + decl + "\n", app=GEO_APP)
+        with pytest.raises(ModuleError, match="状態は持てません"):
+            parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+
+
+def test_モジュールの取り込みの誤りは止まる(tmp_path):
+    mod_dir(tmp_path, geo=GEO, app=GEO_APP.replace("Geo.same(limit)", "Geo.nothing(limit)"))
+    with pytest.raises(ModuleError, match="Geo に「nothing」はありません"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    mod_dir(tmp_path, geo=GEO.replace("module Geo\n", ""), app=GEO_APP)
+    with pytest.raises(ModuleError, match="module 名前"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    mod_dir(tmp_path, app=GEO_APP.replace('"geo.geas"', '"nothing.geas"'))
+    with pytest.raises(ModuleError, match="がありません"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    with pytest.raises(ModuleError, match="ファイルから読む"):
+        parse(GEO_APP)
+
+
+def test_モジュールが循環したり名前が重なったりすると止まる(tmp_path):
+    mod_dir(tmp_path, a='use "b.geas"\nmodule A\nltype One = int 0..\n', b='use "a.geas"\nmodule B\nltype Two = int 0..\n', app='use "a.geas"\nresult R {\n  Done\n}\n')
+    with pytest.raises(ModuleError, match="循環"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+    mod_dir(tmp_path, a="module Same\nltype One = int 0..\n", b="module Same\nltype Two = int 0..\n", app='use "a.geas"\nuse "b.geas"\nresult R {\n  Done\n}\n')
+    with pytest.raises(ModuleError, match="2つのファイル"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+
+
+def test_モジュールがモジュールを取り込み_同じモジュールは1度だけ読む(tmp_path):
+    mod_dir(tmp_path, base="module Base\nltype Count = int 0..100\n",
+            mid='use "base.geas"\nmodule Mid\nltype Few = int 0..5\n',
+            app='use "base.geas"\nuse "mid.geas"\n\nentity Box {\n  box_id: id unique\n  few: Mid.Few required\n  many: Base.Count required\n}\n')
+    ck = load_strict(tmp_path)
+    assert ck.ok, ck.diags
+    assert [x for x in ck.p.ltype_names].count("Base_Count") == 1
