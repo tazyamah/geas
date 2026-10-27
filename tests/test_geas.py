@@ -2532,3 +2532,68 @@ def test_加算減算は_par_の枝で重なってよく_代入は止まる():
     assert ck.infos["grant_campaign_points"].write_ops["Customer.points"] == {"+="}
     plain = OVERSEAS.replace("customer.points += 5", "customer.points = customer.points + 5")
     assert any("同じ項目" in m for m in msgs(chk(plain), ERROR)), msgs(chk(plain), ERROR)
+
+
+# ---- クライアント側の出来事（つながりが戻った）と JAN のチェックディジット ----
+def test_海外店の例_つながりが戻ったら返事待ちの注文ごとに決済を引き直す():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert [(e.name, e.steps) for e in ck.p.events] == [("Reconnected", [("各", "awaiting_payment", "recheck_payment")])]
+    bad = OVERSEAS.replace("each awaiting_payment → recheck_payment", "each awaiting_payment → settle_order")
+    assert any("each" in m or "入力" in m for m in msgs(chk(bad), ERROR)), msgs(chk(bad), ERROR)
+    gone = OVERSEAS.replace("recheck_payment: Rechecked → wait OrderPending, ", "recheck_payment: Rechecked → reply, ")
+    assert any("失敗の扱い" in m for m in msgs(chk(gone), ERROR)), msgs(chk(gone), ERROR)
+
+
+GTIN = """ltype Jan = text 13..13 of "0-9" check gtin
+ltype Plain = text 13..13 of "0-9"
+entity Item {
+  item_id: id unique
+  jan: Jan required
+}
+deed show_item {
+  input item_id: id required, jan: Jan required, raw: Plain required
+  reads Item
+  writes Item.jan
+  result R
+  effects none
+
+  let item = Item[item_id] else { return Missing }
+  item.jan = jan
+  return Done
+}
+result R {
+  Done
+  Missing
+}
+"""
+
+
+def test_JANのチェックディジットは外から来る値を実行時に確かめ_確かめていない文字列は書けない():
+    ck = chk(GTIN)
+    assert not msgs(ck, ERROR), msgs(ck, ERROR)
+    rs = generate(ck)
+    assert 'check_gtin("jan"' in rs and "pub fn check_gtin" in rs
+    bad = chk(GTIN.replace("item.jan = jan", "item.jan = raw"))
+    assert any("検査数字" in m for m in msgs(bad, ERROR)), msgs(bad, ERROR)
+
+
+def test_check_gtin_は長さと文字種が合わないと書けない():
+    with pytest.raises(ParseError):
+        chk(GTIN.replace('ltype Jan = text 13..13 of "0-9" check gtin', 'ltype Jan = text 5..13 of "0-9" check gtin'))
+    with pytest.raises(ParseError):
+        chk(GTIN.replace('ltype Jan = text 13..13 of "0-9" check gtin', 'ltype Jan = text 13..13 check gtin'))
+    with pytest.raises(ParseError):
+        chk(GTIN.replace("check gtin", "check luhn"))
+
+
+@needs_cargo
+def test_check_gtin_は正しい13桁だけ通す(tmp_path):
+    ck = chk(OVERSEAS)
+    main = ('use geas_app::*;\nfn main() {\n'
+            '  assert!(check_gtin("j", "4901234567894").is_ok());\n'
+            '  assert!(check_gtin("j", "4901234567895").is_err());\n'
+            '  assert!(check_gtin("j", "490123456789a").is_err());\n}\n')
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]

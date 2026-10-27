@@ -42,6 +42,15 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
         None => Ok(()),
     }
 }
+/// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
+pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
+    let ds: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
+    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d * 3 } else { *d }).sum();
+    if ds.len() != s.chars().count() || sum % 10 != 0 {
+        return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
+    }
+    Ok(())
+}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
