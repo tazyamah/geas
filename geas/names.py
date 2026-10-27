@@ -21,21 +21,8 @@ RESERVED = {
 }
 
 
-def name_problems(p: Program, ltype_names=()) -> list[tuple[str, str]]:
-    """(場所, 指摘) の列"""
-    out: list[tuple[str, str]] = []
-
-    def upper(n: str, where: str):
-        n = p.origin.get(n, (None, n))[1]  # モジュールの定義は、付け替える前の名前で見る
-        if not UPPER.fullmatch(n):
-            out.append((where, f"名前「{n}」は、英大文字で始まる英数字（UpperCamel）で書きます"))
-
-    def lower(n: str, where: str):
-        n = p.origin.get(n, (None, n))[1]
-        if not LOWER.fullmatch(n):
-            out.append((where, f"名前「{n}」は、英小文字で始まる英小文字・数字・_（lower_snake）で書きます"))
-        elif n in RESERVED:
-            out.append((where, f"名前「{n}」は組み込みか予約語なので使えません"))
+def each_name(p: Program, ltype_names, upper, lower, local):
+    """コードに書かれた名前を、種類ごとに upper（もの）／lower（動きと値）／local（処理の中の変数）で渡す"""
 
     for n in ltype_names:
         upper(n, f"論理型 {n}")
@@ -89,13 +76,49 @@ def name_problems(p: Program, ltype_names=()) -> list[tuple[str, str]]:
         def walk(stmts):
             for st in stmts:
                 if isinstance(st, Assign):
-                    lower(st.name, f"処理 {x.name}")
+                    local(st.name, f"処理 {x.name}")
                 elif isinstance(st, Create):
-                    lower(st.name, f"処理 {x.name}")
+                    local(st.name, f"処理 {x.name}")
                 elif isinstance(st, If):
                     walk(st.body)
                 elif isinstance(st, ForEach):
                     walk(st.body)
 
         walk(x.body)
+
+
+
+def name_problems(p: Program, ltype_names=()) -> list[tuple[str, str]]:
+    """(場所, 指摘) の列"""
+    out: list[tuple[str, str]] = []
+
+    def upper(n: str, where: str):
+        n = p.origin.get(n, (None, n))[1]  # モジュールの定義は、付け替える前の名前で見る
+        if not UPPER.fullmatch(n):
+            out.append((where, f"名前「{n}」は、英大文字で始まる英数字（UpperCamel）で書きます"))
+
+    def lower(n: str, where: str):
+        n = p.origin.get(n, (None, n))[1]
+        if not LOWER.fullmatch(n):
+            out.append((where, f"名前「{n}」は、英小文字で始まる英小文字・数字・_（lower_snake）で書きます"))
+        elif n in RESERVED:
+            out.append((where, f"名前「{n}」は組み込みか予約語なので使えません"))
+
+    each_name(p, ltype_names, upper, lower, lower)
+    return out
+
+
+def label_gaps(p: Program, ltype_names=()) -> list[tuple[str, str]]:
+    """(場所, 名前) の列：仕様書に出る名前のうち、表示名（///）が無いもの。処理の中の変数は仕様書に出ないので数えない"""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def visit(n: str, where: str):
+        ls = p.labels.get(n, {})
+        if ls.get("ja") or ls.get("") or (where, n) in seen:
+            return
+        seen.add((where, n))
+        out.append((where, n))
+
+    each_name(p, ltype_names, visit, visit, lambda n, where: None)
     return out

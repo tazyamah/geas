@@ -2078,3 +2078,13 @@ entity Item {
 """)
     ck = load_strict(tmp_path)
     assert not ck.ok and any("モジュールの処理は" in d.msg and "データを読む" in d.msg for d in ck.diags), ck.diags
+
+
+def test_表示名の無い名前は警告で教える(tmp_path):
+    mod_dir(tmp_path, geo=GEO.replace("/// 位置\n", ""), app=GEO_APP)
+    ck = load_strict(tmp_path)
+    gaps = [d for d in ck.diags if d.code == "表示名"]
+    assert ck.ok and any("「Pos」に表示名" in d.msg for d in gaps), gaps
+    assert not any("「Dots」" in d.msg for d in gaps)  # /// 位置の数 がある
+    # 表示名があれば警告しない。名前の書式を検査しない時（check の既定）も警告しない
+    assert not [d for d in check(parse(open(EX / "shop.geas").read())).diags if d.code == "表示名"]

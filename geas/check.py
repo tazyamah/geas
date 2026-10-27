@@ -6,7 +6,7 @@ from fractions import Fraction
 from math import ceil, floor
 
 from .ast import *  # noqa: F401,F403
-from .names import name_problems
+from .names import label_gaps, name_problems
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
@@ -175,6 +175,8 @@ class Checker:
         if self.strict_names:
             for where, msg in name_problems(self.p, self.p.ltype_names):
                 self.diags.append(Diag(ERROR, "名前", where, msg))  # 名前そのものの指摘なので、表示名に置き換えない
+            for where, n in label_gaps(self.p, self.p.ltype_names):
+                self.diags.append(Diag(WARN, "表示名", where, f"「{self.p.origin.get(n, (None, n))[1]}」に表示名（直前の /// ）がありません。仕様書には名前のまま出ます"))
         self.check_defs()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
