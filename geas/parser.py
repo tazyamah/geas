@@ -5,7 +5,7 @@ import copy
 
 from .ast import *  # noqa: F401,F403
 from .lexer import Tok, lex
-from .modules import ModuleError, expand
+from .modules import ModuleError, expand, statement_starts
 
 
 def parse_labels(doc: str) -> dict:
@@ -277,15 +277,21 @@ class Parser:
             self.end_line()
         return Data(name, fields, line)
 
+    def signed_num(self):
+        """範囲の端：負の数も書ける（UTC からのずれなど）"""
+        if self.accept("-"):
+            return -self.num()
+        return self.num()
+
     def range_opt(self):
-        if self.peek().kind == "NUM":
-            lo = self.num()
+        if self.peek().kind == "NUM" or self.is_("-"):
+            lo = self.signed_num()
             self.expect("..")
-            hi = self.num() if self.peek().kind == "NUM" else None
+            hi = self.signed_num() if self.peek().kind == "NUM" or self.is_("-") else None
             return Range(lo, hi)
         if self.is_(".."):
             self.next()
-            return Range(None, self.num())
+            return Range(None, self.signed_num())
         return None
 
     def chars_opt(self):
@@ -461,6 +467,8 @@ class Parser:
         name = self.name()
         self.expect("(")
 
+        defaults = {}
+
         def param():
             n = self.name()
             self.expect(":")
@@ -470,6 +478,8 @@ class Parser:
                 fs = self.comma_list(lambda: (self.name(), (self.expect(":"), self.fill_value())[1]))
                 self.expect("}")
                 t.fills = tuple(fs)
+            if self.accept("="):  # = 式：デフォルト値。呼ぶとき省ける（標準のタイムゾーン tz_offset など）
+                defaults[n] = self.expr()
             return n, t
 
         params = self.comma_list(param)
@@ -479,7 +489,7 @@ class Parser:
         self.expect("=")
         body = self.expr()
         self.end_line()
-        return Part(name, params, ret, None, line, body)
+        return Part(name, params, ret, None, line, body, defaults)
 
     def fill_value(self) -> int:
         t = self.next()
@@ -983,8 +993,43 @@ def collect_labels(toks: list[Tok]) -> dict:
     return labels
 
 
+MAX_TZ = 14 * 3600  # UTC からのずれは ±14:00 まで
+
+
+def split_timezone(toks):
+    """`timezone +09:00`（アプリに1つ。書かなければ UTC）を取り除き、組み込みの `tz_offset`（UTC からのずれ、秒）をその値に置き換える。
+    (字句の列, ずれ（秒）) を返す。tz_offset は値そのものに置き換わるので、範囲は検査器がそのまま知っている"""
+    starts, keep, found, i = set(statement_starts(toks)), [], None, 0
+    while i < len(toks):
+        t = toks[i]
+        if i in starts and t.kind == "NAME" and t.val == "timezone":
+            if found is not None:
+                raise ParseError("timezone は1つだけ宣言できます", t.line)
+            w = toks[i + 1:i + 5]
+            if len(w) < 4 or w[0].kind != "OP" or w[0].val not in ("+", "-") or w[1].kind != "NUM" or w[2].val != ":" or w[3].kind != "NUM":
+                raise ParseError("timezone は `timezone +09:00` のように、UTC からのずれを時:分で書きます", t.line)
+            secs = int(w[1].val) * 3600 + int(w[3].val) * 60
+            if int(w[3].val) > 59 or secs > MAX_TZ:
+                raise ParseError("timezone のずれは、分が 0〜59、全体で ±14:00 までです", t.line)
+            found = -secs if w[0].val == "-" else secs
+            i += 5
+            continue
+        keep.append(t)
+        i += 1
+    off = found or 0
+    out = []
+    for t in keep:
+        if t.kind == "NAME" and t.val == "tz_offset":
+            out += [Tok("NUM", str(off), t.line)] if off >= 0 else [Tok("OP", "(", t.line), Tok("NUM", "0", t.line), Tok("OP", "-", t.line), Tok("NUM", str(-off), t.line), Tok("OP", ")", t.line)]
+        else:
+            out.append(t)
+    return out, off
+
+
 def parse_toks(toks, origin) -> Program:
+    toks, tz = split_timezone(toks)
     p = Parser(toks).program()
+    p.tz_offset = tz
     p.labels = collect_labels(toks)
     p.origin = origin
     return p

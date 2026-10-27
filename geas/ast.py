@@ -83,6 +83,7 @@ class Part:
     guarantee: object
     line: int = 0
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
+    defaults: dict = field(default_factory=dict)  # convert の引数のデフォルト値：引数名 → 式（呼ぶとき省ける）
 
     @property
     def external(self) -> bool:
@@ -179,6 +180,7 @@ class Program:
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
+    tz_offset: int = 0  # アプリの標準のタイムゾーン：UTC からのずれ（秒）。`timezone +09:00` で宣言する。書かなければ UTC
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
 
     def resolve(self, text: str, names) -> str:

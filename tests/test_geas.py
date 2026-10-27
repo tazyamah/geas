@@ -1811,6 +1811,66 @@ fn main() {
     assert r.stdout.split() == ["1792983845", "946684800", "0"], r.stdout
 
 
+TZ = ("timezone +09:00\nltype Offset = int -50400..50400\n"
+      + UTC.replace("fill { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 })", "fill { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 }, offset: Offset = tz_offset)")
+      .replace("+ v.second)", "+ v.second - offset)"))
+
+
+def test_timezoneの宣言と_デフォルト引数で_標準のずれを使える():
+    ck = chk(TZ)
+    assert ck.ready, ck.diags
+    assert ck.p.tz_offset == 9 * 3600
+    assert chk(UTC).p.tz_offset == 0  # 書かなければ UTC
+    assert parse(TZ.replace("+09:00", "-05:30")).tz_offset == -(5 * 3600 + 30 * 60)
+    assert chk(TZ.replace("+09:00", "-05:30")).ready  # 負のずれも、そのままの範囲で扱える
+
+
+def test_デフォルト引数は_省ける_渡せる_決まりに反すると止まる():
+    assert chk(TZ.replace("実在日時(日時)", "実在日時(日時, 0)")).ready  # 渡して上書き
+    assert any("引数は 2 個です" in m for m in msgs(chk(TZ.replace("実在日時(日時)", "実在日時(日時, 0, 0)")), ERROR))
+    bad = TZ.replace("offset: Offset = tz_offset", "offset: Offset = 99999")
+    assert any("デフォルト値が、引数の範囲" in m for m in msgs(chk(bad), ERROR))
+    bad2 = TZ.replace("v: vtime fill", "w: Offset = 0, v: vtime fill")
+    assert any("にもデフォルト値が要ります" in m for m in msgs(chk(bad2), ERROR))
+
+
+def test_timezoneの書き方の誤りは止まる():
+    with pytest.raises(ParseError, match="1つだけ"):
+        parse("timezone +09:00\ntimezone +01:00\n")
+    with pytest.raises(ParseError, match="時:分で書きます"):
+        parse("timezone Asia/Tokyo\n")
+    with pytest.raises(ParseError, match="±14:00 まで"):
+        parse("timezone +15:00\n")
+    with pytest.raises(ParseError, match="0〜59"):
+        parse("timezone +09:60\n")
+
+
+def test_モジュールにはtimezoneを書けない(tmp_path):
+    mod_dir(tmp_path, geo="module Geo\ntimezone +09:00\n")
+    (tmp_path / "app.geas").write_text('use "geo.geas"\n')
+    with pytest.raises(ModuleError, match="timezone を書けません"):
+        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+
+
+@needs_cargo
+def test_標準のタイムゾーンで暦の秒がずれ_引数で上書きできる(tmp_path):
+    ck = chk(TZ)
+    main = """use geas_app::*;
+fn t(日時: vtime) -> i64 {
+    let ctx = 予約Ctx { new_予定_id: "e1".to_string() };
+    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 });
+    match &o.Write[0] { Write::予定_New(r) => r.時刻 }
+}
+fn main() {
+    println!("{}", t(vtime { year: Some(1970), month: Some(1), day: Some(2), hour: None, minute: None, second: None }));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout.split() == [str(86400 - 9 * 3600)], r.stdout  # 日本時間の1970-01-02 0:00 は、UTC の前日 15:00
+
+
 def test_仕様書にフロー図が出る_並列は_プラスのゲートウェイ():
     ck = fanout(*FANOUT)
     md = render(ck, build(ck))
