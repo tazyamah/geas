@@ -54,12 +54,13 @@ PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent
 
 
 class Parser:
-    def __init__(self, toks: list[Tok]):
+    def __init__(self, toks: list[Tok], ext=None):
         self.t = toks
         self.i = 0
-        self.ltypes: dict[str, Type] = {}
+        self.ext = ext  # ソースなしで取り込んだパッケージ（型と結果の形が、最初から定義済み）
+        self.ltypes: dict[str, Type] = dict(ext.ltypes) if ext else {}
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
-        self.composites: set[str] = {"vtime"}  # 合成型の名前（Make の見分けに使う）
+        self.composites: set[str] = {"vtime"} | ({n for n, t in ext.ltypes.items() if t.kind == "合成"} if ext else set())  # 合成型の名前（Make の見分けに使う）
         self.used_builtin: set[str] = set()  # 使われた組み込みの合成型
 
     # ---- 部品 ----
@@ -166,6 +167,9 @@ class Parser:
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
+        if self.ext:
+            p.results = list(self.ext.results) + p.results
+            p.extern_names, p.extern_crates, p.sourceless = self.ext.extern_names, self.ext.extern_crates, self.ext.sourceless
         self.apply_stores(p, stores)
         self.add_sync_state(p)
         return p
@@ -984,14 +988,14 @@ def collect_labels(toks: list[Tok]) -> dict:
     return labels
 
 
-def parse_toks(toks, origin) -> Program:
-    p = Parser(toks).program()
-    p.labels = collect_labels(toks)
+def parse_toks(toks, origin, ext=None) -> Program:
+    p = Parser(toks, ext).program()
+    p.labels = {**(ext.labels if ext else {}), **collect_labels(toks)}
     p.origin = origin
     return p
 
 
 def parse(src: str, path=None) -> Program:
     """path は、use でモジュールを取り込むときの基準になるファイル（文字列から読むときは無し）"""
-    toks, origin = expand(lex(src), path)
-    return parse_toks(toks, origin)
+    toks, origin, ext = expand(lex(src), path)
+    return parse_toks(toks, origin, ext if ext and (ext.ltypes or ext.results) else None)

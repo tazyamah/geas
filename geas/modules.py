@@ -49,6 +49,12 @@ class Loaded:
         self.origin: dict[str, tuple[str, str]] = {}
         self.files: dict[Path, str] = {}  # 読んだファイル → モジュール名
         self.names: dict[str, dict[str, str]] = {}  # モジュール名 → {元の名前: 付け替えた名前}
+        self.ltypes: dict = {}  # ソースなしのパッケージの論理型（付け替えた名前 → 型）
+        self.results: list = []  # ソースなしのパッケージの結果の形
+        self.labels: dict = {}  # ソースなしのパッケージの表示名
+        self.extern_names: set = set()
+        self.extern_crates: list = []
+        self.sourceless: list = []
         self.versions: dict[str, str] = {}  # モジュール名 → version（`module 名前 version "1.0.0"`。書かなければ空）
 
 
@@ -67,7 +73,10 @@ def split_uses(toks: list[Tok]):
                 if toks[skip_to + 1].kind != "STR":
                     raise ModuleError('sha256 の後に、ハッシュを "…" の形で書きます', t.line)
                 sha, skip_to = toks[skip_to + 1].val, skip_to + 2
-            uses.append((toks[i + 1].val, t.line, sha))
+            quiet = False
+            if sha is not None and skip_to < len(toks) and toks[skip_to].kind == "NAME" and toks[skip_to].val == "sourceless":  # ソースなしでも使う（警告を消す）
+                quiet, skip_to = True, skip_to + 1
+            uses.append((toks[i + 1].val, t.line, (sha, quiet)))
             continue
         keep.append(t)
     return uses, keep
@@ -90,8 +99,8 @@ def replace_refs(toks: list[Tok], visible: dict[str, dict[str, str]]) -> list[To
     return out
 
 
-def open_package(iface: Path, sha: str | None, line: int) -> Path:
-    """パッケージ（インターフェース .geasi）を照合して、同梱のソースの場所を返す。
+def open_package(iface: Path, sha: str | None, line: int):
+    """パッケージ（インターフェース .geasi）を照合して、(同梱のソースの場所 or ソースが無ければ None, インターフェース) を返す。
     ハッシュの固定が必須。ソースがあれば、ソースのハッシュと、ソースから作り直したインターフェースの一致も確かめる"""
     import json
     import tempfile
@@ -110,7 +119,7 @@ def open_package(iface: Path, sha: str | None, line: int) -> Path:
         raise ModuleError(f"パッケージ {iface.name} は、この検査器（version {CHECKER_VERSION}）と合わない形式か version です", line)
     src = iface.parent / j.get("source_file", "")
     if not j.get("source_file") or not src.exists():
-        raise ModuleError(f"パッケージ {iface.name} にソースが同梱されていません。ソースなしのパッケージは、まだ取り込めません（インターフェースだけでの検査は、次の段階）", line)
+        return None, j
     if sha256(src.read_bytes()) != j["source_sha256"]:
         raise ModuleError(f"パッケージ {iface.name} のソースが、インターフェースの記録と違います", line)
     with tempfile.TemporaryDirectory() as tmp:
@@ -120,7 +129,34 @@ def open_package(iface: Path, sha: str | None, line: int) -> Path:
             raise ModuleError(f"パッケージ {iface.name} のソースを検査できません: {e}", line)
         if made.read_bytes() != data:
             raise ModuleError(f"パッケージ {iface.name} のインターフェースが、同梱のソースから作ったものと一致しません", line)
-    return src
+    return src, j
+
+
+def load_interface(iface: Path, j: dict, sha: str, quiet: bool, loaded: Loaded, line: int) -> str:
+    """ソースなしのパッケージ：インターフェースの型と結果の形だけを取り込む。定義は、パッケージの crate にある"""
+    from .package import result_from, type_from
+
+    mod = j["module"]
+    if mod in loaded.names:
+        return mod
+    if j["converts"] or j["parts"] or j["deeds"]:
+        raise ModuleError(f"パッケージ {iface.name} の変換・部品・処理は、ソースなしではまだ使えません（型と結果の形だけ使えます）", line)
+    names = {}
+    for m, (md, n) in j["origin"].items():
+        names[n] = m
+    loaded.names[mod] = names
+    loaded.origin.update({m: (md, n) for m, (md, n) in j["origin"].items()})
+    loaded.versions[mod] = j["version"]
+    for n, t in j["ltypes"].items():
+        loaded.ltypes[n] = type_from(t)
+        loaded.extern_names.add(n)
+    for r in j["results"]:
+        loaded.results.append(result_from(r))
+        loaded.extern_names.add(r["name"])
+    loaded.labels.update({n: ls for n, ls in j["labels"].items()})
+    loaded.extern_crates.append((f"geas_mod_{mod.lower()}", str((iface.parent / "crate").resolve())))
+    loaded.sourceless.append((mod, j["version"], sha, quiet))
+    return mod
 
 
 def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str:
@@ -170,10 +206,14 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
 
 def use_all(uses, base: Path, loaded: Loaded, stack: list[Path]) -> dict[str, dict[str, str]]:
     visible: dict[str, dict[str, str]] = {}
-    for rel, line, sha in uses:
+    for rel, line, (sha, quiet) in uses:
         target = base.parent / rel
         if rel.endswith(".geasi"):
-            target = open_package(target, sha, line)
+            target, j = open_package(target, sha, line)
+            if target is None:  # ソースなし：インターフェースだけを取り込む
+                mod = load_interface(base.parent / rel, j, sha, quiet, loaded, line)
+                visible[mod] = loaded.names[mod]
+                continue
         elif sha is not None:
             raise ModuleError("sha256 を付けられるのは、パッケージ（.geasi）の取り込みだけです", line)
         mod = load_module(target, loaded, stack, line)
@@ -181,16 +221,16 @@ def use_all(uses, base: Path, loaded: Loaded, stack: list[Path]) -> dict[str, di
     return visible
 
 
-def expand(toks: list[Tok], path: Path | None) -> tuple[list[Tok], dict[str, tuple[str, str]]]:
-    """取り込む側の字句から、use を取り除き、モジュールの字句を前に足す。(字句の列, 付け替えた名前の対応)"""
+def expand(toks: list[Tok], path: Path | None) -> tuple[list[Tok], dict[str, tuple[str, str]], Loaded | None]:
+    """取り込む側の字句から、use を取り除き、モジュールの字句を前に足す。(字句の列, 付け替えた名前の対応, 取り込んだ結果)"""
     uses, toks = split_uses(toks)
     if not uses:
-        return toks, {}
+        return toks, {}, None
     if path is None:
         raise ModuleError("use は、ファイルから読むときだけ使えます", toks[0].line if toks else 0)
     loaded = Loaded()
     visible = use_all(uses, Path(path).resolve(), loaded, [Path(path).resolve()])
-    return loaded.toks + replace_refs(toks, visible), loaded.origin
+    return loaded.toks + replace_refs(toks, visible), loaded.origin, loaded
 
 
 def load_standalone(path) -> tuple[list[Tok], dict[str, tuple[str, str]], str, Loaded]:
