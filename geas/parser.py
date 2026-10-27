@@ -335,6 +335,8 @@ class Parser:
     def _type(self) -> Type:
         tok = self.name()
         if tok == "id":
+            if self.accept("→"):  # id → 値：キーが entity のキーに限られない、読み取り専用の値の入れ物
+                return Type("写像", key="id", value=self.type())
             return Type("ID")
         if tok == "set":  # set of id
             self.expect("of")
