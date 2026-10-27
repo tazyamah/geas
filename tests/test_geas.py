@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from geas.ast import show_type
-from geas.check import ERROR, QUESTION, check
+from geas.check import ERROR, QUESTION, WARN, check
 from geas.examples import HOST_MOD, compare_examples, run_crate, runner_source, write_crate
 from geas.hostgen import host_source
 from geas.spec import render
@@ -2209,3 +2209,33 @@ def test_versionが違う_ハッシュが違うと取り込めない(tmp_path):
     mod_dir(tmp_path, geo=GEO_V)
     with pytest.raises(ModuleError, match="version の後に"):
         use_app(tmp_path, " version")
+
+
+# ---- 応答の中身 ----
+REPLY_SRC = SHOP_SRC.replace("/// 待ち解除結果", "reply PaymentDeclined(reason: id required)\nreply PaymentSucceeded(auth_id: id required)\n\n/// 待ち解除結果")
+
+
+def test_応答は中身を宣言でき_行き先の処理の入力に足される():
+    src = REPLY_SRC.replace("deed apply_payment_result {\n  input order_id: id required", "deed apply_payment_result {\n  input order_id: id required, auth_id: id required")
+    ck = chk(src)
+    assert ck.ready, ck.diags
+    assert [r.name for r in ck.p.replies] == ["PaymentDeclined", "PaymentSucceeded"]
+    assert ("決済成功", "auth_id（必須）") in build(ck)["応答"]
+    assert 'ReplyDef { name: "PaymentSucceeded", fields: &[("auth_id", "ID", true)] }' in generate(ck)
+
+
+def test_応答の中身が行き先の処理の入力と合わないと止まる():
+    ck = chk(REPLY_SRC)  # apply_payment_result は auth_id を入力にもたない
+    assert any("応答の中身" in m for m in msgs(ck, ERROR))
+
+
+def test_待ち合わせでは全部の応答の中身が渡り_名前が重なると止まる():
+    src = REPLY_SRC.replace("reply PaymentSucceeded → apply_payment_result", "all reply PaymentSucceeded, PaymentDeclined → apply_payment_result")
+    dup = src.replace("reply PaymentDeclined(reason: id required)", "reply PaymentDeclined(auth_id: id required)")
+    assert any("同じ名前" in m for m in msgs(chk(dup), ERROR))
+    ok = src.replace("deed apply_payment_result {\n  input order_id: id required", "deed apply_payment_result {\n  input order_id: id required, auth_id: id required, reason: id required")
+    assert chk(ok).ready
+
+
+def test_使われない応答の宣言は警告():
+    assert any("使われていません" in m for m in msgs(chk(REPLY_SRC.replace("reply PaymentDeclined", "reply Unused")), WARN))

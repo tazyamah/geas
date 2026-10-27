@@ -152,6 +152,8 @@ class Parser:
                 p.processes.append(self.process(line))
             elif kw in ("nexus", "flow"):  # flow は nexus の別名（糖衣構文）
                 p.flows.append(self.flow(line))
+            elif kw == "reply":  # reply 名前(中身の名前: 型 [required], …)：応答が運ぶ中身の宣言
+                p.replies.append(self.reply_def(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
             elif kw == "query":
@@ -946,6 +948,15 @@ class Parser:
         return ev
 
     # ---- トリガ ----
+    def reply_def(self, line) -> ReplyDef:
+        name = self.name()
+        params = []
+        if self.accept("("):
+            params = self.comma_list(self.input_item)
+            self.expect(")")
+        self.end_line()
+        return ReplyDef(name, params, line)
+
     def trigger(self, line) -> Trigger:
         name = self.name()
         self.expect("(")

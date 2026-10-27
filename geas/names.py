@@ -58,6 +58,10 @@ def each_name(p: Program, ltype_names, upper, lower, local):
         upper(t.name, f"トリガ {t.name}")
         for n, _ in t.params:
             lower(n, f"トリガ {t.name}")
+    for rp in p.replies:
+        upper(rp.name, f"応答 {rp.name}")
+        for n, _ in rp.params:
+            lower(n, f"応答 {rp.name}")
     for f in p.flows:
         upper(f.name, f"フロー {f.name}")
     for ev in p.events:
