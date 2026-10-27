@@ -36,7 +36,7 @@ def plain(x):
     return x
 
 
-def interface(ck, mod: str, version: str, source: bytes, lib: str) -> dict:
+def interface(ck, mod: str, version: str, source: bytes, lib: str, source_file: str) -> dict:
     """公開するもの：型の元の組み込み型と制約、変換・部品の入出力の型と範囲と保証、結果の形、処理の入力と結果。中身は入れない"""
     p = ck.p
     return {
@@ -44,6 +44,7 @@ def interface(ck, mod: str, version: str, source: bytes, lib: str) -> dict:
         "module": mod,
         "version": version,
         "checker": CHECKER_VERSION,
+        "source_file": source_file,
         "source_sha256": sha256(source),
         "crate_sha256": sha256(lib.encode()),
         "ltypes": {n: plain(t) for n, t in p.ltype_defs.items()},
@@ -73,7 +74,7 @@ def build_package(src: Path, out: Path, no_source: bool = False) -> tuple[Path, 
     (crate / "Cargo.toml").write_text(cargo_toml(f"geas_mod_{mod.lower()}"))
     (crate / "src" / "lib.rs").write_text(lib)
     iface = out / f"{mod.lower()}.geasi"
-    iface.write_text(json.dumps(interface(ck, mod, loaded.versions.get(mod, ""), source, lib), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    iface.write_text(json.dumps(interface(ck, mod, loaded.versions.get(mod, ""), source, lib, src.name), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     if not no_source:
         (out / src.name).write_bytes(source)
     return iface, sha256(iface.read_bytes())
