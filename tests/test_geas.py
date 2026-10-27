@@ -1551,9 +1551,11 @@ def test_合成型の誤りは止まる():
     assert any("成分「z」がありません" in m for m in msgs(ck, ERROR))
 
 
-def test_合成型は結果の中身には使えない():
+def test_合成型は問い合わせの入力と部品にはまだ使えない():
     ck = chk(mutate(COMP, "読んだ(地図ID: id)", "読んだ(地図ID: id, 場所: 点)"))
-    assert any("いまは項目と処理の入力・slot にだけ" in m for m in msgs(ck, ERROR)), ck.diags
+    assert not any("合成型" in m and "にだけ" in m for m in msgs(ck, ERROR)), ck.diags  # 結果の中身には使える
+    ck = chk(COMP + "\nquery 点を探す {\n  input 位置: 点\n  from 地図\n  reads 地図.地図ID\n}\n")
+    assert any("にだけ使えます" in m for m in msgs(ck, ERROR)), ck.diags
 
 
 def test_合成型の宣言の誤りは止まる():
@@ -2292,3 +2294,37 @@ def test_丸めの単位は金額の単位と合わせる():
     ok = ok.replace("input product_id: id required", "input product_id: id required\n  slot tax: TaxRateValue")
     assert not unit_errors(ok)
     assert any("単位で丸めています" in m for m in msgs(chk(ok.replace("floor, USD", "floor, JPY")), ERROR))
+
+
+# ---- 合成型を使える場所 ----
+ADDR_SRC = SHOP_SRC.replace("/// 商品\nentity Product", 'ltype Zip = text 7..7 of "0-9"\nltype Line = text 1..50\nltype Addr { zip: Zip, line: Line }\n/// 商品\nentity Product', 1)
+ADDR_SRC = ADDR_SRC.replace("  NoSuchCustomer\n}", "  NoSuchCustomer\n  Shipped(to: Addr)\n}", 1)
+ADDR_SRC = ADDR_SRC.replace("/// 決済\neffect Payment.", 'effect Ship. send(order_id: id, to: Addr) no_wait "配送の失敗は人が見る"\n\n/// 決済\neffect Payment.', 1)
+ADDR_SRC = ADDR_SRC.replace("place_order: Received → request_payment,", "place_order: Shipped → reply, Received → request_payment,")
+ADDR_SRC += '''
+deed ship_order {
+  input order_id: id required, addr: Addr required
+  reads Order.status
+  result PlaceOrderResult
+  effects Ship.send
+
+  let order = Order[order_id] else { return NoSuchCustomer }
+  if order.status != Received { return NoSuchCustomer }
+  request Ship.send(order_id, addr, idempotency_key = order_id)
+  return Shipped(addr)
+}
+
+nexus ShipFlow {
+  ship_order: Shipped → reply, NoSuchCustomer → reply, Received → reply, OutOfStock → reply, NoSuchProduct → reply
+}
+'''
+
+
+def test_合成型は結果の中身_外部作用の引数_応答の中身にも使える():
+    ck = chk(ADDR_SRC)
+    assert ck.ready, ck.diags
+    assert "Shipped(" in generate(ck) and "pub to: Addr" in generate(ck).replace("\n", " ") or "to: Addr" in generate(ck)
+    from geas.hostgen import host_source
+    assert 'js_str("zip")' in host_source(ck)  # 画面とやりとりする JSON にも、成分が平らに出る
+    with_reply = ADDR_SRC.replace("/// 待ち解除結果", "reply Delivered(to: Addr required)\n\n/// 待ち解除結果")
+    assert not [m for m in msgs(chk(with_reply), ERROR) if "合成型" in m]

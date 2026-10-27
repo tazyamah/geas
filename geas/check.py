@@ -205,7 +205,7 @@ class Checker:
     def check_type(self, t: Type, where: str, comp_ok: bool = False):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
         if t.kind == "合成" and not comp_ok:
-            self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目と処理の入力・slot にだけ使えます")
+            self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目・処理の入力と slot・結果の中身・外部作用の引数・応答の中身・トリガの引数にだけ使えます")
         if t.kind == "金額" and t.unit not in CURRENCIES:
             self.d(ERROR, "型", where, f"金額の単位「{t.unit}」は使えません（{'・'.join(CURRENCIES)}）")
         if t.kind == "参照" and t.target not in self.data:
@@ -307,13 +307,13 @@ class Checker:
             for v, ps in r.variants:
                 self.check_unique([n for n, _ in ps], f"結果 {r.name} / {v}", "中身の名前")
                 for n, t in ps:
-                    self.check_type(t, f"結果 {r.name} / {v} / {n}")
+                    self.check_type(t, f"結果 {r.name} / {v} / {n}", comp_ok=True)
         for pt in p.parts:
             self.check_part(pt)
         for e in p.effects:
             self.check_unique([n for n, _ in e.params], f"外部作用 {e.name}", "引数")
             for n, t in e.params:
-                self.check_type(t, f"外部作用 {e.name} / {n}")
+                self.check_type(t, f"外部作用 {e.name} / {n}", comp_ok=True)
         for x in [*p.processes, *p.queries]:
             kind = "処理" if isinstance(x, Process) else "問い合わせ"
             self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
@@ -321,12 +321,12 @@ class Checker:
                 self.check_type(t, f"{kind} {x.name} / {n}", comp_ok=isinstance(x, Process))
         for tg in p.triggers:
             for n, t in tg.params:
-                self.check_type(t, f"トリガ {tg.name} / {n}")
+                self.check_type(t, f"トリガ {tg.name} / {n}", comp_ok=True)
         self.check_unique([x.name for x in p.replies], "全体", "応答の宣言")
         for rp in p.replies:
             self.check_unique([n for n, _ in rp.params], f"応答 {rp.name}", "中身の名前")
             for n, t in rp.params:
-                self.check_type(t, f"応答 {rp.name} / {n}")
+                self.check_type(t, f"応答 {rp.name} / {n}", comp_ok=True)
         for dt in p.data:
             if self.key_field(dt.name) is None:
                 self.d(ERROR, "データ", f"データ {dt.name}", "「ID 一意」の項目（キー）がありません")
