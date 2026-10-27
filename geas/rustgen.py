@@ -192,11 +192,10 @@ def opt(v):
 
 
 class Gen:
-    def __init__(self, ck: Checker, convert_fns: bool = False):
+    def __init__(self, ck: Checker):
         assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
-        self.convert_fns = convert_fns
         self.out: list[str] = []
 
     def w(self, s=""):
@@ -205,15 +204,11 @@ class Gen:
     # ---- 全体 ----
     def lib(self) -> str:
         self.out = [PRELUDE]
-        for crate, _ in self.p.extern_crates:
-            self.w(f"pub use {crate}::*;  // ソースなしのパッケージ：型と結果の形の定義はパッケージの crate にある")
         self.states()
         self.records()
         self.writes_enum()
         self.effects()
         self.parts()
-        if self.convert_fns:
-            self.convert_fns_out()
         self.results()
         for proc in self.p.processes:
             ProcGen(self, proc).emit()
@@ -360,8 +355,6 @@ class Gen:
 
     def records(self):
         for c in self.p.composites:
-            if c.target in self.p.extern_names:
-                continue  # ソースなしのパッケージの型は、パッケージの crate にある
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub struct {c.target} {{")
             for pn, pt in c.parts:
@@ -441,24 +434,6 @@ class Gen:
             self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
         self.w("}")
 
-    def convert_fns_out(self):
-        """変換（geas の式）を、公開関数にする。引数と戻り値は、呼ぶ側の局所の型（数は i128）"""
-        local = lambda t: "i128" if t.kind in ("整数", "金額") else rust_type(t)
-        for pt in self.p.parts:
-            if pt.body is None:
-                continue
-            pg = ProcGen.__new__(ProcGen)
-            pg.g, pg.ck, pg.proc = self, self.ck, Process(pt.name)
-            pg.info, pg.rdef, pg.scope, pg.lines, pg.ind = ProcInfo(pt.name), None, {}, [], 1
-            pg.null_inputs, pg.in_loop, pg.fills = set(), False, {}
-            pg.info.types.update(self.ck.part_types)
-            for n, t in pt.params:
-                pg.scope[n] = ("local", tok_of(t))
-            pg.fills = {(n, c): v for n, t in pt.params for c, v in (t.fills or ())}
-            body = pg.rx(pt.body)
-            ps = ", ".join(f"{n}: {local(t)}" for n, t in pt.params)
-            self.w(f"/// 変換 {pt.name}（パッケージの利用者が呼ぶ）\npub fn {pt.name}({ps}) -> {local(pt.ret)} {{\n    {body + ' as i128' if pt.ret.kind in ('整数', '金額') else body}\n}}")
-
     def effects(self):
         self.w("#[derive(Clone, Debug, PartialEq)]\npub enum Effect {")
         for e in self.p.effects:
@@ -476,8 +451,6 @@ class Gen:
 
     def results(self):
         for r in self.p.results:
-            if r.name in self.p.extern_names:
-                continue
             self.w("#[derive(Clone, Debug, PartialEq)]")
             self.w(f"pub enum {r.name} {{")
             vs = [(v, [t for _, t in ps]) for v, ps in r.variants]  # Rust では位置で持つ（名前は検査と受け渡しの定義に使う）
@@ -594,12 +567,10 @@ class ProcGen:
             call = self.rx(pt.body)
             self.fills = {}
             self.scope = saved
-        elif pt.extern_crate:  # ソースなしのパッケージの変換：パッケージの crate の関数を呼ぶ（引数は局所の型のまま）
-            call = f"{e.n}({', '.join(n if t.kind in ('整数', '金額') else f'{n}.clone()' for n, t in pt.params)})"
         else:
             call = f"parts.{e.n}({', '.join(args)})"
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
-        if pt.body is not None or pt.extern_crate:  # convert の範囲は検査器が静的に示してある（パッケージの変換は、パッケージを作るときに）。実行時には確かめない
+        if pt.body is not None:  # convert の範囲は検査器が静的に示してある。実行時には確かめない
             return "{ " + " ".join(lines) + " result }"
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
@@ -902,7 +873,7 @@ class ProcGen:
         g.w("}\n")
 
 
-def cargo_toml(name: str, host: bool = False, crates=()) -> str:
+def cargo_toml(name: str, host: bool = False) -> str:
     crate_type = 'crate-type = ["cdylib", "rlib"]\n' if host else ""
     opt = 'opt-level = "s"\n' if host else ""
     return f'''[package]
@@ -913,13 +884,10 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 {crate_type}
-[dependencies]
-{"".join(f'{c} = {{ path = "{path}" }}' + chr(10) for c, path in crates)}
 [profile.release]
 {opt}overflow-checks = true
 '''
 
 
-def generate(ck: Checker, convert_fns: bool = False) -> str:
-    """convert_fns：変換を、crate の公開関数としても出す（パッケージの crate。ソースなしで取り込む側が呼ぶ）"""
-    return Gen(ck, convert_fns).lib()
+def generate(ck: Checker) -> str:
+    return Gen(ck).lib()

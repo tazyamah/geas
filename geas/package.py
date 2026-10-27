@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""モジュールのパッケージ（docs/modules.md の段階2）。インターフェース（検査結果）と、モジュールから生成した Rust の crate を出す。
-既定でソースも同梱する（ソース付きを強く推す。外すときだけ no_source を明示する）。
+"""モジュールのパッケージ（docs/modules.md の段階2）。インターフェース（検査結果）と、モジュールのソースを出す。
+ソースを必ず同梱する（ソースを公開しないモジュールは使えない）。crate は出さない：使う側はソースから生成する。
 インターフェースは検査器が出すもので、人が手で書かない。今のところ、ほかのモジュールを取り込むモジュールはパッケージにできない。"""
 import dataclasses
 import hashlib
 import json
 from pathlib import Path
 
-from .ast import Range, ResultDef, Type, show
+from .ast import show
 from .check import check
 from .modules import ModuleError, load_standalone
 from .parser import parse_toks
-from .rustgen import cargo_toml, generate
 
 CHECKER_VERSION = "0.1.0"  # 検査器の version。インターフェースの意味が変わったら上げる
 INTERFACE_FORMAT = 1
@@ -36,7 +35,7 @@ def plain(x):
     return x
 
 
-def interface(ck, mod: str, version: str, source: bytes, lib: str, source_file: str) -> dict:
+def interface(ck, mod: str, version: str, source: bytes, source_file: str) -> dict:
     """公開するもの：型の元の組み込み型と制約、変換・部品の入出力の型と範囲と保証、結果の形、処理の入力と結果。中身は入れない"""
     p = ck.p
     return {
@@ -46,7 +45,6 @@ def interface(ck, mod: str, version: str, source: bytes, lib: str, source_file: 
         "checker": CHECKER_VERSION,
         "source_file": source_file,
         "source_sha256": sha256(source),
-        "crate_sha256": sha256(lib.encode()),
         "ltypes": {n: plain(t) for n, t in p.ltype_defs.items()},
         "converts": [{"name": x.name, "params": plain(x.params), "ret": plain(x.ret)} for x in p.parts if x.body is not None],
         "parts": [{"name": x.name, "params": plain(x.params), "ret": plain(x.ret), "guarantee": show(x.guarantee)} for x in p.parts if x.body is None],
@@ -57,7 +55,7 @@ def interface(ck, mod: str, version: str, source: bytes, lib: str, source_file: 
     }
 
 
-def build_package(src: Path, out: Path, no_source: bool = False) -> tuple[Path, str]:
+def build_package(src: Path, out: Path) -> tuple[Path, str]:
     """パッケージを out に作る。(インターフェースのファイル, そのハッシュ) を返す"""
     src = Path(src)
     toks, origin, mod, loaded = load_standalone(src)
@@ -66,38 +64,9 @@ def build_package(src: Path, out: Path, no_source: bool = False) -> tuple[Path, 
     ck = check(parse_toks(toks, origin), strict_names=True)
     if not ck.ok:
         raise PackageError("検査にエラーがあるので、パッケージにできません:\n" + "\n".join(str(d) for d in ck.diags))
-    lib = generate(ck, convert_fns=True)
     source = src.read_bytes()
     out.mkdir(parents=True, exist_ok=True)
-    crate = out / "crate"
-    (crate / "src").mkdir(parents=True, exist_ok=True)
-    (crate / "Cargo.toml").write_text(cargo_toml(f"geas_mod_{mod.lower()}"))
-    (crate / "src" / "lib.rs").write_text(lib)
     iface = out / f"{mod.lower()}.geasi"
-    iface.write_text(json.dumps(interface(ck, mod, loaded.versions.get(mod, ""), source, lib, src.name), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-    if not no_source:
-        (out / src.name).write_bytes(source)
+    iface.write_text(json.dumps(interface(ck, mod, loaded.versions.get(mod, ""), source, src.name), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    (out / src.name).write_bytes(source)
     return iface, sha256(iface.read_bytes())
-
-
-def type_from(d: dict) -> Type:
-    """インターフェースの型（plain の逆）"""
-    t = Type(d["kind"])
-    for k, v in d.items():
-        if k == "range":
-            t.range = Range(v.get("lo"), v.get("hi"))
-        elif k == "value":
-            t.value = type_from(v)
-        elif k == "parts":
-            t.parts = tuple((n, type_from(x)) for n, x in v)
-        elif k in ("chars",):
-            t.chars = tuple(v)
-        elif k == "fills":
-            t.fills = tuple(tuple(x) for x in v)
-        elif k != "kind":
-            setattr(t, k, v)
-    return t
-
-
-def result_from(d: dict) -> ResultDef:
-    return ResultDef(d["name"], [(v, [(n, type_from(t)) for n, t in fs]) for v, fs in d["variants"]])
