@@ -4,6 +4,7 @@
 取り込む側は `use "path"` と書き、モジュールの名前は `名前.定義名` で指す。
 内部では、モジュールの定義名を `名前_定義名` に付け替えて、1つの字句の列につなげる（大文字で始まる名前には _ が入らず、
 小文字の名前は大文字で始まらないので、利用者の名前とは重ならない）。"""
+import hashlib
 from pathlib import Path
 
 from .lexer import Tok, lex
@@ -53,7 +54,7 @@ class Loaded:
 
 
 def split_uses(toks: list[Tok]):
-    """`use "path"` の行を取り出す。(path と行番号の列, 残りの字句)"""
+    """`use "path" [version "1.2.0"] [sha256 "…"]` の行を取り出す。((path, 行番号, (version, sha256)) の列, 残りの字句)"""
     uses, keep, skip_to = [], [], -1
     starts = set(statement_starts(toks))
     for i, t in enumerate(toks):
@@ -62,12 +63,13 @@ def split_uses(toks: list[Tok]):
         if i in starts and t.kind == "NAME" and t.val == "use":
             if i + 1 >= len(toks) or toks[i + 1].kind != "STR":
                 raise ModuleError('use の後に、取り込むファイルを "path" の形で書きます', t.line)
-            sha, skip_to = None, i + 2
-            if skip_to + 1 < len(toks) and toks[skip_to].kind == "NAME" and toks[skip_to].val == "sha256":  # パッケージのハッシュの固定
-                if toks[skip_to + 1].kind != "STR":
-                    raise ModuleError('sha256 の後に、ハッシュを "…" の形で書きます', t.line)
-                sha, skip_to = toks[skip_to + 1].val, skip_to + 2
-            uses.append((toks[i + 1].val, t.line, sha))
+            pins, skip_to = {}, i + 2
+            for key in ("version", "sha256"):  # 依存の版の明示と、ソースのハッシュの固定（どちらも任意。この順）
+                if skip_to < len(toks) and toks[skip_to].kind == "NAME" and toks[skip_to].val == key:
+                    if skip_to + 1 >= len(toks) or toks[skip_to + 1].kind != "STR":
+                        raise ModuleError(f'{key} の後に、値を "…" の形で書きます', t.line)
+                    pins[key], skip_to = toks[skip_to + 1].val, skip_to + 2
+            uses.append((toks[i + 1].val, t.line, (pins.get("version"), pins.get("sha256"))))
             continue
         keep.append(t)
     return uses, keep
@@ -88,40 +90,6 @@ def replace_refs(toks: list[Tok], visible: dict[str, dict[str, str]]) -> list[To
             out.append(t)
             i += 1
     return out
-
-
-def open_package(iface: Path, sha: str | None, line: int) -> Path:
-    """パッケージ（インターフェース .geasi）を照合して、同梱のソースの場所を返す。
-    ハッシュの固定が必須。ソースが無いパッケージは使えない（隠したままの中身は、検査も生成もできない）。
-    ソースのハッシュと、ソースから作り直したインターフェースの一致も確かめる"""
-    import json
-    import tempfile
-
-    from .package import CHECKER_VERSION, INTERFACE_FORMAT, PackageError, build_package, sha256
-
-    if sha is None:
-        raise ModuleError(f'パッケージ {iface.name} の取り込みには、ハッシュの固定が必要です（use "{iface.name}" sha256 "…"）', line)
-    if not iface.exists():
-        raise ModuleError(f"パッケージのファイル {iface.name} がありません", line)
-    data = iface.read_bytes()
-    if sha256(data) != sha:
-        raise ModuleError(f"パッケージ {iface.name} のハッシュが固定した値と違います（中身が変わっています）", line)
-    j = json.loads(data)
-    if j.get("format") != INTERFACE_FORMAT or j.get("checker") != CHECKER_VERSION:
-        raise ModuleError(f"パッケージ {iface.name} は、この検査器（version {CHECKER_VERSION}）と合わない形式か version です", line)
-    src = iface.parent / j.get("source_file", "")
-    if not j.get("source_file") or not src.exists():
-        raise ModuleError(f"パッケージ {iface.name} にソースが同梱されていません。ソースを公開しないモジュールは使えません", line)
-    if sha256(src.read_bytes()) != j["source_sha256"]:
-        raise ModuleError(f"パッケージ {iface.name} のソースが、インターフェースの記録と違います", line)
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            made, _ = build_package(src, Path(tmp))
-        except PackageError as e:
-            raise ModuleError(f"パッケージ {iface.name} のソースを検査できません: {e}", line)
-        if made.read_bytes() != data:
-            raise ModuleError(f"パッケージ {iface.name} のインターフェースが、同梱のソースから作ったものと一致しません", line)
-    return src
 
 
 def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str:
@@ -173,13 +141,13 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
 
 def use_all(uses, base: Path, loaded: Loaded, stack: list[Path]) -> dict[str, dict[str, str]]:
     visible: dict[str, dict[str, str]] = {}
-    for rel, line, sha in uses:
+    for rel, line, (version, sha) in uses:
         target = base.parent / rel
-        if rel.endswith(".geasi"):
-            target = open_package(target, sha, line)
-        elif sha is not None:
-            raise ModuleError("sha256 を付けられるのは、パッケージ（.geasi）の取り込みだけです", line)
         mod = load_module(target, loaded, stack, line)
+        if version is not None and loaded.versions.get(mod, "") != version:
+            raise ModuleError(f"モジュール {mod} の version は「{loaded.versions.get(mod) or '（無し）'}」で、use に書いた「{version}」と違います", line)
+        if sha is not None and hashlib.sha256(target.resolve().read_bytes()).hexdigest() != sha:
+            raise ModuleError(f"モジュール {mod} のソースのハッシュが、固定した値と違います（中身が変わっています）", line)
         visible[mod] = loaded.names[mod]
     return visible
 
@@ -194,12 +162,3 @@ def expand(toks: list[Tok], path: Path | None) -> tuple[list[Tok], dict[str, tup
     loaded = Loaded()
     visible = use_all(uses, Path(path).resolve(), loaded, [Path(path).resolve()])
     return loaded.toks + replace_refs(toks, visible), loaded.origin
-
-
-def load_standalone(path) -> tuple[list[Tok], dict[str, tuple[str, str]], str, Loaded]:
-    """モジュールのファイルだけを読む（パッケージを作るとき）。(字句の列, 付け替えた名前の対応, モジュール名, 読んだ結果)"""
-    path = Path(path).resolve()
-    loaded = Loaded()
-    mod = load_module(path, loaded, [], 0)
-    last = loaded.toks[-1].line if loaded.toks else 0
-    return loaded.toks + [Tok("EOF", "", last)], loaded.origin, mod, loaded

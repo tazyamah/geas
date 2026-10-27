@@ -2090,99 +2090,38 @@ def test_表示名の無い名前は警告で教える(tmp_path):
     assert not [d for d in check(parse(open(EX / "shop.geas").read())).diags if d.code == "表示名"]
 
 
-# ---- モジュールのパッケージ ----
-def test_パッケージはインターフェースとソースを出し_ハッシュが合う(tmp_path):
-    import hashlib
-    import json
-
-    from geas.package import build_package
-
-    mod_dir(tmp_path, geo=GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n'))
-    iface, digest = build_package(tmp_path / "geo.geas", tmp_path / "out")
-    j = json.loads(iface.read_text())
-    assert (j["module"], j["version"], j["format"]) == ("Geo", "1.2.0", 1)
-    assert j["ltypes"]["Geo_Dots"]["range"] == {"lo": 0, "hi": 100}  # 下限の 0 を落とさない
-    assert j["converts"][0]["name"] == "Geo_same" and "body" not in j["converts"][0]  # 中身は出さない
-    assert j["source_sha256"] == hashlib.sha256((tmp_path / "geo.geas").read_bytes()).hexdigest()
-    assert not (tmp_path / "out" / "crate").exists()  # 使う側がソースから生成するので、crate は出さない
-    assert digest == hashlib.sha256(iface.read_bytes()).hexdigest()
-    assert (tmp_path / "out" / "geo.geas").exists()  # ソースは必ず同梱する
+# ---- モジュールの version とハッシュの固定 ----
+GEO_V = GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n')
 
 
-def test_パッケージは検査のエラーと取り込むモジュールを断る(tmp_path):
-    from geas.package import PackageError, build_package
-
-    mod_dir(tmp_path, bad=GEO.replace("module Geo", "module Bad").replace("Dots", "dots"))
-    with pytest.raises(PackageError, match="検査にエラー"):
-        build_package(tmp_path / "bad.geas", tmp_path / "o2")
-
-
-USER = 'use "geo.geas"\nmodule User version "0.3.0"\nltype Few = int 0..5\nconvert pick(d: Geo.Dots) -> Geo.Dots = Geo.same(d)\n'
-
-
-def test_使っているモジュールのあるモジュールは_依存の名前とversionとソースを明示してパッケージになる(tmp_path):
-    import json
-
-    from geas.package import PackageError, build_package
-
-    mod_dir(tmp_path, geo=GEO, user=USER)
-    with pytest.raises(PackageError, match="version がありません"):
-        build_package(tmp_path / "user.geas", tmp_path / "o1")
-    mod_dir(tmp_path, geo=GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n'))
-    iface, _ = build_package(tmp_path / "user.geas", tmp_path / "o2")
-    j = json.loads(iface.read_text())
-    assert [(d["module"], d["version"], d["source_file"]) for d in j["dependencies"]] == [("Geo", "1.2.0", "geo.geas")]
-    assert (tmp_path / "o2" / "geo.geas").exists() and (tmp_path / "o2" / "user.geas").exists()
-    # 使う側：依存ごとハッシュを確かめて取り込め、依存のソースが書き換わると止まる
-    digest = hashlib_sha(iface)
-    (tmp_path / "app.geas").write_text(f'use "o2/user.geasi" sha256 "{digest}"\nltype T = int 0..3\n')
-    assert "Geo_Dots" in parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas").ltype_names
-    (tmp_path / "o2" / "geo.geas").write_text(GEO.replace("module Geo\n", 'module Geo version "1.2.0"\n').replace("0..100", "0..999"))
-    with pytest.raises(ModuleError, match="一致しません|違います"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
-
-
-def hashlib_sha(path):
+def sha_of(path):
     import hashlib
 
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def pkg_app(tmp_path, sha, path="out/geo.geasi"):
-    from geas.package import build_package
-
-    mod_dir(tmp_path, geo=GEO)
-    _, digest = build_package(tmp_path / "geo.geas", tmp_path / "out")
-    app = GEO_APP.replace('use "geo.geas"', f'use "{path}" sha256 "{sha or digest}"' if sha != "" else f'use "{path}"')
-    (tmp_path / "app.geas").write_text(app)
-    return digest
+def use_app(tmp_path, pins):
+    (tmp_path / "app.geas").write_text(GEO_APP.replace('use "geo.geas"', f'use "geo.geas"{pins}'))
+    return parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
 
 
-def test_パッケージをハッシュを固定して取り込める(tmp_path):
-    pkg_app(tmp_path, None)
-    ck = load_strict(tmp_path)
-    assert ck.ok, ck.diags
-    assert "Geo_Pos" in ck.p.ltype_names
+def test_useで依存の_version_とソースのハッシュを明示でき_合っていれば取り込める(tmp_path):
+    mod_dir(tmp_path, geo=GEO_V)
+    p = use_app(tmp_path, f' version "1.2.0" sha256 "{sha_of(tmp_path / "geo.geas")}"')
+    assert "Geo_Pos" in p.ltype_names
+    assert "Geo_Pos" in use_app(tmp_path, "").ltype_names  # どちらも書かなくてよい
+    assert "Geo_Pos" in use_app(tmp_path, ' version "1.2.0"').ltype_names
 
 
-def test_パッケージのハッシュが無い_違う_ソースが変わると取り込めない(tmp_path):
-    pkg_app(tmp_path, "")
-    with pytest.raises(ModuleError, match="ハッシュの固定が必要"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
-    pkg_app(tmp_path, "0" * 64)
-    with pytest.raises(ModuleError, match="ハッシュが固定した値と違います"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
-    digest = pkg_app(tmp_path, None)
-    (tmp_path / "out" / "geo.geas").write_text(GEO + "\nltype Extra = int 0..5\n")  # 同梱のソースだけが書き換わった
-    with pytest.raises(ModuleError, match="ソースが、インターフェースの記録と違います"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
-
-
-def test_ソースの無いパッケージは使えない_sha256は_geas_には付けられない(tmp_path):
-    pkg_app(tmp_path, None)
-    (tmp_path / "out" / "geo.geas").unlink()  # 配り手がソースを付けなかった
-    with pytest.raises(ModuleError, match="ソースを公開しないモジュールは使えません"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
-    mod_dir(tmp_path, geo=GEO, app=GEO_APP.replace('"geo.geas"', '"geo.geas" sha256 "abc"'))
-    with pytest.raises(ModuleError, match="パッケージ（.geasi）の取り込みだけ"):
-        parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
+def test_versionが違う_ハッシュが違うと取り込めない(tmp_path):
+    mod_dir(tmp_path, geo=GEO_V)
+    with pytest.raises(ModuleError, match="version は「1.2.0」で、use に書いた「2.0.0」と違います"):
+        use_app(tmp_path, ' version "2.0.0"')
+    with pytest.raises(ModuleError, match="ハッシュが、固定した値と違います"):
+        use_app(tmp_path, ' sha256 "' + "0" * 64 + '"')
+    mod_dir(tmp_path, geo=GEO)  # モジュールに version が無い
+    with pytest.raises(ModuleError, match="（無し）"):
+        use_app(tmp_path, ' version "1.2.0"')
+    mod_dir(tmp_path, geo=GEO_V)
+    with pytest.raises(ModuleError, match="version の後に"):
+        use_app(tmp_path, " version")
