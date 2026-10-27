@@ -42,7 +42,26 @@ def query_rows(q) -> dict:
             "ページ": f"{q.page_n}件" if q.page_n else f"{q.page}{absent(q.page, '全件')}" if q.page else ""}
 
 
+def show_all(p, x):
+    """仕様書の中の文字列の名前を、表示名（日本語）に置き換える（構造はそのまま）"""
+    if isinstance(x, str):
+        return p.show_names(x)
+    if isinstance(x, dict):
+        return {k: show_all(p, v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return type(x)(show_all(p, v) for v in x)
+    return x
+
+
 def build(ck: Checker) -> dict:
+    spec = build_raw(ck)
+    names = spec["名前"]
+    spec = show_all(ck.p, spec)
+    spec["名前"] = names
+    return spec
+
+
+def build_raw(ck: Checker) -> dict:
     p = ck.p
     spec: dict = {}
     spec["データ"] = [
@@ -155,7 +174,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
     for fl in ck.p.flows:
-        out += ["", f"## フロー図 {fl.name}（×＝結果で行き先が分かれる、＋＝並列に起こす）", "", "```mermaid", *flow_diagram(fl), "```"]
+        out += ["", f"## フロー図 {fl.name}（×＝結果で行き先が分かれる、＋＝並列に起こす）", "", "```mermaid", *map(ck.p.show_names, flow_diagram(fl)), "```"]
     if spec["問い合わせ"]:
         out += ["", "## 問い合わせ（読むだけの処理）", "", "| 問い合わせ | ◆入力 | ◆読む | ◆条件 | ◆並び | ◆ページ |", "|---|---|---|---|---|---|"]
         for x in spec["問い合わせ"]:

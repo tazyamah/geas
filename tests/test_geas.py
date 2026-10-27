@@ -19,6 +19,7 @@ ROOT = Path(__file__).parent.parent
 EX = ROOT / "tests" / "fixtures" / "shop"
 CODE = (EX / "shop.geas").read_text()
 PLAN = (EX / "shop_plan.md").read_text()
+EFFECT = "effect Payment. /// 請求\n  charge(order_id: id, /// 金額\n    amount: money(JPY))"
 needs_cargo = pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo が無い")
 
 
@@ -51,7 +52,7 @@ def test_不変条件は証明済みと出る():
 def test_仕様書は読み書きと遷移をコードから取り出す():
     spec = build(chk(CODE))
     shop = {x["処理"]: x for x in spec["処理"]}
-    assert shop["受注"]["書く"] == ["商品.在庫", "注文"]
+    assert shop["受注"]["書く"] == ["注文", "商品.在庫"]
     assert ("注文", "受付", "決済要求済", "決済要求") in spec["遷移"]
     assert shop["決済要求"]["外部"] == ["決済.請求(冪等キー=注文ID)"]
 
@@ -64,59 +65,59 @@ def test_物理数は範囲から選ばれる():
 
 # ---- 検査が止める例（構文のスケッチ §3 の表） ----
 def test_丸めの指定が無いと問いになる():
-    ck = chk(mutate(CODE, "let 合計 = 小計 + round(小計 * 税率, floor, JPY)", "let 合計 = 小計 + 小計 * 税率"))
+    ck = chk(mutate(CODE, "let total = subtotal + round(subtotal * tax_rate, floor, JPY)", "let total = subtotal + subtotal * tax_rate"))
     assert any("端数をどう丸めますか" in m for m in msgs(ck, QUESTION))
 
 
 def test_結果に行き先が無いと止まる():
-    ck = chk(mutate(CODE, ", 顧客なし → reply\n", "\n"))
+    ck = chk(mutate(CODE, ", NoSuchCustomer → reply\n", "\n"))
     assert any("顧客なし" in m and "行き先" in m for m in msgs(ck, ERROR))
 
 
 def test_冪等キーが無いと止まる():
-    ck = chk(mutate(CODE, ", idempotency_key = 注文ID)", ")"))
+    ck = chk(mutate(CODE, ", idempotency_key = order_id)", ")"))
     assert any("冪等キー" in m for m in msgs(ck, ERROR))
 
 
 def test_宣言に無い遷移は止まる():
-    ck = chk(mutate(CODE, "  注文.状態 = 決済要求済", "  注文.状態 = 完了"))
+    ck = chk(mutate(CODE, "  order.status = PaymentRequested", "  order.status = Completed"))
     assert any("遷移" in d.code and "完了" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_元の状態の確認が無いと止まる():
-    ck = chk(mutate(CODE, "  if 注文.状態 != 受付 { return 状態違い }\n", ""))
+    ck = chk(mutate(CODE, "  if order.status != Received { return WrongStatus }\n", ""))
     assert any("確認" in m for m in msgs(ck, ERROR))
 
 
 def test_在庫不足の判定を削ると不変条件が示せない():
-    ck = chk(mutate(CODE, "  if 不足 is nonempty { return 在庫不足(不足) }\n", ""))
+    ck = chk(mutate(CODE, "  if short is nonempty { return OutOfStock(short) }\n", ""))
     assert any("反例" in m for m in msgs(ck, ERROR))
 
 
 def test_書く項目の宣言漏れは止まる():
-    ck = chk(mutate(CODE, "  writes 商品.在庫, 注文\n", "  writes 注文\n"))
+    ck = chk(mutate(CODE, "  writes Product.stock, Order\n", "  writes Order\n"))
     assert any("商品.在庫" in m for m in msgs(ck, ERROR))
 
 
 def test_合計ゼロの確認を削ると不変条件が示せない():
-    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", ""))
+    ck = chk(mutate(CODE, "  if order.total <= 0 { return ZeroTotal }\n", ""))
     assert any("合計 > 0" in m for m in msgs(ck, ERROR))
 
 
 def test_存在を確かめない参照は問いになる():
-    ck = chk(mutate(CODE, "  let 顧客 = 顧客[顧客ID] else { return 顧客なし }", "  let 顧客 = 顧客[顧客ID]"))
+    ck = chk(mutate(CODE, "  let customer = Customer[customer_id] else { return NoSuchCustomer }", "  let customer = Customer[customer_id]"))
     assert any("存在しない" in m for m in msgs(ck, QUESTION))
 
 
 def test_構文エラーは行番号つき():
     with pytest.raises(ParseError, match="行目"):
-        parse("entity 商品 {\n  在庫 int\n}\n")
+        parse("entity Product {\n  stock int\n}\n")
 
 
 # ---- Rust 生成 ----
 def test_エラーのあるコードからは生成しない():
     with pytest.raises(AssertionError):
-        generate(chk(mutate(CODE, ", idempotency_key = 注文ID)", ")")))
+        generate(chk(mutate(CODE, ", idempotency_key = order_id)", ")")))
 
 
 def test_生成は決定的で_コミットした生成物と一致する():
@@ -164,7 +165,7 @@ def test_具体例を実際に動かして計画と一致する(tmp_path):
     src, problems = runner_source(ck, rows)
     assert [p for p in problems if p.kind != "未規定"] == []
     write_crate(ck, generate(ck), src, tmp_path)
-    actual = run_crate(tmp_path)
+    actual = run_crate(tmp_path, ck.p.show_names)
     assert actual["EX1"][0] == "受付(N1)"
     assert compare_examples(rows, actual) == []
 
@@ -175,7 +176,7 @@ def test_具体例が計画と違えば検出する(tmp_path):
     rows = read_plan(mutate(PLAN, "| 在庫不足({A}) | なし |", "| 受付(N1) | なし |"))["具体例"]
     src, _ = runner_source(ck, rows)
     write_crate(ck, generate(ck), src, tmp_path)
-    fs = compare_examples(rows, run_crate(tmp_path))
+    fs = compare_examples(rows, run_crate(tmp_path, ck.p.show_names))
     assert any("EX2" in f.where and "結果" in f.where for f in fs)
 
 
@@ -201,22 +202,22 @@ def test_トリガの要因が仕様書に出る():
 
 
 def test_期限の無いトリガは止まる():
-    ck = chk(mutate(CODE, "  deadline now + 30 min → 決済の期限切れ\n", ""))
+    ck = chk(mutate(CODE, "  deadline now + 30 min → expire_payment\n", ""))
     assert any("期限がありません" in m for m in msgs(ck, ERROR))
 
 
 def test_待つ先のトリガが未定義だと止まる():
-    ck = chk(mutate(CODE, "要求済 → wait 決済待ち", "要求済 → wait 承認待ち"))
+    ck = chk(mutate(CODE, "Requested → wait PaymentPending", "Requested → wait 承認待ち"))
     assert any("承認待ち" in m for m in msgs(ck, ERROR))
 
 
 def test_トリガの行き先が未定義の処理だと止まる():
-    ck = chk(mutate(CODE, "→ 決済の期限切れ\n}", "→ 期限切れ処理\n}"))
+    ck = chk(mutate(CODE, "→ expire_payment\n}", "→ 期限切れ処理\n}"))
     assert any("期限切れ処理" in m for m in msgs(ck, ERROR))
 
 
 def test_トリガの引数と処理の入力が合わないと止まる():
-    ck = chk(mutate(CODE, "trigger 決済待ち(注文ID: id)", "trigger 決済待ち(注文: id)"))
+    ck = chk(mutate(CODE, "trigger PaymentPending(order_id: id)", "trigger PaymentPending(order: id)"))
     assert any("合いません" in m or "入力にもっていません" in m for m in msgs(ck, ERROR))
 
 
@@ -227,14 +228,14 @@ def test_計画にあるトリガの行き先がコードと違えば検出す�
 
 
 def test_入力の範囲が項目より広いと止まる():
-    src = mutate(CODE, "ltype ID集合 = set of id\n", "ltype ID集合 = set of id\nltype 広い数量 = int 1..200\nltype 広い商品数量 = 商品 → 広い数量\n")
-    ck = chk(mutate(src, "顧客ID: id required, 明細: 商品数量 required", "顧客ID: id required, 明細: 広い商品数量 required"))
+    src = mutate(CODE, "ltype IdSet = set of id\n", "ltype IdSet = set of id\nltype 広い数量 = int 1..200\nltype 広い商品数量 = Product → 広い数量\n")
+    ck = chk(mutate(src, "customer_id: id required, items: ProductQuantity required", "customer_id: id required, items: 広い商品数量 required"))
     assert any("範囲の広い入力" in m for m in msgs(ck, ERROR))
 
 
 def test_トリガの型の食い違いと期限の誤りは止まる():
-    assert any("型" in m for m in msgs(chk(mutate(CODE, "trigger 決済待ち(注文ID: id)", "trigger 決済待ち(注文ID: int)")), ERROR))
-    assert any("期限が複数" in m for m in msgs(chk(mutate(CODE, "  deadline now + 30 min → 決済の期限切れ", "  deadline now + 30 min → 決済の期限切れ\n  deadline now + 1 hour → 決済の期限切れ")), ERROR))
+    assert any("型" in m for m in msgs(chk(mutate(CODE, "trigger PaymentPending(order_id: id)", "trigger PaymentPending(order_id: int)")), ERROR))
+    assert any("期限が複数" in m for m in msgs(chk(mutate(CODE, "  deadline now + 30 min → expire_payment", "  deadline now + 30 min → expire_payment\n  deadline now + 1 hour → expire_payment")), ERROR))
     assert any("0より長く" in m for m in msgs(chk(mutate(CODE, "deadline now + 30 min", "deadline now + 0 min")), ERROR))
 
 
@@ -298,7 +299,7 @@ def test_台帳から出したplanの表は突合の対象にならない():
 
 # ---- 構文（英語キーワード・Rust 風の本体） ----
 def test_flowはnexusの別名():
-    ck = chk(mutate(CODE, "nexus 注文受付", "flow 注文受付"))
+    ck = chk(mutate(CODE, "nexus OrderIntake", "flow OrderIntake"))
     assert not msgs(ck, ERROR)
 
 
@@ -306,17 +307,17 @@ def test_日本語の古いキーワードや_body_は受け付けない():
     with pytest.raises(ParseError):
         parse("データ 商品 {\n  在庫: int\n}\n")
     with pytest.raises(ParseError):
-        parse(mutate(CODE, "  let 顧客 = 顧客[顧客ID] else", "  body {\n  let 顧客 = 顧客[顧客ID] else"))
+        parse(mutate(CODE, "  let customer = Customer[customer_id] else", "  body {\n  let customer = Customer[customer_id] else"))
 
 
 def test_if_の本体は改行して書いてもよい():
-    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 {\n    return 合計ゼロ\n  }\n"))
+    ck = chk(mutate(CODE, "  if order.total <= 0 { return ZeroTotal }\n", "  if order.total <= 0 {\n    return ZeroTotal\n  }\n"))
     assert not msgs(ck, ERROR)
 
 
 # ---- 条件つきの状態変更 ----
-GUARD = "  if 注文.状態 != 受付 { return 状態違い }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n  注文.状態 = 決済要求済\n"
-COND = "  if 注文.合計 <= 0 { return 合計ゼロ }\n  if 注文.状態 == 受付 {\n    注文.状態 = 決済要求済\n  }\n"
+GUARD = "  if order.status != Received { return WrongStatus }\n  if order.total <= 0 { return ZeroTotal }\n  order.status = PaymentRequested\n"
+COND = "  if order.total <= 0 { return ZeroTotal }\n  if order.status == Received {\n    order.status = PaymentRequested\n  }\n"
 
 
 def test_if_の中で元の状態を確かめてから変えるのは通る():
@@ -325,24 +326,24 @@ def test_if_の中で元の状態を確かめてから変えるのは通る():
 
 
 def test_if_の中でも元の状態を確かめていないと止まる():
-    ck = chk(mutate(CODE, GUARD, "  if 注文.合計 > 0 {\n    注文.状態 = 決済要求済\n  }\n"))
+    ck = chk(mutate(CODE, GUARD, "  if order.total > 0 {\n    order.status = PaymentRequested\n  }\n"))
     assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_if_の中の確認は外へ持ち出さない():
-    ck = chk(mutate(CODE, GUARD, "  if 注文.状態 == 受付 {\n    request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n  }\n  注文.状態 = 決済要求済\n"))
+    ck = chk(mutate(CODE, GUARD, "  if order.status == Received {\n    request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  }\n  order.status = PaymentRequested\n"))
     assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_if_の中に_let_は書けない():
-    ck = chk(mutate(CODE, GUARD, "  if 注文.状態 == 受付 {\n    let x = 注文[注文ID] else { return 注文なし }\n  }\n"))
+    ck = chk(mutate(CODE, GUARD, "  if order.status == Received {\n    let x = Order[order_id] else { return NoSuchOrder }\n  }\n"))
     assert any("if の中" in m for m in msgs(ck, ERROR))
 
 
 def test_条件つきの変更は_Rust_の_if_の中に出る():
     prog = parse(mutate(CODE, GUARD, COND))
     src = generate(check(prog))
-    assert "    if (注文.状態 == 注文状態::受付) {\n        書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::決済要求済));\n    }" in src
+    assert "    if (order.status == OrderStatus::Received) {\n        書込列.push(書込::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));\n    }" in src
 
 
 # ---- 問い合わせの条件（または・数との比較） ----
@@ -392,22 +393,22 @@ def test_selectで参照先の項目と集計を返せる():
 
 
 def test_selectの参照先が参照でないと止まる():
-    ck = chk(mutate(CODE, "顧客.顧客ID as 顧客", "合計.顧客ID as 顧客"))
+    ck = chk(mutate(CODE, "customer.customer_id as customer", "total.customer_id as customer"))
     assert any("参照（ref）ではありません" in m for m in msgs(ck, ERROR))
 
 
 def test_sumはキーつきの集まりにだけ使える():
-    ck = chk(mutate(CODE, "sum(明細) as 点数", "sum(合計) as 点数"))
+    ck = chk(mutate(CODE, "sum(items) as /// 点数\n    item_count", "sum(total) as /// 点数\n    item_count"))
     assert any("集計できません" in m for m in msgs(ck, ERROR))
 
 
 def test_selectに書いた参照先は読むの宣言に要る():
-    ck = chk(mutate(CODE, "注文.顧客, 顧客.顧客ID, 注文.明細\n}", "注文.顧客, 注文.明細\n}"))
+    ck = chk(mutate(CODE, "Order.customer, Customer.customer_id, Order.items\n}", "Order.customer, Order.items\n}"))
     assert any("顧客.顧客ID" in m for m in msgs(ck, ERROR))
 
 
 def test_selectのある問い合わせは_each_に使えない():
-    ck = chk(mutate(CODE, "invariant 商品: 在庫 >= 0", "event 開いた {\n  each 注文一覧 → 決済要求\n}\n\ninvariant 商品: 在庫 >= 0"))
+    ck = chk(mutate(CODE, "invariant Product: stock >= 0", "event 開いた {\n  each order_list → request_payment\n}\n\ninvariant Product: stock >= 0"))
     assert any("select" in m for m in msgs(ck, ERROR))
 
 
@@ -466,40 +467,40 @@ def test_外部作用の無いアプリでも生成した_crate_がビルドで�
 
 
 # ---- 確認は「どのキーで引いたものか」に効く（データ名には効かない） ----
-PAY = "  let 注文 = 注文[注文ID] else { return 注文なし }\n  if 注文.状態 != 受付 { return 状態違い }\n"
-TWO = "deed 決済要求 {\n  input 注文ID: id required, 別ID: id required\n"
+PAY = "  let order = Order[order_id] else { return NoSuchOrder }\n  if order.status != Received { return WrongStatus }\n"
+TWO = "deed request_payment {\n  input order_id: id required, 別ID: id required\n"
 
 
 def two_orders(body):
-    return mutate(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id required\n", TWO), PAY, body)
+    return mutate(mutate(CODE, "deed request_payment {\n  input order_id: id required\n", TWO), PAY, body)
 
 
 def test_別の注文の状態を確かめても_こちらは遷移できない():
-    ck = chk(two_orders("  let 別 = 注文[別ID] else { return 注文なし }\n  let 注文 = 注文[注文ID] else { return 注文なし }\n  if 別.状態 != 受付 { return 状態違い }\n"))
+    ck = chk(two_orders("  let 別 = Order[別ID] else { return NoSuchOrder }\n  let order = Order[order_id] else { return NoSuchOrder }\n  if 別.status != Received { return WrongStatus }\n"))
     assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_同じ名前で引き直すと確認は消える():
-    ck = chk(two_orders(PAY + "  let 注文 = 注文[別ID] else { return 注文なし }\n"))
+    ck = chk(two_orders(PAY + "  let order = Order[別ID] else { return NoSuchOrder }\n"))
     assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_存在の確認は同じキーにだけ効く():
-    ck = chk(two_orders(PAY + "  if 注文[別ID].合計 <= 0 { return 合計ゼロ }\n"))
+    ck = chk(two_orders(PAY + "  if Order[別ID].total <= 0 { return ZeroTotal }\n"))
     assert any("注文[別ID]" in d.msg for d in ck.diags if d.level == QUESTION)
-    ck = chk(two_orders(PAY + "  if 注文[別ID] is absent { return 注文なし }\n  if 注文[別ID].合計 <= 0 { return 合計ゼロ }\n"))
+    ck = chk(two_orders(PAY + "  if Order[別ID] is absent { return NoSuchOrder }\n  if Order[別ID].total <= 0 { return ZeroTotal }\n"))
     assert not any("注文[別ID]" in d.msg for d in ck.diags if d.level == QUESTION)
 
 
 BULK = """
 deed 一括完了 {
-  input 他: ID集合
-  writes 注文.状態
-  result 待ち解除結果
+  input 他: IdSet
+  writes Order.status
+  result ReleaseResult
   effects none
 
-  update { 注文[k].状態 = 完了 | k in 他 }
-  return 反映済
+  update { Order[k].status = Completed | k in 他 }
+  return Applied
 }
 """
 
@@ -509,88 +510,88 @@ def test_updateで状態の項目は変えられない():
 
 
 def test_状態は状態名で変える():
-    ck = chk(two_orders(PAY + "  let 別 = 注文[別ID] else { return 注文なし }\n").replace("  注文.状態 = 決済要求済\n", "  注文.状態 = 別.状態\n", 1))
+    ck = chk(two_orders(PAY + "  let 別 = Order[別ID] else { return NoSuchOrder }\n").replace("  order.status = PaymentRequested\n", "  order.status = 別.status\n", 1))
     assert any("状態名で書いてください" in m for m in msgs(ck, ERROR))
 
 
 def test_新規作成の状態は状態名で書く():
-    ck = chk(mutate(CODE, "状態: 受付 }", "状態: 顧客ID }"))
+    ck = chk(mutate(CODE, "status: Received }", "status: customer_id }"))
     assert any("状態名で書いてください" in m for m in msgs(ck, ERROR))
 
 
 def test_空の_if_はエラーで止まる():
-    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { }\n  if 注文.合計 <= 0 { return 合計ゼロ }\n"))
+    ck = chk(mutate(CODE, "  if order.total <= 0 { return ZeroTotal }\n", "  if order.total <= 0 { }\n  if order.total <= 0 { return ZeroTotal }\n"))
     assert any("if の中が空" in m for m in msgs(ck, ERROR))
 
 
 # ---- 不変条件と項目の範囲は、書き込むその場で、値の範囲から示す ----
-REFLECT = ("  writes 注文.状態\n  transition 注文: 決済要求済 → 完了", "  writes 注文.状態, 注文.合計\n  transition 注文: 決済要求済 → 完了")
+REFLECT = ("  writes Order.status\n  transition Order: PaymentRequested → Completed", "  writes Order.status, Order.total\n  transition Order: PaymentRequested → Completed")
 
 
 def test_項目の更新で在庫を減らすと範囲も不変条件も示せない():
-    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n",
-                           "  reads 注文.合計, 注文.状態, 商品.在庫\n  writes 注文.状態, 商品.在庫\n"),
-                    "  注文.状態 = 決済要求済\n",
-                    "  注文.状態 = 決済要求済\n  let 品 = 注文[注文ID] else { return 注文なし }\n  let 商 = 商品[注文ID] else { return 注文なし }\n  商.在庫 = 商.在庫 - 1\n"))
+    ck = chk(mutate(mutate(CODE, "  reads Order.total, Order.status\n  writes Order.status\n",
+                           "  reads Order.total, Order.status, Product.stock\n  writes Order.status, Product.stock\n"),
+                    "  order.status = PaymentRequested\n",
+                    "  order.status = PaymentRequested\n  let 品 = Order[order_id] else { return NoSuchOrder }\n  let 商 = Product[order_id] else { return NoSuchOrder }\n  商.stock = 商.stock - 1\n"))
     assert any("反例" in m and "商品.在庫" in m for m in msgs(ck, ERROR))
 
 
 def test_同じ減算を2回すると不足の確認は効かない():
-    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    up = "  update { Product[k].stock -= v | (k, v) in items }\n"
     assert any("反例" in m for m in msgs(chk(mutate(CODE, up, up + up)), ERROR))
 
 
 def test_状態がSでないと分かっていれば値を下げてよい():
-    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  order.status = Completed\n", "  order.status = Completed\n  order.total = 0\n"))
     assert ck.ok, ck.diags
-    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.合計 = 0\n  注文.状態 = 完了\n"))
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  order.status = Completed\n", "  order.total = 0\n  order.status = Completed\n"))
     assert any("合計 > 0" in m for m in msgs(ck, ERROR))
 
 
 def test_Sで新規作成するなら値の確認が要る():
-    ck = chk(mutate(mutate(CODE, "transition 注文: (new) → 受付", "transition 注文: (new) → 決済要求済"), "状態: 受付 }", "状態: 決済要求済 }"))
+    ck = chk(mutate(mutate(CODE, "transition Order: (new) → Received", "transition Order: (new) → PaymentRequested"), "status: Received }", "status: PaymentRequested }"))
     assert any("合計 > 0" in m for m in msgs(ck, ERROR))
 
 
 def test_分岐の中の書き込みで確認は崩れる():
-    ck = chk(mutate(mutate(CODE, "  reads 注文.合計, 注文.状態\n  writes 注文.状態\n", "  reads 注文.合計, 注文.状態\n  writes 注文.状態, 注文.合計\n"),
-                    "  注文.状態 = 決済要求済\n", "  if 注文.合計 > 100 {\n    注文.合計 = 0\n  }\n  注文.状態 = 決済要求済\n"))
+    ck = chk(mutate(mutate(CODE, "  reads Order.total, Order.status\n  writes Order.status\n", "  reads Order.total, Order.status\n  writes Order.status, Order.total\n"),
+                    "  order.status = PaymentRequested\n", "  if order.total > 100 {\n    order.total = 0\n  }\n  order.status = PaymentRequested\n"))
     assert any("合計 > 0" in m for m in msgs(ck, ERROR))
 
 
 def test_遷移した後は元の状態の確認が消える():
-    ck = chk(mutate(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 決済要求済\n  transition 注文: 受付 → キャンセル"),
-                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  注文.状態 = キャンセル\n"))
+    ck = chk(mutate(mutate(CODE, "transition Order: Received → PaymentRequested", "transition Order: Received → PaymentRequested\n  transition Order: Received → Canceled"),
+                    "  order.status = PaymentRequested\n", "  order.status = PaymentRequested\n  order.status = Canceled\n"))
     assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_同じデータの別の束縛の確認も遷移で消える():
-    ck = chk(mutate(two_orders(PAY + "  let 別 = 注文[別ID] else { return 注文なし }\n  if 別.状態 != 受付 { return 状態違い }\n"),
-                    "  注文.状態 = 決済要求済\n", "  注文.状態 = 決済要求済\n  別.状態 = 決済要求済\n"))
+    ck = chk(mutate(two_orders(PAY + "  let 別 = Order[別ID] else { return NoSuchOrder }\n  if 別.status != Received { return WrongStatus }\n"),
+                    "  order.status = PaymentRequested\n", "  order.status = PaymentRequested\n  別.status = PaymentRequested\n"))
     assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
 def test_書けない形の不変条件はエラーになる():
-    ck = chk(CODE + "\ninvariant 商品: 在庫 <= 100\n")
+    ck = chk(CODE + "\ninvariant Product: stock <= 100\n")
     assert any("まだ検査できません" in m for m in msgs(ck, ERROR))
 
 
 def test_項目の更新は型を確かめる():
-    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 注文ID\n"))
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  order.status = Completed\n", "  order.status = Completed\n  order.total = order_id\n"))
     assert any("型の違う値" in m for m in msgs(ck, ERROR))
 
 
 @needs_cargo
 def test_項目へ数を書くと物理数へ変換される(tmp_path):
-    ck = chk(mutate(mutate(CODE, *REFLECT), "  注文.状態 = 完了\n", "  注文.状態 = 完了\n  注文.合計 = 0\n"))
+    ck = chk(mutate(mutate(CODE, *REFLECT), "  order.status = Completed\n", "  order.status = Completed\n  order.total = 0\n"))
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
     r = subprocess.run(["cargo", "build", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
 
 
 def test_減らした後に確かめた不足の集まりは古い():
-    chk_line = "  if 不足 is nonempty { return 在庫不足(不足) }\n"
-    up = "  update { 商品[k].在庫 -= v | (k, v) in 明細 }\n"
+    chk_line = "  if short is nonempty { return OutOfStock(short) }\n"
+    up = "  update { Product[k].stock -= v | (k, v) in items }\n"
     src = mutate(CODE, up, up + chk_line + up)
     assert chk(mutate(CODE, up, up)).ok
     assert any("反例" in m for m in msgs(chk(src), ERROR))
@@ -599,39 +600,39 @@ def test_減らした後に確かめた不足の集まりは古い():
 # ---- 外部作用とフローの重複・矛盾 ----
 FOR = """
 deed 引当 {
-  input 明細: 商品数量 required, 注文ID: id required
-  result 待ち解除結果
+  input items: ProductQuantity required, order_id: id required
+  result ReleaseResult
   effects 倉庫.引当
 
-  for (k, v) in 明細 {
+  for (k, v) in items {
     request 倉庫.引当(k, v, idempotency_key = KEY)
   }
-  return 反映済
+  return Applied
 }
 
 nexus 引当の流れ {
-  引当: 反映済 → reply, 注文なし → reply, 状態違い → reply
+  引当: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
 }
 """
 
 
 def with_for(key):
-    src = mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))",
-                 'effect 決済.請求(注文ID: id, 金額: money(JPY))\neffect 倉庫.引当(商品ID: id, 数: 数量) no_wait "試し"')
+    src = mutate(CODE, EFFECT,
+                 EFFECT + '\neffect 倉庫.引当(product_id: id, 数: Quantity) no_wait "試し"')
     return chk(src + FOR.replace("KEY", key))
 
 
 def test_for_の中の冪等キーは回す値と外の値の組にする():
-    assert any("for で回す値によりません" in m for m in msgs(with_for("注文ID"), ERROR))
+    assert any("for で回す値によりません" in m for m in msgs(with_for("order_id"), ERROR))
     assert any("for で回す値だけです" in m for m in msgs(with_for("k"), ERROR))  # 別の注文で同じ商品を回すとぶつかる
-    assert not any("冪等" in m for m in msgs(with_for("(注文ID, k)"), ERROR))
-    assert not any("冪等" in m for m in msgs(with_for("(k, 注文ID)"), ERROR))
-    assert any("冪等キーは ID か文字列" in m for m in msgs(with_for("(注文ID, v)"), ERROR))
+    assert not any("冪等" in m for m in msgs(with_for("(order_id, k)"), ERROR))
+    assert not any("冪等" in m for m in msgs(with_for("(k, order_id)"), ERROR))
+    assert any("冪等キーは ID か文字列" in m for m in msgs(with_for("(order_id, v)"), ERROR))
 
 
 @needs_cargo
 def test_冪等キーの組は区切りがあいまいにならない(tmp_path):
-    ck = with_for("(注文ID, k)")
+    ck = with_for("(order_id, k)")
     assert ck.ready, ck.diags
     main = """fn main() {
     println!("{}", geas_app::冪等キーの組(&["a,b".to_string(), "c".to_string()]));
@@ -647,47 +648,47 @@ def test_冪等キーの組は区切りがあいまいにならない(tmp_path):
 
 
 def test_冪等キーは_ID_か文字列():
-    ck = chk(mutate(CODE, "idempotency_key = 注文ID)", "idempotency_key = 1)"))
+    ck = chk(mutate(CODE, "idempotency_key = order_id)", "idempotency_key = 1)"))
     assert any("冪等キーは ID か文字列" in m for m in msgs(ck, ERROR))
 
 
 def test_応答と処理を同じ結果に並べると止まる():
-    ck = chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → par { reply, 決済要求 }, 商品なし"))
+    ck = chk(mutate(CODE, "OutOfStock → reply, NoSuchProduct", "OutOfStock → par { reply, request_payment }, NoSuchProduct"))
     assert any("par に入れられません" in m for m in msgs(ck, ERROR))
     with pytest.raises(ParseError, match="par"):
-        parse(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → reply, 在庫不足 → 決済要求, 商品なし"))
+        parse(mutate(CODE, "OutOfStock → reply, NoSuchProduct", "OutOfStock → reply, OutOfStock → request_payment, NoSuchProduct"))
 
 
 NOTIFY = """
-effect 通知.メール(注文ID: id) no_wait "通知は結果を待たない"
-effect 通知.プッシュ(注文ID: id) no_wait "通知は結果を待たない"
+effect 通知.メール(order_id: id) no_wait "通知は結果を待たない"
+effect 通知.プッシュ(order_id: id) no_wait "通知は結果を待たない"
 result 通知結果 {
-  要求済
+  Requested
 }
 deed メール通知 {
-  input 注文ID: id required
+  input order_id: id required
   result 通知結果
   effects 通知.メール
 
-  request 通知.メール(注文ID, idempotency_key = 注文ID)
-  return 要求済
+  request 通知.メール(order_id, idempotency_key = order_id)
+  return Requested
 }
 deed プッシュ通知 {
-  input 注文ID: id required
+  input order_id: id required
   result 通知結果
   effects 通知.プッシュ
 
-  request 通知.プッシュ(注文ID, idempotency_key = 注文ID)
-  return 要求済
+  request 通知.プッシュ(order_id, idempotency_key = order_id)
+  return Requested
 }
 nexus メール {
-  メール通知: 要求済 → reply
+  メール通知: Requested → reply
 }
 nexus プッシュ {
-  プッシュ通知: 要求済 → reply
+  プッシュ通知: Requested → reply
 }
 """
-FANOUT = ("受注: 受付 → 決済要求, 在庫不足", "受注: 受付 → par { メール通知, プッシュ通知 }, 在庫不足")
+FANOUT = ("place_order: Received → request_payment, OutOfStock", "place_order: Received → par { メール通知, プッシュ通知 }, OutOfStock")
 
 
 def fanout(*edits):
@@ -698,13 +699,13 @@ def test_同じ結果に処理を続けて書くと_書いた順に起こす行�
     ck = fanout(*FANOUT)
     assert ck.ready, ck.diags
     assert build(ck)["処理"][0]["結果"][0] == ("受付", "並列［メール通知 ＋ プッシュ通知］")
-    assert any("2回書かれています" in m for m in msgs(fanout(FANOUT[0], "受注: 受付 → par { メール通知, メール通知 }, 在庫不足"), ERROR))
+    assert any("2回書かれています" in m for m in msgs(fanout(FANOUT[0], "place_order: Received → par { メール通知, メール通知 }, OutOfStock"), ERROR))
     src = generate(ck)
     assert "vec![行き先::処理(\"メール通知\"), 行き先::処理(\"プッシュ通知\")]" in src
 
 
 def test_par_の枝がデータを書くと止まる():
-    ck = fanout(FANOUT[0], "受注: 受付 → par { メール通知, 決済要求 }, 在庫不足")
+    ck = fanout(FANOUT[0], "place_order: Received → par { メール通知, request_payment }, OutOfStock")
     assert any("par の枝「決済要求」は、データを書いています" in m for m in msgs(ck, ERROR))
 
 
@@ -717,41 +718,41 @@ def test_行き先が複数のフローも生成コードがビルドできる(t
 
 
 def test_同じ処理を違う行き先で2つのネクサスに書くと止まる():
-    ck = chk(CODE + "\nnexus 二重 {\n  受注: 受付 → reply, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply\n}\n")
+    ck = chk(CODE + "\nnexus 二重 {\n  place_order: Received → reply, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n}\n")
     assert any("違う行き先" in m for m in msgs(ck, ERROR))
 
 
 def test_失敗の理由を宣言して待たないのは矛盾():
-    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))", 'effect 決済.請求(注文ID: id, 金額: money(JPY)) failures 残高不足 no_wait "試し"'))
+    ck = chk(mutate(CODE, EFFECT, EFFECT + ' failures 残高不足 no_wait "試し"'))
     assert any("no_wait" in m for m in msgs(ck, ERROR))
 
 
 # ---- 生成した Rust が必ずビルドできる ----
 def test_定義の名前の重複は止まる():
-    for old, new in [("entity 顧客 {", "entity 顧客 {\n  顧客ID: id unique\n}\n\nentity 顧客 {"),
-                     ("  在庫: 在庫数 required\n", "  在庫: 在庫数 required\n  在庫: 非負金額\n"),
-                     ("  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required\n  slot 注文ID: id\n  reads 注文.合計")]:
+    for old, new in [("entity Customer {", "entity Customer {\n  customer_id: id unique\n}\n\nentity Customer {"),
+                     ("  stock: StockCount required\n", "  stock: StockCount required\n  stock: NonNegMoney\n"),
+                     ("  input order_id: id required\n  reads Order.total", "  input order_id: id required\n  slot order_id: id\n  reads Order.total")]:
         assert any("2つ以上" in m for m in msgs(chk(mutate(CODE, old, new)), ERROR)), new
 
 
 def test_未定義の型の名前は止まる():
-    ck = chk(mutate(CODE, "  input 注文ID: id required\n  reads 注文.合計", "  input 注文ID: id required, 謎: 謎型\n  reads 注文.合計"))
+    ck = chk(mutate(CODE, "  input order_id: id required\n  reads Order.total", "  input order_id: id required, 謎: 謎型\n  reads Order.total"))
     assert any("謎型" in m for m in msgs(ck, ERROR))
 
 
 def test_最後に_return_が無いと止まる():
-    ck = chk(mutate(CODE, "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n  return 要求済\n",
-                    "  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)\n"))
+    ck = chk(mutate(CODE, "  request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  return Requested\n",
+                    "  request Payment.charge(order_id, order.total, idempotency_key = order_id)\n"))
     assert any("return で終えて" in m for m in msgs(ck, ERROR))
 
 
 def test_if_の条件は真偽():
-    ck = chk(mutate(CODE, "  if 注文.合計 <= 0 { return 合計ゼロ }\n", "  if 注文.合計 <= 0 { return 合計ゼロ }\n  if 注文.合計 { return 合計ゼロ }\n"))
+    ck = chk(mutate(CODE, "  if order.total <= 0 { return ZeroTotal }\n", "  if order.total <= 0 { return ZeroTotal }\n  if order.total { return ZeroTotal }\n"))
     assert any("if の条件" in m for m in msgs(ck, ERROR))
 
 
 def test_update_の値の型を確かめる():
-    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "writes 注文.合計").replace("注文[k].状態 = 完了", "注文[k].合計 = 完了")
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes Order.status", "writes Order.total").replace("Order[k].status = Completed", "Order[k].total = Completed")
     assert any("型の違う値" in m for m in msgs(chk(src), ERROR))
 
 
@@ -766,81 +767,81 @@ def test_割合の参照があってもホストつきでビルドできる(tmp_
 
 # ---- 誤検出と警告の漏れ ----
 def test_update_の書き込みは_ほかで読んだ項目を消さない():
-    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes 注文.状態", "reads 注文.合計\n  writes 注文.合計").replace(
-        "  update { 注文[k].状態 = 完了 | k in 他 }\n", "  update { 注文[k].合計 = 1 | k in 他, 注文[k].合計 > 0 }\n")
+    src = CODE + BULK.replace("一括完了", "一括ゼロ").replace("writes Order.status", "reads Order.total\n  writes Order.total").replace(
+        "  update { Order[k].status = Completed | k in 他 }\n", "  update { Order[k].total = 1 | k in 他, Order[k].total > 0 }\n")
     ck = chk(src)
     assert not any("注文.合計" in m and "使っていません" in m for m in msgs(ck, ERROR)), ck.diags
 
 
 def test_使わない外部作用と届かない状態は警告():
-    ck = chk(mutate(CODE, "effect 決済.請求(注文ID: id, 金額: money(JPY))", "effect 決済.請求(注文ID: id, 金額: money(JPY))\neffect 倉庫.引当(商品ID: id) no_wait \"試し\""))
+    ck = chk(mutate(CODE, EFFECT, EFFECT + "\neffect 倉庫.引当(product_id: id) no_wait \"試し\""))
     assert any("どの処理からも要求されていません" in m for m in msgs(ck, "警告"))
-    ck = chk(mutate(CODE, "transition 注文: 受付 → 決済要求済", "transition 注文: 受付 → 受付"))
+    ck = chk(mutate(CODE, "transition Order: Received → PaymentRequested", "transition Order: Received → Received"))
     assert any("決済要求済" in m and "進む処理" in m for m in msgs(ck, "警告"))
 
 
 # ---- ネクサスで次の処理へは、結果の中身を名前と型で渡す ----
 def test_結果の中身には名前が要る():
     with pytest.raises(ParseError, match="名前を付けて"):
-        parse(mutate(CODE, "  受付(注文ID: id)\n", "  受付(id)\n"))
+        parse(mutate(CODE, "  Received(order_id: id)\n", "  Received(id)\n"))
 
 
 def test_結果の中身と次の処理の入力は名前と型で突き合わせる():
     assert any("中身「不足」を、処理 決済要求 は入力にもっていません" in m
-               for m in msgs(chk(mutate(CODE, "在庫不足 → reply, 商品なし", "在庫不足 → 決済要求, 商品なし")), ERROR))
-    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(番号: id)\n"))
+               for m in msgs(chk(mutate(CODE, "OutOfStock → reply, NoSuchProduct", "OutOfStock → request_payment, NoSuchProduct")), ERROR))
+    ck = chk(mutate(CODE, "  Received(order_id: id)\n", "  Received(番号: id)\n"))
     assert any("入力「注文ID」が、結果「受付」の中身にありません" in m for m in msgs(ck, ERROR))
-    ck = chk(mutate(CODE, "  受付(注文ID: id)\n", "  受付(注文ID: ID集合)\n"))
+    ck = chk(mutate(CODE, "  Received(order_id: id)\n", "  Received(order_id: IdSet)\n"))
     assert any("型" in m and "受付" in m for m in msgs(ck, ERROR))
 
 
 @needs_cargo
 def test_ホストは結果の中身を名前つきで返す(tmp_path):
     ck = chk(CODE)
-    req = ('{"名前":"受注","文脈":{"税率":"1/10","新注文ID":"N1"},"入力":{"顧客ID":"C1","明細":{"A":2}},'
-           '"保存":{"商品":{"A":{"商品ID":"A","在庫":5,"単価":100}},"顧客":{"C1":{"顧客ID":"C1"}}}}')
+    req = ('{"名前":"place_order","文脈":{"tax_rate":"1/10","新OrderID":"N1"},"入力":{"customer_id":"C1","items":{"A":2}},'
+           '"保存":{"Product":{"A":{"product_id":"A","stock":5,"unit_price":100}},"Customer":{"C1":{"customer_id":"C1"}}}}')
     write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
-    assert '"中身":{"注文ID":"N1"}' in r.stdout, r.stdout
+    assert '"中身":{"order_id":"N1"}' in r.stdout, r.stdout
 
 
 # ---- 整数と金額は違う型。そのままでは混ぜず、money( )・int( ) で変えてから計算する ----
-SUB = "  let 合計 = 小計 + round(小計 * 税率, floor, JPY)\n"
+SUB = "  let total = subtotal + round(subtotal * tax_rate, floor, JPY)\n"
 
 
 def test_整数と金額はそのままでは足し引きできない():
-    ck = chk(mutate(CODE, SUB, SUB.replace("小計 + round", "小計 + 合計数 + 丸め").replace("  let 合計", "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計")))
+    ck = chk(mutate(CODE, SUB, SUB.replace("subtotal + round", "subtotal + total_count + round").replace("  let total", "  let total_count = sum { v | (k, v) in items }\n  let total")))
     assert any("整数と金額は、そのままでは足し引きできません" in m for m in msgs(ck, ERROR))
 
 
 def test_金額どうしは掛けられない():
-    ck = chk(mutate(CODE, "商品[k].単価 * v |", "商品[k].単価 * 商品[k].単価 |"))
+    ck = chk(mutate(CODE, "Product[k].unit_price * v |", "Product[k].unit_price * Product[k].unit_price |"))
     assert any("金額どうしは掛けられません" in m for m in msgs(ck, ERROR))
 
 
 def test_整数の変数は金額の項目へそのまま入れられない():
-    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n" + SUB)
-    ck = chk(mutate(src, "合計: 合計, 状態: 受付 }", "合計: 合計数, 状態: 受付 }"))
+    src = mutate(CODE, SUB, "  let total_count = sum { v | (k, v) in items }\n" + SUB)
+    ck = chk(mutate(src, "total: total, status: Received }", "total: total_count, status: Received }"))
     assert any("型の違う値（Int）" in m for m in msgs(ck, ERROR))
-    ck = chk(mutate(src, "合計: 合計, 状態: 受付 }", "合計: money(合計数), 状態: 受付 }"))
+    ck = chk(mutate(src, "total: total, status: Received }", "total: money(total_count), status: Received }"))
     assert ck.ok, ck.diags
 
 
 def test_数字はどちらの型としても使える():
     assert chk(CODE).ok  # 合計 <= 0、在庫 < v など
-    ck = chk(mutate(CODE, SUB, "  let 合計 = 小計 + 100\n"))
+    ck = chk(mutate(CODE, SUB, "  let total = subtotal + 100\n"))
     assert ck.ok, ck.diags
 
 
 def test_変換の向きを取り違えると止まる():
-    ck = chk(mutate(CODE, SUB, "  let 合計 = money(小計)\n"))
+    ck = chk(mutate(CODE, SUB, "  let total = money(subtotal)\n"))
     assert any("money( ) で変えられるのは整数だけ" in m for m in msgs(ck, ERROR))
 
 
 @needs_cargo
 def test_型の変換を使っても_Rust_がビルドできる(tmp_path):
-    src = mutate(CODE, SUB, "  let 合計数 = sum { v | (k, v) in 明細 }\n  let 合計 = 小計 + money(合計数) + round(小計 * 税率, floor, JPY)\n")
+    src = mutate(CODE, SUB, "  let total_count = sum { v | (k, v) in items }\n  let total = subtotal + money(total_count) + round(subtotal * tax_rate, floor, JPY)\n")
     ck = chk(src)
     assert ck.ok, ck.diags
     write_crate(ck, generate(ck), "fn main() {}\n", tmp_path)
@@ -996,7 +997,7 @@ def test_入力は既定で無いかもしれず_確かめてから使う():
 
 
 def test_トリガの引数には必ず要る入力を渡す():
-    ck = chk(mutate(CODE, "deed 決済要求 {\n  input 注文ID: id required\n", "deed 決済要求 {\n  input 注文ID: id\n"))
+    ck = chk(mutate(CODE, "deed request_payment {\n  input order_id: id required\n", "deed request_payment {\n  input order_id: id\n"))
     assert any("required の入力を渡してください" in m for m in msgs(ck, ERROR))
 
 
@@ -1398,34 +1399,34 @@ fn main() {
 
 
 def test_問いが残っているうちは生成しない():
-    ck = chk(mutate(CODE, "let 合計 = 小計 + round(小計 * 税率, floor, JPY)", "let 合計 = 小計 + 小計 * 税率"))
+    ck = chk(mutate(CODE, "let total = subtotal + round(subtotal * tax_rate, floor, JPY)", "let total = subtotal + subtotal * tax_rate"))
     assert ck.ok and not ck.ready
     with pytest.raises(AssertionError, match="問い"):
         generate(ck)
 
 
 # ---- 論理型（ltype）と entity ----
-LTYPE = """ltype 数量 = int 1..99
-ltype 商品数量 = 商品 → 数量
+LTYPE = """ltype Quantity = int 1..99
+ltype ProductQuantity = Product → Quantity
 
-entity 商品 {
-  商品ID: id unique
-  在庫: 数量 required
+entity Product {
+  product_id: id unique
+  stock: Quantity required
 }
 
-entity 注文 {
-  注文ID: id unique
-  明細: 商品数量 required
+entity Order {
+  order_id: id unique
+  items: ProductQuantity required
 }
 """
 
 
 def test_ltype_は使った場所に定義が写される():
     p = parse(LTYPE)
-    stock = next(f for d in p.data if d.name == "商品" for f in d.fields if f.name == "在庫")
+    stock = next(f for d in p.data if d.name == "Product" for f in d.fields if f.name == "stock")
     assert stock.type.kind == "整数" and (stock.type.range.lo, stock.type.range.hi) == (1, 99)
-    lines = next(f for d in p.data if d.name == "注文" for f in d.fields if f.name == "明細")
-    assert lines.type.kind == "写像" and lines.type.key == "商品" and lines.type.value.range.hi == 99
+    lines = next(f for d in p.data if d.name == "Order" for f in d.fields if f.name == "items")
+    assert lines.type.kind == "写像" and lines.type.key == "Product" and lines.type.value.range.hi == 99
 
 
 def test_ltype_の名前の重複と組み込み名は止まる():
@@ -1441,10 +1442,10 @@ def test_data_は_entity_に改名した():
 
 
 def test_範囲や組み合わせの直書きは止まり_名前を付けるよう案内する():
-    for ty in ("int 1..99", "text 1..20", "money(JPY) 0..", "set of id", "商品 → 数量"):
+    for ty in ("int 1..99", "text 1..20", "money(JPY) 0..", "set of id", "product → Quantity"):
         with pytest.raises(ParseError, match="ltype"):
-            parse(f"entity 商品 {{\n  商品ID: id unique\n  項目: {ty}\n}}\n")
-    parse("entity 商品 {\n  商品ID: id unique\n  項目: int\n  名: text\n  金: money(JPY)\n}\n")  # 約束のない組み込みはそのまま書ける
+            parse(f"entity Product {{\n  product_id: id unique\n  項目: {ty}\n}}\n")
+    parse("entity Product {\n  product_id: id unique\n  項目: int\n  名: text\n  金: money(JPY)\n}\n")  # 約束のない組み込みはそのまま書ける
 
 
 # ---- store（保存先）は entity の外に書く ----
@@ -1557,7 +1558,7 @@ def test_合成型は結果の中身には使えない():
 def test_合成型の宣言の誤りは止まる():
     for src, msg in [("ltype 点 {\n  x: int\n  x: int\n}\n", "2つ以上"),
                      ("ltype 点 {\n}\n", "成分がありません"),
-                     ("ltype 横 = int 0..9\nltype 横束 = 商品 → 横\nltype 点 {\n  束: 横束\n}\n", "使えません")]:
+                     ("ltype 横 = int 0..9\nltype 横束 = Product → 横\nltype 点 {\n  束: 横束\n}\n", "使えません")]:
         with pytest.raises(ParseError, match=msg):
             parse(src)
 
@@ -1820,9 +1821,50 @@ def test_仕様書にフロー図が出る_並列は_プラスのゲートウェ
 
 
 def test_説明コメントは意味を変えず_仕様書の名前と表示名の表になる():
-    ck = chk(mutate(CODE, "entity 顧客 {", "/// 買う人\n/// @en Customer\nentity 顧客 {"))
+    ck = chk(mutate(CODE, "/// 顧客\nentity Customer {", "/// 買う人\n/// @en Customer\nentity Customer {"))
     assert ck.ready, ck.diags
-    assert ("顧客", "既定: 買う人 / en: Customer") in build(ck)["名前"]
+    assert ("Customer", "既定: 買う人 / en: Customer") in build(ck)["名前"]
     assert "## 名前と表示名" in render(ck, build(ck))
     assert generate(ck) == generate(chk(CODE))  # 説明コメントがあってもなくても、生成されるコードは同じ
-    assert "名前と表示名" not in render(chk(CODE), build(chk(CODE)))
+    plain = chk("ltype 点数 = int 0..\n")  # 説明コメントが無ければ、表は出ない
+    assert "名前と表示名" not in render(plain, build(plain))
+
+
+# ---- 名前の書き方（半角英数。種類は大文字小文字で見分ける）----
+def strict(src):
+    return check(parse(src), strict_names=True)
+
+
+def test_お店の例は名前の書き方の規則に合っている():
+    ck = strict(CODE)
+    assert ck.ok, ck.diags
+
+
+def test_名前に日本語は使えない_コマンドは常に検査する(tmp_path):
+    ck = strict(mutate(CODE, "ltype StockCount = int 0..", "ltype 在庫数 = int 0.."))
+    assert any("UpperCamel" in m and "在庫数" in m for m in msgs(ck, ERROR))
+    r = subprocess.run([sys.executable, "-m", "geas", "check", str(EX / "shop.geas")], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stdout + r.stderr
+    bad = tmp_path / "bad_names.geas"
+    bad.write_text("ltype 数量 = int 1..99\n")
+    r = subprocess.run([sys.executable, "-m", "geas", "check", str(bad)], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode != 0 and "UpperCamel" in r.stdout + r.stderr
+
+
+def test_型は大文字始まり_項目と処理は小文字始まり():
+    ck = strict(mutate(CODE, "stock: StockCount required", "Stock: StockCount required"))
+    assert any("lower_snake" in m and "Stock" in m for m in msgs(ck, ERROR))
+    ck = strict(mutate(CODE, "deed place_order {", "deed PlaceOrder {").replace("place_order:", "PlaceOrder:"))
+    assert any("lower_snake" in m and "PlaceOrder" in m for m in msgs(ck, ERROR))
+    ck = strict(mutate(CODE, "state OrderStatus {", "state order_status {").replace("OrderStatus", "order_status"))
+    assert any("UpperCamel" in m and "order_status" in m for m in msgs(ck, ERROR))
+
+
+def test_小文字の名前は組み込みや予約語と同じにできない():
+    ck = strict(mutate(CODE, "let subtotal = ", "let round = ").replace("subtotal", "round", 1) if False else mutate(CODE, "  let subtotal = sum", "  let int = sum"))
+    assert any("予約語" in m and "int" in m for m in msgs(ck, ERROR))
+    assert not any("予約語" in m for m in msgs(strict(CODE), ERROR))
+
+
+def test_名前の規則は_チェックの関数では既定で見ない():
+    assert chk("ltype 点数 = int 0..\n").ok

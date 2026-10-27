@@ -6,6 +6,7 @@ from fractions import Fraction
 from math import ceil, floor
 
 from .ast import *  # noqa: F401,F403
+from .names import name_problems
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
@@ -123,8 +124,9 @@ def inv_form(inv):
 
 
 class Checker:
-    def __init__(self, prog: Program):
+    def __init__(self, prog: Program, strict_names: bool = False):
         self.p = prog
+        self.strict_names = strict_names  # 名前の書き方（半角英数・大文字小文字）も検査する。コマンドは常に真
         self.diags: list[Diag] = []
         self.data = {d.name: d for d in prog.data}
         self.states = {s.name: s for s in prog.states}
@@ -152,7 +154,7 @@ class Checker:
         self.inv_rows: dict[int, dict[str, list[tuple[bool, str]]]] = {}  # 不変条件 → 処理 → (示せたか, 理由)
 
     def d(self, level, code, where, msg):
-        self.diags.append(Diag(level, code, where, msg))
+        self.diags.append(Diag(level, code, self.p.show_names(where), self.p.show_names(msg)))
 
     def key_field(self, dname):
         for f in self.data[dname].fields:
@@ -162,6 +164,9 @@ class Checker:
 
     # ---- 全体 ----
     def run(self):
+        if self.strict_names:
+            for where, msg in name_problems(self.p, self.p.ltype_names):
+                self.diags.append(Diag(ERROR, "名前", where, msg))  # 名前そのものの指摘なので、表示名に置き換えない
         self.check_defs()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
@@ -1693,7 +1698,7 @@ class ProcChecker:
                     self.d(WARN, "結果", f"結果「{v}」を返す箇所がありません")
 
 
-def check(prog: Program):
-    ck = Checker(prog)
+def check(prog: Program, strict_names: bool = False):
+    ck = Checker(prog, strict_names)
     ck.run()
     return ck

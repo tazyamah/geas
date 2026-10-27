@@ -16,7 +16,7 @@ from . import interview
 
 def load(path):
     try:
-        return check(parse(Path(path).read_text()))
+        return check(parse(Path(path).read_text()), strict_names=True)
     except (ParseError, LexError) as e:
         print(f"構文エラー: {e}", file=sys.stderr)
         sys.exit(2)
@@ -116,7 +116,7 @@ def main(argv=None) -> int:
         with tempfile.TemporaryDirectory() as tmp:
             write_crate(ck, lib, src, Path(tmp))
             try:
-                findings += compare_examples(rows, run_crate(Path(tmp)))
+                findings += compare_examples(rows, run_crate(Path(tmp), ck.p.show_names))
             except ExampleError as e:
                 findings.append(Finding(EXAMPLE, "具体例の実行", str(e)))
     text = report(findings)

@@ -86,97 +86,97 @@ pub struct トリガ定義 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum 注文状態 { 受付, 決済要求済, 完了, キャンセル }
-impl 注文状態 {
+pub enum OrderStatus { Received, PaymentRequested, Completed, Canceled }
+impl OrderStatus {
     pub fn 名前から(s: &str) -> Option<Self> {
         match s {
-            "受付" => Some(注文状態::受付),
-            "決済要求済" => Some(注文状態::決済要求済),
-            "完了" => Some(注文状態::完了),
-            "キャンセル" => Some(注文状態::キャンセル),
+            "Received" => Some(OrderStatus::Received),
+            "PaymentRequested" => Some(OrderStatus::PaymentRequested),
+            "Completed" => Some(OrderStatus::Completed),
+            "Canceled" => Some(OrderStatus::Canceled),
             _ => None,
         }
     }
     pub fn 名前(&self) -> &'static str {
         match self {
-            注文状態::受付 => "受付",
-            注文状態::決済要求済 => "決済要求済",
-            注文状態::完了 => "完了",
-            注文状態::キャンセル => "キャンセル",
+            OrderStatus::Received => "Received",
+            OrderStatus::PaymentRequested => "PaymentRequested",
+            OrderStatus::Completed => "Completed",
+            OrderStatus::Canceled => "Canceled",
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct 商品 {
-    pub 商品ID: String,
-    pub 在庫: u64,
-    pub 単価: i64,
+pub struct Product {
+    pub product_id: String,
+    pub stock: u64,
+    pub unit_price: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct 顧客 {
-    pub 顧客ID: String,
+pub struct Customer {
+    pub customer_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct 注文 {
-    pub 注文ID: String,
-    pub 顧客: String,
-    pub 明細: BTreeMap<String, u8>,
-    pub 合計: i64,
-    pub 状態: 注文状態,
+pub struct Order {
+    pub order_id: String,
+    pub customer: String,
+    pub items: BTreeMap<String, u8>,
+    pub total: i64,
+    pub status: OrderStatus,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct 保存 {
-    pub 商品: BTreeMap<String, 商品>,
-    pub 顧客: BTreeMap<String, 顧客>,
-    pub 注文: BTreeMap<String, 注文>,
+    pub Product: BTreeMap<String, Product>,
+    pub Customer: BTreeMap<String, Customer>,
+    pub Order: BTreeMap<String, Order>,
 }
 
 impl 保存 {
     pub fn 適用(&mut self, 書込列: Vec<書込>) {
         for w in 書込列 {
             match w {
-                書込::商品_在庫(id, v) => { unsafe { self.商品.get_mut(&id).unwrap_unchecked() }.在庫 = v; }
-                書込::注文_新規(r) => { self.注文.insert(r.注文ID.clone(), r); }
-                書込::注文_状態(id, v) => { unsafe { self.注文.get_mut(&id).unwrap_unchecked() }.状態 = v; }
+                書込::Order_新規(r) => { self.Order.insert(r.order_id.clone(), r); }
+                書込::Product_stock(id, v) => { unsafe { self.Product.get_mut(&id).unwrap_unchecked() }.stock = v; }
+                書込::Order_status(id, v) => { unsafe { self.Order.get_mut(&id).unwrap_unchecked() }.status = v; }
             }
         }
     }
     pub fn 差分(&self, 後: &保存) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for (id, r) in &後.商品 {
-            match self.商品.get(id) {
-                None => out.push(format!("商品({})新規(在庫={}, 単価={})", id, r.在庫, r.単価)),
+        for (id, r) in &後.Product {
+            match self.Product.get(id) {
+                None => out.push(format!("Product({})新規(stock={}, unit_price={})", id, r.stock, r.unit_price)),
                 Some(b) => {
-                    if b.在庫 != r.在庫 { out.push(format!("商品({}).在庫:{}→{}", id, b.在庫, r.在庫)); }
-                    if b.単価 != r.単価 { out.push(format!("商品({}).単価:{}→{}", id, b.単価, r.単価)); }
+                    if b.stock != r.stock { out.push(format!("Product({}).stock:{}→{}", id, b.stock, r.stock)); }
+                    if b.unit_price != r.unit_price { out.push(format!("Product({}).unit_price:{}→{}", id, b.unit_price, r.unit_price)); }
                 }
             }
         }
-        for id in self.商品.keys() { if !後.商品.contains_key(id) { out.push(format!("商品({})削除", id)); } }
-        for (id, r) in &後.顧客 {
-            match self.顧客.get(id) {
-                None => out.push(format!("顧客({})新規()", id)),
+        for id in self.Product.keys() { if !後.Product.contains_key(id) { out.push(format!("Product({})削除", id)); } }
+        for (id, r) in &後.Customer {
+            match self.Customer.get(id) {
+                None => out.push(format!("Customer({})新規()", id)),
                 Some(b) => {
                 }
             }
         }
-        for id in self.顧客.keys() { if !後.顧客.contains_key(id) { out.push(format!("顧客({})削除", id)); } }
-        for (id, r) in &後.注文 {
-            match self.注文.get(id) {
-                None => out.push(format!("注文({})新規(顧客={}, 明細={}, 合計={}, 状態={})", id, r.顧客, 写像表示(&r.明細), r.合計, r.状態.名前())),
+        for id in self.Customer.keys() { if !後.Customer.contains_key(id) { out.push(format!("Customer({})削除", id)); } }
+        for (id, r) in &後.Order {
+            match self.Order.get(id) {
+                None => out.push(format!("Order({})新規(customer={}, items={}, total={}, status={})", id, r.customer, 写像表示(&r.items), r.total, r.status.名前())),
                 Some(b) => {
-                    if b.顧客 != r.顧客 { out.push(format!("注文({}).顧客:{}→{}", id, b.顧客, r.顧客)); }
-                    if b.明細 != r.明細 { out.push(format!("注文({}).明細:{}→{}", id, 写像表示(&b.明細), 写像表示(&r.明細))); }
-                    if b.合計 != r.合計 { out.push(format!("注文({}).合計:{}→{}", id, b.合計, r.合計)); }
-                    if b.状態 != r.状態 { out.push(format!("注文({}).状態:{}→{}", id, b.状態.名前(), r.状態.名前())); }
+                    if b.customer != r.customer { out.push(format!("Order({}).customer:{}→{}", id, b.customer, r.customer)); }
+                    if b.items != r.items { out.push(format!("Order({}).items:{}→{}", id, 写像表示(&b.items), 写像表示(&r.items))); }
+                    if b.total != r.total { out.push(format!("Order({}).total:{}→{}", id, b.total, r.total)); }
+                    if b.status != r.status { out.push(format!("Order({}).status:{}→{}", id, b.status.名前(), r.status.名前())); }
                 }
             }
         }
-        for id in self.注文.keys() { if !後.注文.contains_key(id) { out.push(format!("注文({})削除", id)); } }
+        for id in self.Order.keys() { if !後.Order.contains_key(id) { out.push(format!("Order({})削除", id)); } }
         out.sort();
         out
     }
@@ -184,378 +184,378 @@ impl 保存 {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum 書込 {
-    商品_在庫(String, u64),
-    注文_新規(注文),
-    注文_状態(String, 注文状態),
+    Order_新規(Order),
+    Product_stock(String, u64),
+    Order_status(String, OrderStatus),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum 外部作用 {
-    決済_請求 { 注文ID: String, 金額: i64, 冪等キー: String },
+    Payment_charge { order_id: String, amount: i64, 冪等キー: String },
 }
 impl 外部作用 {
     pub fn 表示(&self) -> String {
         match self {
-            外部作用::決済_請求 { 注文ID, 金額, 冪等キー } => format!("決済.請求({}, {}, 冪等キー={})", 注文ID, 金額, 冪等キー),
+            外部作用::Payment_charge { order_id, amount, 冪等キー } => format!("Payment.charge({}, {}, 冪等キー={})", order_id, amount, 冪等キー),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum 受注結果 {
-    受付(String),
-    在庫不足(BTreeSet<String>),
-    商品なし(BTreeSet<String>),
-    顧客なし,
+pub enum PlaceOrderResult {
+    Received(String),
+    OutOfStock(BTreeSet<String>),
+    NoSuchProduct(BTreeSet<String>),
+    NoSuchCustomer,
 }
-impl 受注結果 {
+impl PlaceOrderResult {
     pub fn 表示(&self) -> String {
         match self {
-            受注結果::受付(a0) => format!("受付({})", a0),
-            受注結果::在庫不足(a0) => format!("在庫不足({})", 集合表示(&a0)),
-            受注結果::商品なし(a0) => format!("商品なし({})", 集合表示(&a0)),
-            受注結果::顧客なし => "顧客なし".to_string(),
+            PlaceOrderResult::Received(a0) => format!("Received({})", a0),
+            PlaceOrderResult::OutOfStock(a0) => format!("OutOfStock({})", 集合表示(&a0)),
+            PlaceOrderResult::NoSuchProduct(a0) => format!("NoSuchProduct({})", 集合表示(&a0)),
+            PlaceOrderResult::NoSuchCustomer => "NoSuchCustomer".to_string(),
         }
     }
     pub fn 名前(&self) -> &'static str {
         match self {
-            受注結果::受付(..) => "受付",
-            受注結果::在庫不足(..) => "在庫不足",
-            受注結果::商品なし(..) => "商品なし",
-            受注結果::顧客なし => "顧客なし",
+            PlaceOrderResult::Received(..) => "Received",
+            PlaceOrderResult::OutOfStock(..) => "OutOfStock",
+            PlaceOrderResult::NoSuchProduct(..) => "NoSuchProduct",
+            PlaceOrderResult::NoSuchCustomer => "NoSuchCustomer",
         }
     }
     pub fn 引数(&self) -> Vec<String> {
         match self {
-            受注結果::受付(a0) => vec![format!("{}", a0)],
-            受注結果::在庫不足(a0) => vec![format!("{}", 集合表示(&a0))],
-            受注結果::商品なし(a0) => vec![format!("{}", 集合表示(&a0))],
-            受注結果::顧客なし => vec![],
+            PlaceOrderResult::Received(a0) => vec![format!("{}", a0)],
+            PlaceOrderResult::OutOfStock(a0) => vec![format!("{}", 集合表示(&a0))],
+            PlaceOrderResult::NoSuchProduct(a0) => vec![format!("{}", 集合表示(&a0))],
+            PlaceOrderResult::NoSuchCustomer => vec![],
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum 決済要求結果 {
-    要求済,
-    注文なし,
-    状態違い,
-    合計ゼロ,
+pub enum RequestPaymentResult {
+    Requested,
+    NoSuchOrder,
+    WrongStatus,
+    ZeroTotal,
 }
-impl 決済要求結果 {
+impl RequestPaymentResult {
     pub fn 表示(&self) -> String {
         match self {
-            決済要求結果::要求済 => "要求済".to_string(),
-            決済要求結果::注文なし => "注文なし".to_string(),
-            決済要求結果::状態違い => "状態違い".to_string(),
-            決済要求結果::合計ゼロ => "合計ゼロ".to_string(),
+            RequestPaymentResult::Requested => "Requested".to_string(),
+            RequestPaymentResult::NoSuchOrder => "NoSuchOrder".to_string(),
+            RequestPaymentResult::WrongStatus => "WrongStatus".to_string(),
+            RequestPaymentResult::ZeroTotal => "ZeroTotal".to_string(),
         }
     }
     pub fn 名前(&self) -> &'static str {
         match self {
-            決済要求結果::要求済 => "要求済",
-            決済要求結果::注文なし => "注文なし",
-            決済要求結果::状態違い => "状態違い",
-            決済要求結果::合計ゼロ => "合計ゼロ",
+            RequestPaymentResult::Requested => "Requested",
+            RequestPaymentResult::NoSuchOrder => "NoSuchOrder",
+            RequestPaymentResult::WrongStatus => "WrongStatus",
+            RequestPaymentResult::ZeroTotal => "ZeroTotal",
         }
     }
     pub fn 引数(&self) -> Vec<String> {
         match self {
-            決済要求結果::要求済 => vec![],
-            決済要求結果::注文なし => vec![],
-            決済要求結果::状態違い => vec![],
-            決済要求結果::合計ゼロ => vec![],
+            RequestPaymentResult::Requested => vec![],
+            RequestPaymentResult::NoSuchOrder => vec![],
+            RequestPaymentResult::WrongStatus => vec![],
+            RequestPaymentResult::ZeroTotal => vec![],
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum 待ち解除結果 {
-    反映済,
-    注文なし,
-    状態違い,
+pub enum ReleaseResult {
+    Applied,
+    NoSuchOrder,
+    WrongStatus,
 }
-impl 待ち解除結果 {
+impl ReleaseResult {
     pub fn 表示(&self) -> String {
         match self {
-            待ち解除結果::反映済 => "反映済".to_string(),
-            待ち解除結果::注文なし => "注文なし".to_string(),
-            待ち解除結果::状態違い => "状態違い".to_string(),
+            ReleaseResult::Applied => "Applied".to_string(),
+            ReleaseResult::NoSuchOrder => "NoSuchOrder".to_string(),
+            ReleaseResult::WrongStatus => "WrongStatus".to_string(),
         }
     }
     pub fn 名前(&self) -> &'static str {
         match self {
-            待ち解除結果::反映済 => "反映済",
-            待ち解除結果::注文なし => "注文なし",
-            待ち解除結果::状態違い => "状態違い",
+            ReleaseResult::Applied => "Applied",
+            ReleaseResult::NoSuchOrder => "NoSuchOrder",
+            ReleaseResult::WrongStatus => "WrongStatus",
         }
     }
     pub fn 引数(&self) -> Vec<String> {
         match self {
-            待ち解除結果::反映済 => vec![],
-            待ち解除結果::注文なし => vec![],
-            待ち解除結果::状態違い => vec![],
+            ReleaseResult::Applied => vec![],
+            ReleaseResult::NoSuchOrder => vec![],
+            ReleaseResult::WrongStatus => vec![],
         }
     }
 }
 
-// ---- 処理 受注 ----
-pub struct 受注入力 {
-    pub 顧客ID: String,
-    pub 明細: BTreeMap<String, u8>,
+// ---- 処理 place_order ----
+pub struct place_order入力 {
+    pub customer_id: String,
+    pub items: BTreeMap<String, u8>,
 }
-impl 受注入力 {
+impl place_order入力 {
     /// 外部から取り込むときの、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
-        for v in self.明細.values() { 範囲検査("明細", *v as i128, Some(1), Some(99))?; }
+        for v in self.items.values() { 範囲検査("items", *v as i128, Some(1), Some(99))?; }
         Ok(())
     }
 }
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
-pub struct 受注文脈 {
-    pub 税率: 有理,
-    pub 新注文ID: String,
+pub struct place_order文脈 {
+    pub tax_rate: 有理,
+    pub 新OrderID: String,
 }
-impl 受注文脈 {
+impl place_order文脈 {
     /// 外から埋まる値（slot）の、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
-        割合検査("税率", &self.税率, Some(0), Some(1))?;
+        割合検査("tax_rate", &self.tax_rate, Some(0), Some(1))?;
         Ok(())
     }
 }
-pub struct 受注出力 {
-    pub 結果: 受注結果,
+pub struct place_order出力 {
+    pub 結果: PlaceOrderResult,
     pub 書込: Vec<書込>,
     pub 外部: Vec<外部作用>,
 }
-pub fn 受注(ctx: &受注文脈, 保存: &保存, 入力: &受注入力) -> 受注出力 {
+pub fn place_order(ctx: &place_order文脈, 保存: &保存, 入力: &place_order入力) -> place_order出力 {
     let mut 書込列: Vec<書込> = Vec::new();
     let mut 外部列: Vec<外部作用> = Vec::new();
-    let 顧客 = match 保存.顧客.get(&(入力.顧客ID.clone())) {
+    let customer = match 保存.Customer.get(&(入力.customer_id.clone())) {
         Some(r) => r,
-        None => return 受注出力 { 結果: 受注結果::顧客なし, 書込: 書込列, 外部: 外部列 },
+        None => return place_order出力 { 結果: PlaceOrderResult::NoSuchCustomer, 書込: 書込列, 外部: 外部列 },
     };
-    let 未登録: BTreeSet<String> = { let mut 集め: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in 入力.明細.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if !保存.商品.contains_key(&(k.clone())) { 集め.insert(k.clone()); } } 集め };
-    if !未登録.is_empty() {
-        return 受注出力 { 結果: 受注結果::商品なし(未登録.clone()), 書込: 書込列, 外部: 外部列 };
+    let unregistered: BTreeSet<String> = { let mut 集め: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in 入力.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if !保存.Product.contains_key(&(k.clone())) { 集め.insert(k.clone()); } } 集め };
+    if !unregistered.is_empty() {
+        return place_order出力 { 結果: PlaceOrderResult::NoSuchProduct(unregistered.clone()), 書込: 書込列, 外部: 外部列 };
     }
-    let 不足: BTreeSet<String> = { let mut 集め: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in 入力.明細.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if ((保存.商品[&(k.clone())].在庫 as i128) < v) { 集め.insert(k.clone()); } } 集め };
-    if !不足.is_empty() {
-        return 受注出力 { 結果: 受注結果::在庫不足(不足.clone()), 書込: 書込列, 外部: 外部列 };
+    let short: BTreeSet<String> = { let mut 集め: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in 入力.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if ((保存.Product[&(k.clone())].stock as i128) < v) { 集め.insert(k.clone()); } } 集め };
+    if !short.is_empty() {
+        return place_order出力 { 結果: PlaceOrderResult::OutOfStock(short.clone()), 書込: 書込列, 外部: 外部列 };
     }
-    for (k_, v_) in 入力.明細.iter() {
+    for (k_, v_) in 入力.items.iter() {
         let k: String = k_.clone();
         let v: i128 = *v_ as i128;
         {
-            let 新値: i128 = (保存.商品[&(k.clone())].在庫 as i128) - v;
-            書込列.push(書込::商品_在庫(k.clone(), u64::try_from(新値).expect("物理数に収まらない")));
+            let 新値: i128 = (保存.Product[&(k.clone())].stock as i128) - v;
+            書込列.push(書込::Product_stock(k.clone(), u64::try_from(新値).expect("物理数に収まらない")));
         }
     }
-    let 小計: i128 = { let mut 集め: i128 = 0; for (k_, v_) in 入力.明細.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; 集め += ((保存.商品[&(k.clone())].単価 as i128) * v); } 集め };
-    let 合計: i128 = (小計 + floor(積(小計, ctx.税率)));
-    let 注文 = 注文 {
-        注文ID: ctx.新注文ID.clone(),
-        顧客: 入力.顧客ID.clone(),
-        明細: 入力.明細.clone(),
-        合計: i64::try_from(合計).expect("物理数に収まらない"),
-        状態: 注文状態::受付,
+    let subtotal: i128 = { let mut 集め: i128 = 0; for (k_, v_) in 入力.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; 集め += ((保存.Product[&(k.clone())].unit_price as i128) * v); } 集め };
+    let total: i128 = (subtotal + floor(積(subtotal, ctx.tax_rate)));
+    let order = Order {
+        order_id: ctx.新OrderID.clone(),
+        customer: 入力.customer_id.clone(),
+        items: 入力.items.clone(),
+        total: i64::try_from(total).expect("物理数に収まらない"),
+        status: OrderStatus::Received,
     };
-    書込列.push(書込::注文_新規(注文.clone()));
-    return 受注出力 { 結果: 受注結果::受付(注文.注文ID.clone()), 書込: 書込列, 外部: 外部列 };
+    書込列.push(書込::Order_新規(order.clone()));
+    return place_order出力 { 結果: PlaceOrderResult::Received(order.order_id.clone()), 書込: 書込列, 外部: 外部列 };
 }
 
-// ---- 処理 決済要求 ----
-pub struct 決済要求入力 {
-    pub 注文ID: String,
+// ---- 処理 request_payment ----
+pub struct request_payment入力 {
+    pub order_id: String,
 }
-impl 決済要求入力 {
+impl request_payment入力 {
     /// 外部から取り込むときの、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
-pub struct 決済要求文脈 {
+pub struct request_payment文脈 {
 }
-impl 決済要求文脈 {
+impl request_payment文脈 {
     /// 外から埋まる値（slot）の、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
-pub struct 決済要求出力 {
-    pub 結果: 決済要求結果,
+pub struct request_payment出力 {
+    pub 結果: RequestPaymentResult,
     pub 書込: Vec<書込>,
     pub 外部: Vec<外部作用>,
 }
-pub fn 決済要求(ctx: &決済要求文脈, 保存: &保存, 入力: &決済要求入力) -> 決済要求出力 {
+pub fn request_payment(ctx: &request_payment文脈, 保存: &保存, 入力: &request_payment入力) -> request_payment出力 {
     let mut 書込列: Vec<書込> = Vec::new();
     let mut 外部列: Vec<外部作用> = Vec::new();
-    let 注文 = match 保存.注文.get(&(入力.注文ID.clone())) {
+    let order = match 保存.Order.get(&(入力.order_id.clone())) {
         Some(r) => r,
-        None => return 決済要求出力 { 結果: 決済要求結果::注文なし, 書込: 書込列, 外部: 外部列 },
+        None => return request_payment出力 { 結果: RequestPaymentResult::NoSuchOrder, 書込: 書込列, 外部: 外部列 },
     };
-    if (注文.状態 != 注文状態::受付) {
-        return 決済要求出力 { 結果: 決済要求結果::状態違い, 書込: 書込列, 外部: 外部列 };
+    if (order.status != OrderStatus::Received) {
+        return request_payment出力 { 結果: RequestPaymentResult::WrongStatus, 書込: 書込列, 外部: 外部列 };
     }
-    if ((注文.合計 as i128) <= 0i128) {
-        return 決済要求出力 { 結果: 決済要求結果::合計ゼロ, 書込: 書込列, 外部: 外部列 };
+    if ((order.total as i128) <= 0i128) {
+        return request_payment出力 { 結果: RequestPaymentResult::ZeroTotal, 書込: 書込列, 外部: 外部列 };
     }
-    書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::決済要求済));
-    外部列.push(外部作用::決済_請求 { 注文ID: 入力.注文ID.clone(), 金額: i64::try_from(範囲内("金額", (注文.合計 as i128), None, None)).expect("物理数に収まらない"), 冪等キー: 入力.注文ID.clone() });
-    return 決済要求出力 { 結果: 決済要求結果::要求済, 書込: 書込列, 外部: 外部列 };
+    書込列.push(書込::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));
+    外部列.push(外部作用::Payment_charge { order_id: 入力.order_id.clone(), amount: i64::try_from(範囲内("amount", (order.total as i128), None, None)).expect("物理数に収まらない"), 冪等キー: 入力.order_id.clone() });
+    return request_payment出力 { 結果: RequestPaymentResult::Requested, 書込: 書込列, 外部: 外部列 };
 }
 
-// ---- 処理 決済結果の反映 ----
-pub struct 決済結果の反映入力 {
-    pub 注文ID: String,
+// ---- 処理 apply_payment_result ----
+pub struct apply_payment_result入力 {
+    pub order_id: String,
 }
-impl 決済結果の反映入力 {
+impl apply_payment_result入力 {
     /// 外部から取り込むときの、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
-pub struct 決済結果の反映文脈 {
+pub struct apply_payment_result文脈 {
 }
-impl 決済結果の反映文脈 {
+impl apply_payment_result文脈 {
     /// 外から埋まる値（slot）の、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
-pub struct 決済結果の反映出力 {
-    pub 結果: 待ち解除結果,
+pub struct apply_payment_result出力 {
+    pub 結果: ReleaseResult,
     pub 書込: Vec<書込>,
     pub 外部: Vec<外部作用>,
 }
-pub fn 決済結果の反映(ctx: &決済結果の反映文脈, 保存: &保存, 入力: &決済結果の反映入力) -> 決済結果の反映出力 {
+pub fn apply_payment_result(ctx: &apply_payment_result文脈, 保存: &保存, 入力: &apply_payment_result入力) -> apply_payment_result出力 {
     let mut 書込列: Vec<書込> = Vec::new();
     let mut 外部列: Vec<外部作用> = Vec::new();
-    let 注文 = match 保存.注文.get(&(入力.注文ID.clone())) {
+    let order = match 保存.Order.get(&(入力.order_id.clone())) {
         Some(r) => r,
-        None => return 決済結果の反映出力 { 結果: 待ち解除結果::注文なし, 書込: 書込列, 外部: 外部列 },
+        None => return apply_payment_result出力 { 結果: ReleaseResult::NoSuchOrder, 書込: 書込列, 外部: 外部列 },
     };
-    if (注文.状態 != 注文状態::決済要求済) {
-        return 決済結果の反映出力 { 結果: 待ち解除結果::状態違い, 書込: 書込列, 外部: 外部列 };
+    if (order.status != OrderStatus::PaymentRequested) {
+        return apply_payment_result出力 { 結果: ReleaseResult::WrongStatus, 書込: 書込列, 外部: 外部列 };
     }
-    書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::完了));
-    return 決済結果の反映出力 { 結果: 待ち解除結果::反映済, 書込: 書込列, 外部: 外部列 };
+    書込列.push(書込::Order_status(order.order_id.clone(), OrderStatus::Completed));
+    return apply_payment_result出力 { 結果: ReleaseResult::Applied, 書込: 書込列, 外部: 外部列 };
 }
 
-// ---- 処理 決済の期限切れ ----
-pub struct 決済の期限切れ入力 {
-    pub 注文ID: String,
+// ---- 処理 expire_payment ----
+pub struct expire_payment入力 {
+    pub order_id: String,
 }
-impl 決済の期限切れ入力 {
+impl expire_payment入力 {
     /// 外部から取り込むときの、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
 /// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）
-pub struct 決済の期限切れ文脈 {
+pub struct expire_payment文脈 {
 }
-impl 決済の期限切れ文脈 {
+impl expire_payment文脈 {
     /// 外から埋まる値（slot）の、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
-pub struct 決済の期限切れ出力 {
-    pub 結果: 待ち解除結果,
+pub struct expire_payment出力 {
+    pub 結果: ReleaseResult,
     pub 書込: Vec<書込>,
     pub 外部: Vec<外部作用>,
 }
-pub fn 決済の期限切れ(ctx: &決済の期限切れ文脈, 保存: &保存, 入力: &決済の期限切れ入力) -> 決済の期限切れ出力 {
+pub fn expire_payment(ctx: &expire_payment文脈, 保存: &保存, 入力: &expire_payment入力) -> expire_payment出力 {
     let mut 書込列: Vec<書込> = Vec::new();
     let mut 外部列: Vec<外部作用> = Vec::new();
-    let 注文 = match 保存.注文.get(&(入力.注文ID.clone())) {
+    let order = match 保存.Order.get(&(入力.order_id.clone())) {
         Some(r) => r,
-        None => return 決済の期限切れ出力 { 結果: 待ち解除結果::注文なし, 書込: 書込列, 外部: 外部列 },
+        None => return expire_payment出力 { 結果: ReleaseResult::NoSuchOrder, 書込: 書込列, 外部: 外部列 },
     };
-    if (注文.状態 != 注文状態::決済要求済) {
-        return 決済の期限切れ出力 { 結果: 待ち解除結果::状態違い, 書込: 書込列, 外部: 外部列 };
+    if (order.status != OrderStatus::PaymentRequested) {
+        return expire_payment出力 { 結果: ReleaseResult::WrongStatus, 書込: 書込列, 外部: 外部列 };
     }
-    書込列.push(書込::注文_状態(注文.注文ID.clone(), 注文状態::キャンセル));
-    return 決済の期限切れ出力 { 結果: 待ち解除結果::反映済, 書込: 書込列, 外部: 外部列 };
+    書込列.push(書込::Order_status(order.order_id.clone(), OrderStatus::Canceled));
+    return expire_payment出力 { 結果: ReleaseResult::Applied, 書込: 書込列, 外部: 外部列 };
 }
 
-// ---- 問い合わせ 注文一覧（読むだけ） ----
-pub struct 注文一覧入力 {
+// ---- 問い合わせ order_list（読むだけ） ----
+pub struct order_list入力 {
 }
-impl 注文一覧入力 {
+impl order_list入力 {
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
-pub struct 注文一覧文脈 {
+pub struct order_list文脈 {
 }
-impl 注文一覧文脈 {
+impl order_list文脈 {
     /// 外から埋まる値（slot）の、範囲の宣言の検査
     pub fn 検査(&self) -> Result<(), String> {
         Ok(())
     }
 }
 #[derive(Clone, Debug, PartialEq)]
-pub struct 注文一覧行 {
-    pub 注文ID: String,
-    pub 顧客: String,
-    pub 点数: i128,
+pub struct order_list行 {
+    pub order_id: String,
+    pub customer: String,
+    pub item_count: i128,
 }
-impl 注文一覧行 {
-    pub fn 表示(&self) -> String { format!("注文ID={}/顧客={}/点数={}", self.注文ID, self.顧客, self.点数) }
+impl order_list行 {
+    pub fn 表示(&self) -> String { format!("order_id={}/customer={}/item_count={}", self.order_id, self.customer, self.item_count) }
 }
-pub fn 注文一覧(ctx: &注文一覧文脈, 保存: &保存, 入力: &注文一覧入力) -> Vec<注文一覧行> {
-    let mut 行: Vec<&注文> = 保存.注文.values().filter(|r| {
-        if !(r.状態 != 注文状態::キャンセル) { return false; }
+pub fn order_list(ctx: &order_list文脈, 保存: &保存, 入力: &order_list入力) -> Vec<order_list行> {
+    let mut 行: Vec<&Order> = 保存.Order.values().filter(|r| {
+        if !(r.status != OrderStatus::Canceled) { return false; }
         true
     }).collect();
-    行.sort_by(|a, b| a.注文ID.cmp(&b.注文ID));
+    行.sort_by(|a, b| a.order_id.cmp(&b.order_id));
     行.into_iter().filter_map(|r| {
-        let j_顧客 = 保存.顧客.get(&r.顧客)?;  // 参照先が無い行は出さない
-        Some(注文一覧行 { 注文ID: r.注文ID.clone(), 顧客: j_顧客.顧客ID.clone(), 点数: r.明細.values().map(|v| *v as i128).sum::<i128>() })
+        let j_customer = 保存.Customer.get(&r.customer)?;  // 参照先が無い行は出さない
+        Some(order_list行 { order_id: r.order_id.clone(), customer: j_customer.customer_id.clone(), item_count: r.items.values().map(|v| *v as i128).sum::<i128>() })
     }).collect()
 }
 
 // 【フロー】：結果の種類ごとの行き先。match の網羅は Rust が検査する。
-pub fn 注文受付_受注(r: &受注結果) -> 行き先 {
+pub fn OrderIntake_place_order(r: &PlaceOrderResult) -> 行き先 {
     match r {
-        受注結果::受付(..) => 行き先::処理("決済要求"),
-        受注結果::在庫不足(..) => 行き先::応答,
-        受注結果::商品なし(..) => 行き先::応答,
-        受注結果::顧客なし => 行き先::応答,
+        PlaceOrderResult::Received(..) => 行き先::処理("request_payment"),
+        PlaceOrderResult::OutOfStock(..) => 行き先::応答,
+        PlaceOrderResult::NoSuchProduct(..) => 行き先::応答,
+        PlaceOrderResult::NoSuchCustomer => 行き先::応答,
     }
 }
 
-pub fn 注文受付_決済要求(r: &決済要求結果) -> 行き先 {
+pub fn OrderIntake_request_payment(r: &RequestPaymentResult) -> 行き先 {
     match r {
-        決済要求結果::要求済 => 行き先::待つ("決済待ち"),
-        決済要求結果::注文なし => 行き先::応答,
-        決済要求結果::状態違い => 行き先::応答,
-        決済要求結果::合計ゼロ => 行き先::応答,
+        RequestPaymentResult::Requested => 行き先::待つ("PaymentPending"),
+        RequestPaymentResult::NoSuchOrder => 行き先::応答,
+        RequestPaymentResult::WrongStatus => 行き先::応答,
+        RequestPaymentResult::ZeroTotal => 行き先::応答,
     }
 }
 
-pub fn 決済待ち解除_決済結果の反映(r: &待ち解除結果) -> 行き先 {
+pub fn PaymentRelease_apply_payment_result(r: &ReleaseResult) -> 行き先 {
     match r {
-        待ち解除結果::反映済 => 行き先::応答,
-        待ち解除結果::注文なし => 行き先::応答,
-        待ち解除結果::状態違い => 行き先::応答,
+        ReleaseResult::Applied => 行き先::応答,
+        ReleaseResult::NoSuchOrder => 行き先::応答,
+        ReleaseResult::WrongStatus => 行き先::応答,
     }
 }
 
-pub fn 決済待ち解除_決済の期限切れ(r: &待ち解除結果) -> 行き先 {
+pub fn PaymentRelease_expire_payment(r: &ReleaseResult) -> 行き先 {
     match r {
-        待ち解除結果::反映済 => 行き先::応答,
-        待ち解除結果::注文なし => 行き先::応答,
-        待ち解除結果::状態違い => 行き先::応答,
+        ReleaseResult::Applied => 行き先::応答,
+        ReleaseResult::NoSuchOrder => 行き先::応答,
+        ReleaseResult::WrongStatus => 行き先::応答,
     }
 }
 
 // 【トリガ】：待ちの宣言。要因ごとの行き先。作成・発火・期限の監視は基盤の仕事。
 pub const トリガ一覧: &[トリガ定義] = &[
-    トリガ定義 { 名前: "決済待ち", 要因: &[("応答", "決済成功", "決済結果の反映"), ("期限", "1800", "決済の期限切れ")] },
+    トリガ定義 { 名前: "PaymentPending", 要因: &[("応答", "PaymentSucceeded", "apply_payment_result"), ("期限", "1800", "expire_payment")] },
 ];
 

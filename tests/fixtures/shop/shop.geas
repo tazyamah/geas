@@ -1,150 +1,201 @@
 // お店の例：受注と決済要求（試作の最小範囲）
-// キーワードは英語、名前は日本語（仕様書・計画書の言葉）のまま。
+// 名前は半角英数。仕様書に出す日本語の名前は /// で付ける（コンパイラは読まない）。
 
-ltype 在庫数 = int 0..
-ltype 非負金額 = money(JPY) 0..
-ltype 数量 = int 1..99
-ltype 商品数量 = 商品 → 数量
-ltype 税率値 = ratio 0..1
-ltype ID集合 = set of id
+/// 在庫数
+ltype StockCount = int 0..
+/// 非負金額
+ltype NonNegMoney = money(JPY) 0..
+/// 数量
+ltype Quantity = int 1..99
+/// 商品数量
+ltype ProductQuantity = Product → Quantity
+/// 税率値
+ltype TaxRateValue = ratio 0..1
+/// ID集合
+ltype IdSet = set of id
 
-entity 商品 {
-  商品ID: id unique
-  在庫: 在庫数 required
-  単価: 非負金額 required
+/// 商品
+entity Product {
+  /// 商品ID
+  product_id: id unique
+  /// 在庫
+  stock: StockCount required
+  /// 単価
+  unit_price: NonNegMoney required
 }
 
-entity 顧客 {
-  顧客ID: id unique
+/// 顧客
+entity Customer {
+  /// 顧客ID
+  customer_id: id unique
 }
 
-entity 注文 {
-  注文ID: id unique
-  顧客: ref 顧客 required
-  明細: 商品数量 required
-  合計: 非負金額 required
-  状態: 注文状態
+/// 注文
+entity Order {
+  /// 注文ID
+  order_id: id unique
+  /// 顧客
+  customer: ref Customer required
+  /// 明細
+  items: ProductQuantity required
+  /// 合計
+  total: NonNegMoney required
+  /// 状態
+  status: OrderStatus
 }
 
-state 注文状態 {
-  initial 受付
-  middle 決済要求済
-  final 完了, キャンセル
-  reject 完了 → キャンセル reason "完了後は返品で扱う"
+/// 注文状態
+state OrderStatus {
+  /// 受付
+  initial Received
+  /// 決済要求済
+  middle PaymentRequested
+  final /// 完了
+    Completed, /// キャンセル
+    Canceled
+  reject Completed → Canceled reason "完了後は返品で扱う"
 }
 
-result 受注結果 {
-  受付(注文ID: id)
-  在庫不足(不足: ID集合)
-  商品なし(未登録: ID集合)
-  顧客なし
+/// 受注結果
+result PlaceOrderResult {
+  Received(order_id: id)
+  /// 在庫不足
+  OutOfStock(/// 不足
+    short: IdSet)
+  /// 商品なし
+  NoSuchProduct(/// 未登録
+    unregistered: IdSet)
+  /// 顧客なし
+  NoSuchCustomer
 }
 
-result 決済要求結果 {
-  要求済
-  注文なし
-  状態違い
-  合計ゼロ
+/// 決済要求結果
+result RequestPaymentResult {
+  /// 要求済
+  Requested
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+  /// 合計ゼロ
+  ZeroTotal
 }
 
-result 待ち解除結果 {
-  反映済
-  注文なし
-  状態違い
+/// 待ち解除結果
+result ReleaseResult {
+  /// 反映済
+  Applied
+  NoSuchOrder
+  WrongStatus
 }
 
-effect 決済.請求(注文ID: id, 金額: money(JPY))
+/// 決済
+effect Payment. /// 請求
+  charge(order_id: id, /// 金額
+    amount: money(JPY))
 
-deed 受注 {
-  input 顧客ID: id required, 明細: 商品数量 required
-  slot 税率: 税率値
-  reads 商品.在庫, 商品.単価, 顧客
-  writes 商品.在庫, 注文
-  transition 注文: (new) → 受付
-  result 受注結果
+/// 受注
+deed place_order {
+  input customer_id: id required, items: ProductQuantity required
+  /// 税率
+  slot tax_rate: TaxRateValue
+  reads Product.stock, Product.unit_price, Customer
+  writes Product.stock, Order
+  transition Order: (new) → Received
+  result PlaceOrderResult
   effects none
 
-  let 顧客 = 顧客[顧客ID] else { return 顧客なし }
-  let 未登録 = { k | (k, v) in 明細, 商品[k] is absent }
-  if 未登録 is nonempty { return 商品なし(未登録) }
-  let 不足 = { k | (k, v) in 明細, 商品[k].在庫 < v }
-  if 不足 is nonempty { return 在庫不足(不足) }
-  update { 商品[k].在庫 -= v | (k, v) in 明細 }
-  let 小計 = sum { 商品[k].単価 * v | (k, v) in 明細 }
-  let 合計 = 小計 + round(小計 * 税率, floor, JPY)
-  let 注文 = create 注文 { 顧客: 顧客ID, 明細: 明細, 合計: 合計, 状態: 受付 }
-  return 受付(注文.注文ID)
+  let customer = Customer[customer_id] else { return NoSuchCustomer }
+  let unregistered = { k | (k, v) in items, Product[k] is absent }
+  if unregistered is nonempty { return NoSuchProduct(unregistered) }
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return OutOfStock(short) }
+  update { Product[k].stock -= v | (k, v) in items }
+  /// 小計
+  let subtotal = sum { Product[k].unit_price * v | (k, v) in items }
+  let total = subtotal + round(subtotal * tax_rate, floor, JPY)
+  let order = create Order { customer: customer_id, items: items, total: total, status: Received }
+  return Received(order.order_id)
 }
 
-deed 決済要求 {
-  input 注文ID: id required
-  reads 注文.合計, 注文.状態
-  writes 注文.状態
-  transition 注文: 受付 → 決済要求済
-  result 決済要求結果
-  effects 決済.請求
+/// 決済要求
+deed request_payment {
+  input order_id: id required
+  reads Order.total, Order.status
+  writes Order.status
+  transition Order: Received → PaymentRequested
+  result RequestPaymentResult
+  effects Payment.charge
 
-  let 注文 = 注文[注文ID] else { return 注文なし }
-  if 注文.状態 != 受付 { return 状態違い }
-  if 注文.合計 <= 0 { return 合計ゼロ }
-  注文.状態 = 決済要求済
-  request 決済.請求(注文ID, 注文.合計, idempotency_key = 注文ID)
-  return 要求済
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != Received { return WrongStatus }
+  if order.total <= 0 { return ZeroTotal }
+  order.status = PaymentRequested
+  request Payment.charge(order_id, order.total, idempotency_key = order_id)
+  return Requested
 }
 
 // 決済待ちを解く2つの処理。どちらも決済要求済の注文だけを動かす（先に起きた要因が勝つ）
-deed 決済結果の反映 {
-  input 注文ID: id required
-  reads 注文.状態
-  writes 注文.状態
-  transition 注文: 決済要求済 → 完了
-  result 待ち解除結果
+/// 決済結果の反映
+deed apply_payment_result {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Completed
+  result ReleaseResult
   effects none
 
-  let 注文 = 注文[注文ID] else { return 注文なし }
-  if 注文.状態 != 決済要求済 { return 状態違い }
-  注文.状態 = 完了
-  return 反映済
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Completed
+  return Applied
 }
 
-deed 決済の期限切れ {
-  input 注文ID: id required
-  reads 注文.状態
-  writes 注文.状態
-  transition 注文: 決済要求済 → キャンセル
-  result 待ち解除結果
+/// 決済の期限切れ
+deed expire_payment {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result ReleaseResult
   effects none
 
-  let 注文 = 注文[注文ID] else { return 注文なし }
-  if 注文.状態 != 決済要求済 { return 状態違い }
-  注文.状態 = キャンセル
-  return 反映済
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  return Applied
 }
 
-// 読むだけの一覧。select で列を宣言する（顧客.顧客ID は参照の先、sum(明細) は点数の合計）
-query 注文一覧 {
-  from 注文
-  where 状態 != キャンセル
-  select 注文ID, 顧客.顧客ID as 顧客, sum(明細) as 点数
-  reads 注文.状態, 注文.注文ID, 注文.顧客, 顧客.顧客ID, 注文.明細
+// 読むだけの一覧。select で列を宣言する（customer.customer_id は参照の先、sum(items) は点数の合計）
+/// 注文一覧
+query order_list {
+  from Order
+  where status != Canceled
+  select order_id, customer.customer_id as customer, sum(items) as /// 点数
+    item_count
+  reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
 }
 
 // 結果の種類ごとの行き先。reply＝そこでネクサスを終え、結果を呼び出し元へ返す
-nexus 注文受付 {
-  受注: 受付 → 決済要求, 在庫不足 → reply, 商品なし → reply, 顧客なし → reply
-  決済要求: 要求済 → wait 決済待ち, 注文なし → reply, 状態違い → reply, 合計ゼロ → reply
+/// 注文受付
+nexus OrderIntake {
+  place_order: Received → request_payment, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  request_payment: Requested → wait PaymentPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
 }
 
 // 決済待ちの注文は、決済結果の応答か、30分の期限のどちらか先に起きた方で解かれる
-trigger 決済待ち(注文ID: id) {
-  reply 決済成功 → 決済結果の反映
-  deadline now + 30 min → 決済の期限切れ
+/// 決済待ち
+trigger PaymentPending(order_id: id) {
+  /// 決済成功
+  reply PaymentSucceeded → apply_payment_result
+  deadline now + 30 min → expire_payment
 }
 
-nexus 決済待ち解除 {
-  決済結果の反映: 反映済 → reply, 注文なし → reply, 状態違い → reply
-  決済の期限切れ: 反映済 → reply, 注文なし → reply, 状態違い → reply
+/// 決済待ち解除
+nexus PaymentRelease {
+  apply_payment_result: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+  expire_payment: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
 }
 
-invariant 商品: 在庫 >= 0
-invariant 注文: 状態 == 決済要求済 implies 合計 > 0
+invariant Product: stock >= 0
+invariant Order: status == PaymentRequested implies total > 0
