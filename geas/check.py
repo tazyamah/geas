@@ -162,6 +162,14 @@ class Checker:
                 return f
         return None
 
+    def check_module_deed(self, proc, info):
+        """モジュールの処理は状態を持たない：データの読み書き・状態の遷移・採番・外部作用ができない（入力から結果を返すだけ）"""
+        if proc.name not in self.p.origin:
+            return
+        used = [what for what, v in (("データを読む", info.reads), ("データを書く", info.writes or info.transitions), ("採番する", info.new_ids), ("外部作用を使う", info.effects)) if v]
+        if used:
+            self.d(ERROR, "モジュール", proc.name, f"モジュールの処理は、入力から結果を返すだけです（{'・'.join(used)}ことはできません）")
+
     # ---- 全体 ----
     def run(self):
         if self.strict_names:
@@ -170,6 +178,7 @@ class Checker:
         self.check_defs()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
+            self.check_module_deed(proc, self.infos[proc.name])
         self.check_flows()
         self.check_queries()
         self.check_triggers()
