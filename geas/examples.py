@@ -42,7 +42,7 @@ def lit(t: Type, text: str, ck: Checker) -> str:
         a, _, b = text.partition("/")
         if not (a.strip().isdigit() and b.strip().isdigit()):
             raise ExampleError(f"割合は 分子/分母 で書きます（「{text}」）")
-        return f"有理 {{ 分子: {a.strip()}, 分母: {b.strip()} }}"
+        return f"Ratio {{ num: {a.strip()}, den: {b.strip()} }}"
     if k == "名前":
         states = [x for s in ck.p.states if s.name == t.target for x in [s.initial, *s.middle, *s.final]]
         text = ck.p.resolve(text, states)
@@ -79,7 +79,7 @@ def example_code(ck: Checker, row: dict) -> str:
     if proc is None:
         raise ExampleError(f"処理「{row['処理']}」がコードにありません")
     info = ck.infos[proc.name] if q is None else None
-    L = ["    {", "        let mut 保存 = 保存::default();"]
+    L = ["    {", "        let mut Store = Store::default();"]
     ctx = {}
     for item in split_top(row.get("前提", ""), ";"):
         if "(" in item.split("=")[0]:  # データ(ID, 項目=値, …)
@@ -104,7 +104,7 @@ def example_code(ck: Checker, row: dict) -> str:
             extra = set(vals) - {f.name for f in ck.data[dname].fields}
             if extra:
                 raise ExampleError(f"データ {dname} に項目「{sorted(extra)[0]}」がありません")
-            L.append(f'        保存.{dname}.insert("{args[0]}".to_string(), {dname} {{ {", ".join(fields)} }});')
+            L.append(f'        Store.{dname}.insert("{args[0]}".to_string(), {dname} {{ {", ".join(fields)} }});')
         elif item:
             ctx.update(kv(item))
     ctx = {ck.p.resolve(k, [n for n, _ in proc.refs]): v for k, v in ctx.items()}
@@ -117,10 +117,10 @@ def example_code(ck: Checker, row: dict) -> str:
         key = next((k for k in (f"新{d}ID", f"新{ck.p.show_names(d)}ID") if k in ctx), None)
         if key is None:
             raise ExampleError(f"前提に 採番「新{ck.p.show_names(d)}ID」がありません")
-        fields.append(f'新{d}ID: "{ctx[key]}".to_string()')
+        fields.append(f'new_{d}_id: "{ctx[key]}".to_string()')
     if info and info.parts:
         raise ExampleError(f"処理 {proc.name} は部品（{', '.join(sorted(info.parts))}）を呼ぶので、具体例では動かせません（部品の実装はアプリが持つため）")
-    L.append(f"        let ctx = {proc.name}文脈 {{ {', '.join(fields)} }};")
+    L.append(f"        let ctx = {proc.name}Ctx {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
     given = {ck.p.resolve(k, [n for n, _ in proc.inputs]): v for k, v in given.items()}
     ins = []
@@ -132,26 +132,26 @@ def example_code(ck: Checker, row: dict) -> str:
             raise ExampleError(f"入力に「{name}」がありません")
         v = lit(t, given[name], ck)
         ins.append(f"{name}: Some({v})" if getattr(t, "optional", False) else f"{name}: {v}")
-    L.append(f"        let 入力 = {proc.name}入力 {{ {', '.join(ins)} }};")
+    L.append(f"        let Input = {proc.name}Input {{ {', '.join(ins)} }};")
     eid = row["ID"].strip()
     if q is not None:
         L += [
-            "        match ctx.検査().and_then(|_| 入力.検査()) {",  # slot も入力も、境界で範囲を確かめる
+            "        match ctx.validate().and_then(|_| Input.validate()) {",  # slot も入力も、境界で範囲を確かめる
             f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
-            f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &保存, &入力){".iter().map(|x| x.表示()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
+            f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &Store, &Input){".iter().map(|x| x.show()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
             "        }",
             "    }",
         ]
         return "\n".join(L)
     L += [
-        "        match ctx.検査().and_then(|_| 入力.検査()) {",  # slot も入力も、境界で範囲を確かめる
+        "        match ctx.validate().and_then(|_| Input.validate()) {",  # slot も入力も、境界で範囲を確かめる
         f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
         "            Ok(()) => {",
-        f"                let 出力 = {proc.name}(&ctx, &保存, &入力);",
-        "                let 前 = 保存.clone();",
-        "                保存.適用(出力.書込.clone());",
-        f'                println!("{eid}\\t{{}}\\t{{}}\\t{{}}", 出力.結果.表示(), 前.差分(&保存).join(";"), '
-        '出力.外部.iter().map(|e| e.表示()).collect::<Vec<_>>().join(";"));',
+        f"                let Output = {proc.name}(&ctx, &Store, &Input);",
+        "                let 前 = Store.clone();",
+        "                Store.apply(Output.Write.clone());",
+        f'                println!("{eid}\\t{{}}\\t{{}}\\t{{}}", Output.result.show(), 前.diff(&Store).join(";"), '
+        'Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));',
         "            }",
         "        }",
         "    }",
