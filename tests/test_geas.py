@@ -2217,9 +2217,43 @@ def test_ソースなしのパッケージの型を使ったコードがビル�
     assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6
 
 
-def test_ソースなしのパッケージの変換や処理は今は使えず_sha256は_geas_には付けられない(tmp_path):
-    pkg_app(tmp_path, None, no_source=True)  # GEO には変換がある
-    with pytest.raises(ModuleError, match="ソースなしではまだ使えません"):
+@needs_cargo
+def test_ソースなしのパッケージの変換も呼べる(tmp_path):
+    pkg_app(tmp_path, None, no_source=True)  # GEO には変換 same がある。GEO_APP が呼ぶ
+    app = (tmp_path / "app.geas").read_text().replace('"\n', '" sourceless\n', 1)
+    (tmp_path / "app.geas").write_text(app)
+    ck = load_strict(tmp_path)
+    assert ck.ok, ck.diags
+    assert ck.p.parts[0].extern_crate == "geas_mod_geo"
+    req = '{"name":"show","ctx":{},"input":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"store":{}}'
+    out = tmp_path / "crate"
+    out.mkdir()
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', out, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=out, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert "Big" in r.stdout, r.stdout
+
+
+def test_ソースなしのパッケージの部品と処理は今は使えず_sha256は_geas_には付けられない(tmp_path):
+    from geas.package import build_package
+
+    mod_dir(tmp_path, judge="""module Judge
+
+ltype Score = int 0..100
+result Verdict {
+  Pass
+}
+deed grade {
+  input score: Score required
+  result Verdict
+  effects none
+
+  return Pass
+}
+""")
+    _, digest = build_package(tmp_path / "judge.geas", tmp_path / "out", no_source=True)
+    (tmp_path / "app.geas").write_text(f'use "out/judge.geasi" sha256 "{digest}"\n')
+    with pytest.raises(ModuleError, match="部品・処理は、ソースなしではまだ使えません"):
         parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
     mod_dir(tmp_path, geo=GEO, app=GEO_APP.replace('"geo.geas"', '"geo.geas" sha256 "abc"'))
     with pytest.raises(ModuleError, match="パッケージ（.geasi）の取り込みだけ"):

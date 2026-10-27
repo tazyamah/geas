@@ -169,6 +169,7 @@ class Parser:
             p.composites.insert(0, virtual_datetime())
         if self.ext:
             p.results = list(self.ext.results) + p.results
+            p.parts = list(self.ext.parts) + p.parts
             p.extern_names, p.extern_crates, p.sourceless = self.ext.extern_names, self.ext.extern_crates, self.ext.sourceless
         self.apply_stores(p, stores)
         self.add_sync_state(p)
@@ -998,4 +999,4 @@ def parse_toks(toks, origin, ext=None) -> Program:
 def parse(src: str, path=None) -> Program:
     """path は、use でモジュールを取り込むときの基準になるファイル（文字列から読むときは無し）"""
     toks, origin, ext = expand(lex(src), path)
-    return parse_toks(toks, origin, ext if ext and (ext.ltypes or ext.results) else None)
+    return parse_toks(toks, origin, ext if ext and (ext.ltypes or ext.results or ext.parts) else None)

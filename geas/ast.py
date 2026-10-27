@@ -83,6 +83,12 @@ class Part:
     guarantee: object
     line: int = 0
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
+    extern_crate: Optional[str] = None  # ソースなしのパッケージの変換：定義はこの crate の関数にある（本体と保証は無い。宣言の戻り値の範囲を信じる）
+
+    @property
+    def external(self) -> bool:
+        """アプリが実装する部品（本体が無く、パッケージの変換でもない）"""
+        return self.body is None and self.extern_crate is None
 
 
 @dataclass

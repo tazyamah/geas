@@ -224,6 +224,8 @@ class Checker:
     def check_part(self, pt: Part):
         """部品の宣言。保証の式は、引数と result だけを使う、真偽の式"""
         where = f"部品 {pt.name}"
+        if pt.extern_crate:
+            return  # ソースなしのパッケージの変換：パッケージを作るときに検査済み。宣言の型と範囲を信じる
         if pt.name in ("round", *CONVERSIONS):
             self.d(ERROR, "名前", where, "組み込みの部品と同じ名前は使えません")
         names = [n for n, _ in pt.params]
@@ -863,7 +865,7 @@ class ProcChecker:
                 at = self.ty(a, env)
                 if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
                     self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
-            if pt.body is None:  # convert は生成コードの中で計算するので、外の部品は要らない
+            if pt.external:  # convert は生成コードの中で計算するので、外の部品は要らない
                 self.info.parts.add(e.n)
             return tok_of(pt.ret)
         if isinstance(e, Call):

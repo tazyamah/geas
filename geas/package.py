@@ -66,7 +66,7 @@ def build_package(src: Path, out: Path, no_source: bool = False) -> tuple[Path, 
     ck = check(parse_toks(toks, origin), strict_names=True)
     if not ck.ok:
         raise PackageError("検査にエラーがあるので、パッケージにできません:\n" + "\n".join(str(d) for d in ck.diags))
-    lib = generate(ck)
+    lib = generate(ck, convert_fns=True)
     source = src.read_bytes()
     out.mkdir(parents=True, exist_ok=True)
     crate = out / "crate"

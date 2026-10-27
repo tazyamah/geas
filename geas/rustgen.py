@@ -4,7 +4,7 @@
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .check import Checker, column_type, phys, tok_of
+from .check import Checker, ProcInfo, column_type, phys, tok_of
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない（コードから geas が毎回生成する）。
@@ -192,10 +192,11 @@ def opt(v):
 
 
 class Gen:
-    def __init__(self, ck: Checker):
+    def __init__(self, ck: Checker, convert_fns: bool = False):
         assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
+        self.convert_fns = convert_fns
         self.out: list[str] = []
 
     def w(self, s=""):
@@ -211,6 +212,8 @@ class Gen:
         self.writes_enum()
         self.effects()
         self.parts()
+        if self.convert_fns:
+            self.convert_fns_out()
         self.results()
         for proc in self.p.processes:
             ProcGen(self, proc).emit()
@@ -428,15 +431,33 @@ class Gen:
         self.w("/// 部品の保証に違反した。処理は書込を返す前に止まり、保存は変わらない\n"
                "pub fn guarantee_violated(part: &str, guarantee: &str) -> ! {\n"
                '    panic!("部品「{}」が保証に違反しました: {}", part, guarantee)\n}')
-        if all(pt.body is not None for pt in self.p.parts):
+        if not any(pt.external for pt in self.p.parts):
             return
         self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait Parts {")
         for pt in self.p.parts:
-            if pt.body is not None:
+            if not pt.external:
                 continue
             ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
             self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
         self.w("}")
+
+    def convert_fns_out(self):
+        """変換（geas の式）を、公開関数にする。引数と戻り値は、呼ぶ側の局所の型（数は i128）"""
+        local = lambda t: "i128" if t.kind in ("整数", "金額") else rust_type(t)
+        for pt in self.p.parts:
+            if pt.body is None:
+                continue
+            pg = ProcGen.__new__(ProcGen)
+            pg.g, pg.ck, pg.proc = self, self.ck, Process(pt.name)
+            pg.info, pg.rdef, pg.scope, pg.lines, pg.ind = ProcInfo(pt.name), None, {}, [], 1
+            pg.null_inputs, pg.in_loop, pg.fills = set(), False, {}
+            pg.info.types.update(self.ck.part_types)
+            for n, t in pt.params:
+                pg.scope[n] = ("local", tok_of(t))
+            pg.fills = {(n, c): v for n, t in pt.params for c, v in (t.fills or ())}
+            body = pg.rx(pt.body)
+            ps = ", ".join(f"{n}: {local(t)}" for n, t in pt.params)
+            self.w(f"/// 変換 {pt.name}（パッケージの利用者が呼ぶ）\npub fn {pt.name}({ps}) -> {local(pt.ret)} {{\n    {body + ' as i128' if pt.ret.kind in ('整数', '金額') else body}\n}}")
 
     def effects(self):
         self.w("#[derive(Clone, Debug, PartialEq)]\npub enum Effect {")
@@ -573,10 +594,12 @@ class ProcGen:
             call = self.rx(pt.body)
             self.fills = {}
             self.scope = saved
+        elif pt.extern_crate:  # ソースなしのパッケージの変換：パッケージの crate の関数を呼ぶ（引数は局所の型のまま）
+            call = f"{e.n}({', '.join(n if t.kind in ('整数', '金額') else f'{n}.clone()' for n, t in pt.params)})"
         else:
             call = f"parts.{e.n}({', '.join(args)})"
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
-        if pt.body is not None:  # convert の範囲は検査器が静的に示してある。実行時には確かめない
+        if pt.body is not None or pt.extern_crate:  # convert の範囲は検査器が静的に示してある（パッケージの変換は、パッケージを作るときに）。実行時には確かめない
             return "{ " + " ".join(lines) + " result }"
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
@@ -897,5 +920,6 @@ path = "src/lib.rs"
 '''
 
 
-def generate(ck: Checker) -> str:
-    return Gen(ck).lib()
+def generate(ck: Checker, convert_fns: bool = False) -> str:
+    """convert_fns：変換を、crate の公開関数としても出す（パッケージの crate。ソースなしで取り込む側が呼ぶ）"""
+    return Gen(ck, convert_fns).lib()
