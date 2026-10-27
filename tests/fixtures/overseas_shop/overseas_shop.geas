@@ -1,13 +1,9 @@
-// 海外にも売るお店：円とドルの価格表、決済と在庫の確保を並行で待つ注文。
+// 海外にも売るお店：商品ごとに売る通貨（円・ドル）、決済と在庫の確保を並行で待つ注文。通貨は slot で渡す。
 // 「使うようになったら考える」だった4件（応答の中身・par の書き込み・合成型を使える場所・金額の単位）を使う題材。
 // お店の例（../shop/shop.geas）の続きで、名前は半角英数、日本語の表示名は /// で付ける。
 
 /// 在庫数
 ltype StockCount = int 0..
-/// 円の金額
-ltype JpyAmount = money(JPY) 0..
-/// ドルの金額
-ltype UsdAmount = money(USD) 0..
 /// 数量
 ltype Quantity = int 1..99
 /// 商品数量
@@ -44,10 +40,10 @@ entity Product {
   jan: JanCode required
   /// 在庫
   stock: StockCount required
-  /// 円の価格
-  price_jpy: JpyAmount required
-  /// ドルの価格
-  price_usd: UsdAmount required
+  /// 通貨
+  currency: currency required
+  /// 価格
+  price: money(currency) required
 }
 
 /// 顧客
@@ -68,10 +64,10 @@ entity Order {
   items: ProductQuantity required
   /// 配送先
   ship_to: Address required
-  /// 円の合計
-  total_jpy: JpyAmount required
-  /// ドルの合計
-  total_usd: UsdAmount required
+  /// 通貨
+  currency: currency required
+  /// 合計
+  total: money(currency) required
   /// 状態
   status: OrderStatus
 }
@@ -98,6 +94,9 @@ result PlaceOrderResult {
   /// 商品なし
   NoSuchProduct(/// 未登録
     unregistered: IdSet)
+  /// 通貨が違う
+  OtherCurrency(/// 違う商品
+    mismatched: IdSet)
   /// 顧客なし
   NoSuchCustomer
 }
@@ -170,12 +169,10 @@ result FinishResult {
 }
 
 /// 決済
-effect Payment. /// 円の請求
-  charge_jpy(order_id: id, /// 金額
-    amount: JpyAmount)
-effect Payment. /// ドルの請求
-  charge_usd(order_id: id, /// 金額
-    amount: UsdAmount)
+effect Payment. /// 請求
+  charge(order_id: id, /// 通貨
+    currency: currency, /// 金額
+    amount: money(currency))
 effect Payment. /// 与信の取り消し
   refund(order_id: id, /// 与信
     auth_id: id) no_wait "返金の失敗は人が見る"
@@ -195,34 +192,16 @@ reply PaymentSettled(/// 与信
 reply StockSettled(/// 不足
   short: IdSet)
 
-/// 円の注文
-deed place_order_jpy {
+/// 注文
+deed place_order {
   input customer_id: id required, items: ProductQuantity required, ship_to: Address required
+  /// 通貨
+  slot currency: currency
   /// 税率
   slot tax_rate: TaxRateValue
-  reads Product.stock, Product.price_jpy, Customer
-  writes Order
-  transition Order: (new) → Received
-  result PlaceOrderResult
-  effects none
-
-  let customer = Customer[customer_id] else { return NoSuchCustomer }
-  let unregistered = { k | (k, v) in items, Product[k] is absent }
-  if unregistered is nonempty { return NoSuchProduct(unregistered) }
-  let short = { k | (k, v) in items, Product[k].stock < v }
-  if short is nonempty { return OutOfStock(short) }
-  let subtotal = sum { Product[k].price_jpy * v | (k, v) in items }
-  let total = subtotal + round(subtotal * tax_rate, floor, JPY)
-  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, total_jpy: total, total_usd: 0, status: Received }
-  return Received(order.order_id)
-}
-
-/// ドルの注文
-deed place_order_usd {
-  input customer_id: id required, items: ProductQuantity required, ship_to: Address required
   /// 送料
-  slot shipping_usd: UsdAmount
-  reads Product.stock, Product.price_usd, Customer
+  slot shipping: money(currency)
+  reads Product.stock, Product.price, Product.currency, Customer
   writes Order
   transition Order: (new) → Received
   result PlaceOrderResult
@@ -231,45 +210,30 @@ deed place_order_usd {
   let customer = Customer[customer_id] else { return NoSuchCustomer }
   let unregistered = { k | (k, v) in items, Product[k] is absent }
   if unregistered is nonempty { return NoSuchProduct(unregistered) }
+  let other_currency = { k | (k, v) in items, Product[k].currency != currency }
+  if other_currency is nonempty { return OtherCurrency(other_currency) }
   let short = { k | (k, v) in items, Product[k].stock < v }
   if short is nonempty { return OutOfStock(short) }
-  let subtotal = sum { Product[k].price_usd * v | (k, v) in items }
-  let total = subtotal + shipping_usd
-  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, total_jpy: 0, total_usd: total, status: Received }
+  let subtotal = sum { Product[k].price * v | (k, v) in items }
+  let total = subtotal + round(subtotal * tax_rate, floor, currency) + shipping
+  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, currency: currency, total: total, status: Received }
   return Received(order.order_id)
 }
 
-/// 円の決済要求
-deed request_payment_jpy {
+/// 決済要求
+deed request_payment {
   input order_id: id required
-  reads Order.total_jpy, Order.status
+  reads Order.total, Order.currency, Order.status
   writes Order.status
   transition Order: Received → PaymentRequested
   result RequestPaymentResult
-  effects Payment.charge_jpy
+  effects Payment.charge
 
   let order = Order[order_id] else { return NoSuchOrder }
   if order.status != Received { return WrongStatus }
-  if order.total_jpy <= 0 { return ZeroTotal }
+  if order.total <= 0 { return ZeroTotal }
   order.status = PaymentRequested
-  request Payment.charge_jpy(order_id, order.total_jpy, idempotency_key = order_id)
-  return Requested
-}
-
-/// ドルの決済要求
-deed request_payment_usd {
-  input order_id: id required
-  reads Order.total_usd, Order.status
-  writes Order.status
-  transition Order: Received → PaymentRequested
-  result RequestPaymentResult
-  effects Payment.charge_usd
-
-  let order = Order[order_id] else { return NoSuchOrder }
-  if order.status != Received { return WrongStatus }
-  if order.total_usd <= 0 { return ZeroTotal }
-  order.status = PaymentRequested
-  request Payment.charge_usd(order_id, order.total_usd, idempotency_key = order_id)
+  request Payment.charge(order_id, order.currency, order.total, idempotency_key = order_id)
   return Requested
 }
 
@@ -396,22 +360,16 @@ query price_by_jan {
   input jan: JanCode required
   from Product
   filter jan equals jan
-  select product_id, price_jpy, price_usd
-  reads Product.jan, Product.product_id, Product.price_jpy, Product.price_usd
+  select product_id, currency, price
+  reads Product.jan, Product.product_id, Product.currency, Product.price
 }
 
-/// 円の注文受付
-nexus JpyIntake {
-  place_order_jpy: Received → par { request_payment_jpy, request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply
-  request_payment_jpy: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
+/// 注文受付
+nexus Intake {
+  place_order: Received → par { request_payment, request_stock_hold, grant_points }, OutOfStock → reply, OtherCurrency → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  request_payment: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
   request_stock_hold: HoldRequested → reply, NoSuchOrder → reply
   grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
-}
-
-/// ドルの注文受付
-nexus UsdIntake {
-  place_order_usd: Received → par { request_payment_usd, request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply
-  request_payment_usd: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
 }
 
 // 決済の返事と倉庫の返事がそろったら見立てる。そろわないまま30分たったら取り消す
@@ -431,3 +389,4 @@ nexus Settlement {
 }
 
 invariant Product: stock >= 0
+invariant Order: status == PaymentRequested implies total > 0

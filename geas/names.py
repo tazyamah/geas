@@ -34,6 +34,8 @@ def each_name(p: Program, ltype_names, upper, lower, local):
         for n, _ in c.parts or ():
             lower(n, f"合成型 {c.target}")
     for s in p.states:
+        if s.plain:  # 組み込みの通貨 currency は、名前も表示名も言語が決めている
+            continue
         upper(s.name, f"状態 {s.name}")
         for m in [s.initial, *s.middle, *s.final]:
             upper(m, f"状態 {s.name}")

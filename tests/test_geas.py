@@ -2395,22 +2395,23 @@ def test_海外店の例は通り_4件の機能がそろって使われる():
     assert ck.ready, ck.diags
     assert not msgs(ck, WARN), msgs(ck, WARN)
     assert any(len(ds) > 1 for fl in ck.p.flows for _, routes in fl.entries for ds in route_map(routes).values())  # par
-    assert any(i.writes for d in ("request_payment_jpy", "grant_points") for i in [ck.infos[d]])  # par の枝が書く
+    assert any(i.writes for d in ("request_payment", "grant_points") for i in [ck.infos[d]])  # par の枝が書く
     assert [r.name for r in ck.p.replies] == ["PaymentSettled", "StockSettled"]  # 応答の中身
     assert {t.kind for t in ck.p.composites} == {"合成"}  # 合成型 Address を結果・外部作用・項目に使う
+    assert len([p for p in ck.p.processes if p.name.startswith("place_order")]) == 1  # 通貨を slot で渡すので、円用・ドル用に分けない
     assert generate(ck) == generate(chk(OVERSEAS))
 
 
-def test_海外店の例_円とドルを混ぜると止まる():
-    assert not any("単位" in m for m in msgs(chk(OVERSEAS), ERROR))
-    wrong = OVERSEAS.replace("sum { Product[k].price_usd * v", "sum { Product[k].price_jpy * v")
-    assert any("円の金額とドルの金額" in m for m in msgs(chk(wrong), ERROR)), msgs(chk(wrong), ERROR)
+def test_海外店の例_通貨を取り違えると止まる():
+    assert not any("単位" in m or "通貨" in m for m in msgs(chk(OVERSEAS), ERROR))
+    no_check = OVERSEAS.replace("  let other_currency = { k | (k, v) in items, Product[k].currency != currency }\n  if other_currency is nonempty { return OtherCurrency(other_currency) }\n", "")
+    assert any("別の通貨" in m for m in msgs(chk(no_check), ERROR)), msgs(chk(no_check), ERROR)
+    wrong = OVERSEAS.replace("request Payment.charge(order_id, order.currency, order.total,", "request Payment.charge(order_id, USD, order.total,")
+    assert any("金額ですが" in m for m in msgs(chk(wrong), ERROR)), msgs(chk(wrong), ERROR)
 
 
 def test_海外店の例_par_の枝が同じ項目を書くと止まる():
-    clash = OVERSEAS.replace("request_stock_hold, grant_points }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy",
-                             "request_stock_hold, cancel_unpaid }, OutOfStock → reply, NoSuchProduct → reply, NoSuchCustomer → reply\n  request_payment_jpy")
-    clash = clash.replace("par { request_payment_jpy, request_stock_hold, cancel_unpaid }", "par { request_payment_jpy, cancel_unpaid, request_stock_hold }")
+    clash = OVERSEAS.replace("par { request_payment, request_stock_hold, grant_points }", "par { request_payment, cancel_unpaid, request_stock_hold }")
     assert any("par の枝" in m for m in msgs(chk(clash), ERROR)), msgs(chk(clash), ERROR)
 
 
@@ -2433,7 +2434,7 @@ def test_問い合わせは_equals_で文字列やIDの完全一致で絞れる(
     assert ck.ready, ck.diags
     assert "jan 一致 jan" in "".join(str(x) for x in build(ck)["問い合わせ"]) or any("JANコード" in str(x) for x in build(ck)["問い合わせ"])
     assert "r.jan == *x" in generate(ck)
-    bad = OVERSEAS.replace("filter jan equals jan", "filter price_jpy equals jan")
+    bad = OVERSEAS.replace("filter jan equals jan", "filter price equals jan")
     assert any("同じ種類" in m for m in msgs(chk(bad), ERROR))
 
 
