@@ -10,6 +10,11 @@ from .names import label_gaps, name_problems
 
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
+def unit_label(u: str) -> str:
+    """単位の記号を人向けの言葉に（$名前 は同じ入力・slot の通貨、@… は保存した1件の通貨の項目）"""
+    return SHOW_JA.get(u, "別の通貨" if u[:1] in "$@" else u)
+
+
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
@@ -203,12 +208,28 @@ class Checker:
         """生成してよいか。問いが残っている（仕様が決まっていない）うちは生成しない"""
         return not any(x.level in (ERROR, QUESTION) for x in self.diags)
 
+    def currency_field(self, data: str, fname: str) -> bool:
+        dt = self.data.get(data)
+        f = next((x for x in dt.fields if x.name == fname), None) if dt else None
+        return f is not None and f.type.kind == "名前" and f.type.target == "Currency"
+
+    def check_units(self, where: str, items):
+        """money(通貨) の通貨は、同じ並び（入力・slot、項目、引数、中身）にある通貨 currency 型の名前でなければならない"""
+        names = {n for n, t in items if t.kind == "名前" and t.target == "Currency"}
+        for n, t in items:
+            u = t.unit if t.kind == "金額" else None
+            if u is None:
+                continue
+            if u.startswith("$"):
+                if u[1:] not in names:
+                    self.d(ERROR, "単位", f"{where} / {n}", f"金額の通貨「{u[1:]}」が、同じ並びにありません（通貨コードの currency 型の名前を書きます）")
+            elif u not in CURRENCIES:
+                self.d(ERROR, "単位", f"{where} / {n}", f"金額の単位「{u}」は使えません（{'・'.join(CURRENCIES)}）")
+
     def check_type(self, t: Type, where: str, comp_ok: bool = False):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
         if t.kind == "合成" and not comp_ok:
             self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目・処理の入力と slot・結果の中身・外部作用の引数・応答の中身・トリガの引数にだけ使えます")
-        if t.kind == "金額" and t.unit not in CURRENCIES:
-            self.d(ERROR, "型", where, f"金額の単位「{t.unit}」は使えません（{'・'.join(CURRENCIES)}）")
         if t.kind == "参照" and t.target not in self.data:
             self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です")
         if t.kind == "名前" and t.target not in self.states:
@@ -323,6 +344,18 @@ class Checker:
         for tg in p.triggers:
             for n, t in tg.params:
                 self.check_type(t, f"トリガ {tg.name} / {n}", comp_ok=True)
+            self.check_units(f"トリガ {tg.name}", tg.params)
+        for r in p.results:
+            for v, ps in r.variants:
+                self.check_units(f"結果 {r.name} / {v}", ps)
+        for e in p.effects:
+            self.check_units(f"外部作用 {e.name}", e.params)
+        for x in [*p.processes, *p.queries]:
+            self.check_units(f"{'処理' if isinstance(x, Process) else '問い合わせ'} {x.name}", [*x.inputs, *x.refs])
+        for dt in p.data:
+            self.check_units(f"データ {dt.name}", [(f.name, f.type) for f in dt.fields])
+        for rp in p.replies:
+            self.check_units(f"応答 {rp.name}", rp.params)
         self.check_unique([x.name for x in p.replies], "全体", "応答の宣言")
         for rp in p.replies:
             self.check_unique([n for n, _ in rp.params], f"応答 {rp.name}", "中身の名前")
@@ -335,6 +368,8 @@ class Checker:
             for f in dt.fields:
                 self.check_type(f.type, f"{dt.name}.{f.name}", comp_ok=True)
         for s in self.p.states:
+            if s.plain:
+                continue
             if not s.initial or not (s.final or s.endless):
                 self.d(ERROR, "状態", f"状態 {s.name}", "初期と終了の状態は必須です（行き来を繰り返す状態は「終了 なし」と書きます）")
             known = {s.initial, *s.middle, *s.final}
@@ -687,6 +722,8 @@ class Checker:
 
     def check_states(self):
         for s in self.p.states:
+            if s.plain:
+                continue
             edges = {}
             for info in self.infos.values():
                 for dt, a, b in info.transitions:
@@ -819,6 +856,9 @@ class ProcChecker:
         self.facts: dict[tuple, object] = {}
         self.var_iv: dict[str, tuple] = {}  # let の変数 → 値の範囲
         self.var_unit: dict[str, str] = {}  # let・回す変数 → 金額の単位
+        self.binder_src: dict[str, str] = {}  # 集まりを回すキーの変数 → 回す元の式（通貨の確認が、その集まり全部に効くか見る）
+        self.cur_ok: dict[tuple, str] = {}  # (データ, 通貨の項目, 回す元) → 通貨の単位：その集まりのどの1件も、その通貨と確かめ済み
+        self.cur_sets: dict[str, tuple] = {}  # 変数 → 「通貨が違う1件の集まり」の形（確認する前）
         self.loop_deps: set[str] = set()  # for の中で、回すたびに違う値の変数
         self.present: set[tuple[str, str]] = set()  # null でないと確かめた (束縛, 項目)
         self.writing = False  # 書き込む先として見ているとき（null かどうかは問わない）
@@ -959,7 +999,8 @@ class ProcChecker:
                 at = self.ty(a, env)
                 if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
                     self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
-                self.fit_unit(a, t, f"部品 {e.n} の引数「{n}」", e.line if hasattr(e, "line") else 0)
+                self.fit_unit(a, t, f"部品 {e.n} の引数「{n}」", e.line if hasattr(e, "line") else 0,
+                              siblings={pn: x for (pn, _), x in zip(pt.params, e.args)})
             if pt.external:  # convert は生成コードの中で計算するので、外の部品は要らない
                 self.info.parts.add(e.n)
             return tok_of(pt.ret)
@@ -978,10 +1019,11 @@ class ProcChecker:
             else:
                 self.info.roundings.append((getattr(m, "n", "?"), u.n))
                 au = self.unit_of(e.args[0], env)
-                if u.n not in CURRENCIES:
-                    self.d(ERROR, "型", f"丸めの単位「{u.n}」は使えません（{'・'.join(CURRENCIES)}）")
-                elif au is not None and au != u.n:
-                    self.d(ERROR, "単位", f"{SHOW_JA.get(au, au)}の金額を{SHOW_JA.get(u.n, u.n)}の単位で丸めています")
+                ru = self.cur_name_unit(u.n, env)
+                if ru is None:
+                    self.d(ERROR, "型", f"丸めの単位「{u.n}」は使えません（{'・'.join(CURRENCIES)}、または通貨の入力・slot の名前）")
+                elif au is not None and au != ru:
+                    self.d(ERROR, "単位", f"{unit_label(au)}の金額を{unit_label(ru)}の単位で丸めています")
             # 丸めた結果は、端数の元になった数の型（金額 × 割合 なら金額、整数 × 割合 なら整数）
             inner = e.args[0]
             if isinstance(inner, Bin) and "Money" not in (self.info.types.get(id(inner.l)), self.info.types.get(id(inner.r))):
@@ -1042,7 +1084,7 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{e.n}.{n} に型の違う値（{vt}）を入れています", e.line)
             else:
                 self.check_component_fit(x, pt, f"{e.n}.{n}", e.line)
-            self.fit_unit(x, pt, f"{e.n}.{n}", e.line)
+            self.fit_unit(x, pt, f"{e.n}.{n}", e.line, siblings=given)
         return f"Comp:{e.n}"
 
     def check_component_fit(self, x, pt: Type, where: str, line: int):
@@ -1108,8 +1150,42 @@ class ProcChecker:
         self.binding_data[self.bindings[name]] = self.lookup_data.get(name)
         return self.bindings[name]
 
+    def cur_name_unit(self, n: str, env):
+        """通貨コードを表す名前 n（JPY など、または通貨の入力・slot・let）の単位。通貨でなければ None"""
+        if n in CURRENCIES and n not in env:
+            return n
+        if env.get(n) == "State:Currency":
+            return "$" + n
+        return None
+
+    def cur_expr_unit(self, e, env=None):
+        """通貨コードを表す式（名前、または x.currency）の単位の記号"""
+        env = self.env if env is None else env
+        if isinstance(e, Name):
+            return self.cur_name_unit(e.n, env)
+        if isinstance(e, Attr):
+            return self.cur_sym(e.e, e.n, env)
+        return None
+
+    def cur_sym(self, base, sib: str, env=None):
+        """base（引いた1件など）の通貨の項目 sib が表す単位。「if x.通貨 != 通貨 { return … }」で同じと確かめてあれば、その通貨の単位。
+        確かめていなければ「@base.sib」という、ほかの何とも一致しない記号"""
+        env = self.env if env is None else env
+        if isinstance(base, Name) and base.n in self.bindings:
+            for (b, f, x) in self.state_guards:
+                if b == self.bindings[base.n] and f == sib:
+                    u = self.cur_name_unit(x, env)
+                    if u is not None:
+                        return u
+        if isinstance(base, Index) and isinstance(base.e, Name):
+            src = self.binder_src.get(base.e.n)
+            if src is not None and (base.d, sib, src) in self.cur_ok:
+                return self.cur_ok[(base.d, sib, src)]
+        return f"@{show(base)}.{sib}"
+
     def unit_of(self, e, env=None):
-        """金額の式の単位。分からない（数字そのもの・金額でない）ときは None。型の推論とは別に、式の形だけから追う"""
+        """金額の式の単位。分からない（数字そのもの・金額でない）ときは None。型の推論とは別に、式の形だけから追う。
+        単位は円・ドルなどの通貨コードか、同じ入力・slot の通貨（$名前）か、保存した1件の通貨の項目（@式.項目）"""
         env = self.env if env is None else env
         if isinstance(e, Name):
             if e.n in self.var_unit:
@@ -1118,43 +1194,62 @@ class ProcChecker:
             return t.unit if t is not None and t.kind == "金額" else None
         if isinstance(e, Attr):
             t = self.decl_type(e, env)
-            return t.unit if t is not None and t.kind == "金額" else None
+            if t is None or t.kind != "金額":
+                return None
+            if t.unit.startswith("$"):
+                return self.cur_sym(e.e, t.unit[1:], env)
+            return t.unit
         if isinstance(e, Bin) and e.op in ("+", "-", "*"):
             return self.unit_of(e.l, env) or self.unit_of(e.r, env)
         if isinstance(e, Call):
             if e.n == "money":
                 u = e.args[1] if len(e.args) == 2 else None
-                return u.n if isinstance(u, Name) else "JPY"
+                return (self.cur_name_unit(u.n, env) or u.n) if isinstance(u, Name) else "JPY"
             if e.n == "round" and e.args:
                 return self.unit_of(e.args[0], env)
             pt = self.ck.parts.get(e.n)
             return pt.ret.unit if pt is not None and pt.ret.kind == "金額" else None
         if isinstance(e, SumE):
-            saved = dict(self.var_unit)
+            saved, saved_src = dict(self.var_unit), dict(self.binder_src)
             self.note_binder_units(e.binder, env)
             u = self.unit_of(e.elem, env)
-            self.var_unit = saved
+            self.var_unit, self.binder_src = saved, saved_src
             return u
         return None
 
     def note_binder_units(self, b: Binder, env):
-        """(k, v) in 写像 で回す v の単位"""
+        """(k, v) in 写像 で回す v の単位と、k がどの集まりのキーか"""
         t = self.decl_type(b.src, env) if isinstance(b.src, (Name, Attr)) else None
         if t is not None and t.kind == "写像" and len(b.names) == 2 and t.value.kind == "金額":
             self.var_unit[b.names[1]] = t.value.unit
         else:
             for n in b.names:
                 self.var_unit.pop(n, None)
+        for n in b.names:
+            self.binder_src.pop(n, None)
+        if b.names:
+            self.binder_src[b.names[0]] = show(b.src)
 
-    def fit_unit(self, e, t: Type, what: str, line=0):
-        """金額を入れる先（項目・引数・成分）の単位と、入れる式の単位が合っているか"""
+    def fit_unit(self, e, t: Type, what: str, line=0, siblings=None, base=None):
+        """金額を入れる先（項目・引数・成分）の単位と、入れる式の単位が合っているか。
+        先の単位が「同じ並びのほかの通貨」（$名前）のときは、siblings（名前 → 入れる式）か、base（項目を持つ1件）から決まる"""
         if t.kind != "金額":
             return
+        want = t.unit
+        if want.startswith("$"):
+            sib = want[1:]
+            if siblings is not None and sib in siblings:
+                want = self.cur_expr_unit(siblings[sib]) or want
+            elif base is not None:
+                want = self.cur_sym(base, sib)
+
+        label = unit_label
         u = self.unit_of(e)
-        if u is not None and u != t.unit:
-            self.d(ERROR, "単位", f"{what} は{SHOW_JA.get(t.unit, t.unit)}の金額ですが、{SHOW_JA.get(u, u)}の金額（{show(e)}）を入れています。換算の部品を通してください", line)
-        elif isinstance(e, Num) and e.v != 0 and t.unit != "JPY":
-            self.d(ERROR, "単位", f"{what} は{SHOW_JA.get(t.unit, t.unit)}の金額なので、0 以外の数字は直接書けません（money(整数, {t.unit}) で最小単位の個数から作ります）", line)
+        if u is not None and u != want:
+            self.d(ERROR, "単位", f"{what} は{label(want)}の金額ですが、{label(u)}の金額（{show(e)}）を入れています。換算の部品を通すか、"
+                   "通貨が同じと確かめてから（if … != 通貨 { return … }）使ってください", line)
+        elif isinstance(e, Num) and e.v != 0 and want != "JPY":
+            self.d(ERROR, "単位", f"{what} は円以外の金額なので、0 以外の数字は直接書けません（money(整数, 通貨) で最小単位の個数から作ります）", line)
 
     def decl_type(self, e, env):
         """入力・参照・項目として宣言された型（範囲つき）。分からなければ None"""
@@ -1262,12 +1357,12 @@ class ProcChecker:
         if e.op in ("+", "-", "<", ">", "<=", ">=", "==", "!=") and "Money" in (a, b):
             ul, ur = self.unit_of(e.l), self.unit_of(e.r)
             if ul and ur and ul != ur:
-                self.d(ERROR, "単位", f"「{show(e)}」: {SHOW_JA.get(ul, ul)}の金額と{SHOW_JA.get(ur, ur)}の金額は、そのままでは足し引きも比較もできません。換算の部品を通してください")
+                self.d(ERROR, "単位", f"「{show(e)}」: {unit_label(ul)}の金額と{unit_label(ur)}の金額は、そのままでは足し引きも比較もできません。換算の部品を通すか、通貨が同じと確かめてから使ってください")
             else:
                 num_side = e.l if isinstance(e.l, Num) else e.r if isinstance(e.r, Num) else None
                 u = ul or ur
                 if num_side is not None and num_side.v != 0 and u not in (None, "JPY"):
-                    self.d(ERROR, "単位", f"「{show(e)}」: {SHOW_JA.get(u, u)}の金額と比べたり足したりする 0 以外の数字は直接書けません（money(整数, {u}) で作ります）")
+                    self.d(ERROR, "単位", f"「{show(e)}」: {unit_label(u)}の金額と比べたり足したりする 0 以外の数字は直接書けません（money(整数, 通貨) で作ります）")
         if e.op == "かつ":
             if a != "Bool" or b != "Bool":
                 self.d(ERROR, "型", f"「{show(e)}」: かつ の両側は条件である必要があります")
@@ -1335,7 +1430,7 @@ class ProcChecker:
             at = self.ty(a)
             if at != tok_of(t) and at != "?" and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")):
                 self.d(ERROR, "型", f"結果「{r.variant}」の引数の型が違います（{at}）", r.line)
-            self.fit_unit(a, t, f"結果「{r.variant}」の引数", r.line)
+            self.fit_unit(a, t, f"結果「{r.variant}」の引数", r.line, siblings={pn: x for (pn, _), x in zip(v[1], r.args)})
 
     def run(self) -> ProcInfo:
         ck, proc, info = self.ck, self.proc, self.info
@@ -1391,6 +1486,9 @@ class ProcChecker:
                     self.present.add((("#成分", show(c.e.e)), c.e.n))
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
                     self.guarded.add(self.exist_sets[c.e.n])
+                if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.cur_sets:
+                    d, sib, src, unit = self.cur_sets[c.e.n]
+                    self.cur_ok[(d, sib, src)] = unit
                 if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
                     self.facts[("#不足", *self.shortage_sets[c.e.n])] = 0
                 if isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index):
@@ -1463,6 +1561,7 @@ class ProcChecker:
                     self.exist_sets[st.name] = self._last_exist
                 if isinstance(st.e, SetB):
                     self.note_shortage_set(st.name, st.e)
+                    self.note_currency_set(st.name, st.e)
         elif isinstance(st, Update):
             env2 = self.bind(st.binder)
             vt = self.ty(st.value, env2)
@@ -1494,7 +1593,7 @@ class ProcChecker:
             elif tf is not None and st.op != "=" and tf.type.kind not in ("整数", "金額", "割合"):
                 self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} は数ではないので {st.op} できません", st.line)
             if tf is not None and st.op in ("=", "+=", "-="):
-                self.fit_unit(st.value, tf.type, f"{tgt.e.d}.{tgt.n}", st.line)
+                self.fit_unit(st.value, tf.type, f"{tgt.e.d}.{tgt.n}", st.line, base=tgt.e)
             info.writes.add(f"{tgt.e.d}.{tgt.n}")
             info.write_list.append(f"{tgt.e.d}.{tgt.n}")
             info.write_ops.setdefault(f"{tgt.e.d}.{tgt.n}", set()).add(st.op)
@@ -1534,7 +1633,7 @@ class ProcChecker:
                   and not (isinstance(st.e, Num) and tok_of(fld.type) in ("Int", "Money"))):
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
-            self.fit_unit(st.e, fld.type, f"{data}.{st.f}", st.line)
+            self.fit_unit(st.e, fld.type, f"{data}.{st.f}", st.line, base=Name(st.var))
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             self.check_text_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             if fld.type.kind == "合成":  # 書き換えたので、その成分について確かめたことは消える
@@ -1552,7 +1651,7 @@ class ProcChecker:
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
             info.write_ops.setdefault(f"{data}.{st.f}", set()).add("=")
-            if fld.type.kind == "名前":
+            if fld.type.kind == "名前" and not self.ck.states[fld.type.target].plain:
                 if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
                     self.d(ERROR, "遷移", f"{data}.{st.f} は状態名で書いてください（「{show(st.e)}」では、どの遷移か確かめられません）", st.line)
                     return
@@ -1659,10 +1758,10 @@ class ProcChecker:
                 self.d(QUESTION, "丸め", "端数が出る値を、丸めずに書いています", st.line)
             elif vt != tok_of(f.type) and not (isinstance(e, Num) and tok_of(f.type) in ("Int", "Money")) and vt != "?":
                 self.d(ERROR, "型", f"{st.data}.{n} に型の違う値（{vt}）を入れています", st.line)
-            self.fit_unit(e, f.type, f"{st.data}.{n}", st.line)
+            self.fit_unit(e, f.type, f"{st.data}.{n}", st.line, siblings=given)
             self.check_range_fit(e, f.type, f"{st.data}.{n}", st.line)
             self.check_text_fit(e, f.type, f"{st.data}.{n}", st.line)
-            if f.type.kind == "名前":
+            if f.type.kind == "名前" and not self.ck.states[f.type.target].plain:
                 if isinstance(e, Name) and e.n in self.ck.variants and e.n not in self.env:
                     self.check_transition_new(st.data, n, e.n, st.line)
                 else:
@@ -1670,7 +1769,7 @@ class ProcChecker:
         info.writes.add(st.data)
         info.new_ids.append(st.data)
         states = {f.name: given[f.name].n for f in dt.fields
-                  if f.type.kind == "名前" and isinstance(given.get(f.name), Name)}
+                  if f.type.kind == "名前" and not self.ck.states[f.type.target].plain and isinstance(given.get(f.name), Name)}
         lows = {}
         for f in dt.fields:
             e = given.get(f.name, Null())  # 書かなかった項目は null
@@ -1727,6 +1826,18 @@ class ProcChecker:
             lo = n + 1
         return {} if lo is None else {(self.bindings[c.l.e.n], c.l.n): lo}
 
+    def note_currency_set(self, name, e: SetB):
+        """{ k | (k, v) in 元, D[k].通貨 != 通貨 } の形なら、「通貨が違う k の集まり」として覚える（空と確かめると、元のどの1件も同じ通貨）"""
+        c, b = e.cond, e.binder
+        self.cur_sets.pop(name, None)
+        if (b.names and isinstance(c, Bin) and c.op == "!=" and isinstance(c.l, Attr) and isinstance(c.l.e, Index)
+                and c.l.e.e == Name(b.names[0]) and isinstance(c.r, Name) and e.elem == Name(b.names[0])
+                and self.cur_name_unit(c.r.n, self.env) is not None):
+            dt = self.ck.data.get(c.l.e.d)
+            f = next((x for x in dt.fields if x.name == c.l.n), None) if dt else None
+            if f is not None and f.type.kind == "名前" and f.type.target == "Currency":
+                self.cur_sets[name] = (c.l.e.d, c.l.n, show(b.src), self.cur_name_unit(c.r.n, self.env))
+
     def note_shortage_set(self, name, e: SetB):
         """{ k | (k, v) in 元, D[k].f < v } の形なら、「減らす量が足りない k の集まり」として覚える"""
         c, b = e.cond, e.binder
@@ -1739,6 +1850,11 @@ class ProcChecker:
         self.facts = {k: v for k, v in self.facts.items()
                       if not ((k[0] == "#不足" and k[1:3] == (data, fname))
                               or (k[0] != "#不足" and self.binding_data.get(k[0]) == data and k[1] == fname))}
+        # 通貨の項目が書き換わったら、「同じ通貨と確かめた」ことも消える
+        self.state_guards = {g for g in self.state_guards if not (self.binding_data.get(g[0]) == data and g[1] == fname
+                                                                   and self.ck.currency_field(data, fname))}
+        self.cur_ok = {k: v for k, v in self.cur_ok.items() if k[:2] != (data, fname)}
+        self.cur_sets = {n: v for n, v in self.cur_sets.items() if v[:2] != (data, fname)}
         # 書き換わる前に作った「足りない k の集まり」は、もう今の値を表さない
         self.shortage_sets = {n: v for n, v in self.shortage_sets.items() if v[:2] != (data, fname)}
 
@@ -1837,7 +1953,7 @@ class ProcChecker:
             at = self.ty(a)
             if at != tok_of(t) and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")) and at != "?":
                 self.d(ERROR, "型", f"外部作用 {st.effect} の引数の型が違います（{at}）", st.line)
-            self.fit_unit(a, t, f"外部作用 {st.effect} の引数", st.line)
+            self.fit_unit(a, t, f"外部作用 {st.effect} の引数", st.line, siblings={pn: x for (pn, _), x in zip(eff.params, st.args)})
         if st.idem is None:
             self.d(ERROR, "冪等", f"外部作用 {st.effect} に冪等キーがありません（idempotency_key = … が必須です）", st.line)
         else:
