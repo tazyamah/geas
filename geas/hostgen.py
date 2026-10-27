@@ -90,13 +90,13 @@ pub fn b64_encode(b: &[u8]) -> String {
     o
 }
 /// 割合は "分子/分母" の文字列で受け取る（小数にすると丸めが入るため）。範囲の宣言もここで確かめる
-pub fn 有理を読む(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<有理, String> {
+pub fn read_ratio(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<Ratio, String> {
     let (a, b) = s.split_once('/').ok_or_else(|| "割合は \"分子/分母\" で書いてください".to_string())?;
-    let 分子: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
-    let 分母: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
-    if 分母 <= 0 { return Err("割合の分母は 1 以上にしてください".into()); }
-    if lo.map_or(false, |l| 分子 < l * 分母) || hi.map_or(false, |h| 分子 > h * 分母) { return Err("範囲外の割合です".into()); }
-    Ok(有理 { 分子, 分母 })
+    let num: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
+    let den: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
+    if den <= 0 { return Err("割合の分母は 1 以上にしてください".into()); }
+    if lo.map_or(false, |l| num < l * den) || hi.map_or(false, |h| num > h * den) { return Err("範囲外の割合です".into()); }
+    Ok(Ratio { num, den })
 }
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut o = Vec::with_capacity(s.len() / 4 * 3);
@@ -119,8 +119,8 @@ def input_j(x: str, t: Type) -> str:
     """処理と問い合わせの入力。無いかもしれない入力は、キーが無いのも null も同じ「無い」。
     必ず要る入力（required）は、キーが無くても null でも入力不正"""
     if t.optional:
-        return f'match 入力.get_opt("{x}") {{ Some(v) => Some({from_j(replace(t, optional=False), "v")}), None => None }}'
-    return from_j(t, f'入力.get("{x}")?')
+        return f'match Input.get_opt("{x}") {{ Some(v) => Some({from_j(replace(t, optional=False), "v")}), None => None }}'
+    return from_j(t, f'Input.get("{x}")?')
 
 
 def from_j(t: Type, j: str) -> str:
@@ -137,13 +137,13 @@ def from_j(t: Type, j: str) -> str:
         return f"({j}.as_int()? as i64)"
     if k == "割合":
         r = t.range
-        return f'有理を読む({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
+        return f'read_ratio({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
     if k == "バイト列":
         return f"b64_decode({j}.as_str()?)?"
     if k == "集合":
         return f"{j}.as_set()?"
     if k == "名前":
-        return f'{t.target}::名前から({j}.as_str()?).ok_or_else(|| "未知の状態です".to_string())?'
+        return f'{t.target}::from_name({j}.as_str()?).ok_or_else(|| "未知の状態です".to_string())?'
     if k == "合成":
         def comp(pn, pt):  # 未指定にできる成分は、キーが無いのも null も「未指定」
             if pt.optional:
@@ -171,7 +171,7 @@ def to_j(t: Type, x: str) -> str:
     if k == "集合":
         return f"js_set(&{x})"
     if k == "名前":
-        return f"js_str({x}.名前())"
+        return f"js_str({x}.name())"
     if k == "合成":
         items = ", ".join(f'format!("{{}}:{{}}", js_str("{pn}"), {to_j(pt, f"{x}.{pn}")})' for pn, pt in t.parts)
         return f'format!("{{{{{{}}}}}}", vec![{items}].join(","))'
@@ -183,7 +183,7 @@ def to_j(t: Type, x: str) -> str:
 CALL_WASM = r'''#[no_mangle]
 pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
     let s = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
-    返す(match 呼ぶ(s) { Ok(x) => x, Err(e) => format!("{{\"エラー\":{}}}", js_str(&e)) })
+    ret(match call(s) { Ok(x) => x, Err(e) => format!("{{\"エラー\":{}}}", js_str(&e)) })
 }
 '''
 
@@ -211,34 +211,34 @@ def host_source(ck: Checker) -> str:
     # データ・保存の変換
     for d in p.data:
         key = ck.key_field(d.name).name
-        w(f"fn {d.name}_から(j: &J) -> Result<{d.name}, String> {{\n    Ok({d.name} {{")
+        w(f"fn {d.name}_from_json(j: &J) -> Result<{d.name}, String> {{\n    Ok({d.name} {{")
         for f in d.fields:
             w(f'        {f.name}: {from_j(f.type, f"j.get(\"{f.name}\")?")},')
         w("    })\n}")
-        w(f"fn {d.name}_へ(r: &{d.name}) -> String {{\n    let mut v: Vec<String> = Vec::new();")
+        w(f"fn {d.name}_to_json(r: &{d.name}) -> String {{\n    let mut v: Vec<String> = Vec::new();")
         for f in d.fields:
             w(f'    v.push(format!("{{}}:{{}}", js_str("{f.name}"), {to_j(f.type, f"r.{f.name}")}));')
         w('    format!("{{{}}}", v.join(","))\n}')
-    w("pub fn 保存を読む(j: &J) -> Result<保存, String> {\n    let mut s = 保存::default();")
+    w("pub fn read_store(j: &J) -> Result<Store, String> {\n    let mut s = Store::default();")
     for d in p.data:
-        w(f'    if let Some(m) = j.get_opt("{d.name}") {{ for (k, v) in m.as_obj()? {{ s.{d.name}.insert(k.clone(), {d.name}_から(v)?); }} }}')
+        w(f'    if let Some(m) = j.get_opt("{d.name}") {{ for (k, v) in m.as_obj()? {{ s.{d.name}.insert(k.clone(), {d.name}_from_json(v)?); }} }}')
     w("    Ok(s)\n}")
-    w("pub fn 保存を書く(s: &保存) -> String {\n    let mut v: Vec<String> = Vec::new();")
+    w("pub fn write_store(s: &Store) -> String {\n    let mut v: Vec<String> = Vec::new();")
     for d in p.data:
-        w(f'    v.push(format!("{{}}:{{{{{{}}}}}}", js_str("{d.name}"), s.{d.name}.iter().map(|(k, r)| format!("{{}}:{{}}", js_str(k), {d.name}_へ(r))).collect::<Vec<_>>().join(",")));')
+        w(f'    v.push(format!("{{}}:{{{{{{}}}}}}", js_str("{d.name}"), s.{d.name}.iter().map(|(k, r)| format!("{{}}:{{}}", js_str(k), {d.name}_to_json(r))).collect::<Vec<_>>().join(",")));')
     w('    format!("{{{}}}", v.join(","))\n}')
     # 外部作用
-    w("fn 外部を書く(e: &外部作用) -> String {\n    match " + ("e" if p.effects else "*e") + " {")
+    w("fn write_effects(e: &Effect) -> String {\n    match " + ("e" if p.effects else "*e") + " {")
     for e in p.effects:
         names = [n for n, _ in e.params]
-        pat = ", ".join(names + ["冪等キー"])
+        pat = ", ".join(names + ["idem_key"])
         args = ",".join(f'{{}}:{{}}' for _ in names)
         vals = ", ".join(f'js_str("{n}"), {to_j(t, n)}' for n, t in e.params)
-        w(f'        外部作用::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"冪等キー\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(冪等キー)),')
+        w(f'        Effect::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"idem_key\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(idem_key)),')
     w("    }\n}")
     # 結果の中身（名前つき）。ネクサスの次の処理へは、これをそのまま入力として渡す
     for r in p.results:
-        w(f"fn {r.name}_中身(r: &{r.name}) -> String {{\n    match r {{")
+        w(f"fn {r.name}_body(r: &{r.name}) -> String {{\n    match r {{")
         for v, ps in r.variants:
             if ps:
                 names = [f"a{i}" for i in range(len(ps))]
@@ -249,38 +249,38 @@ def host_source(ck: Checker) -> str:
                 w(f'        {r.name}::{v} => "{{}}".to_string(),')
         w("    }\n}")
     # 処理の呼び出し
-    w("fn 結果を書く(名前: &str, 引数: Vec<String>, 中身: String, 外部: Vec<String>, 保存: &保存) -> String {\n"
-      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(名前), js_arr(&引数), 中身, 外部.join(","), 保存を書く(保存))\n}')
+    w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
+      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
     has_parts = any(pt.body is None for pt in p.parts)
-    w(f"fn 呼ぶ内部(名前: &str, ctx: &J, 入力: &J, 保存: &mut 保存{', 部品: &dyn 部品群' if has_parts else ''}) -> Result<String, String> {{\n    match 名前 {{")
+    w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n    match name {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
         n = proc.name
-        cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'新{d}ID: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
+        cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
-        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
+        w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         if info.parts:  # 部品の保証違反は panic で処理を止める。書込を適用する前なので、保存は変わらない
-            w(f"            let o = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {n}(&c, 保存, &i, 部品))).map_err(|e| {{\n"
+            w(f"            let o = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {n}(&c, Store, &i, parts))).map_err(|e| {{\n"
               '                e.downcast_ref::<String>().cloned().unwrap_or_else(|| "部品の保証に違反しました".to_string())\n            })?;\n'
-              "            保存.適用(o.書込.clone());")
+              "            Store.apply(o.Write.clone());")
         else:
-            w(f"            let o = {n}(&c, 保存, &i);\n            保存.適用(o.書込.clone());")
-        w(f"            Ok(結果を書く(o.結果.名前(), o.結果.引数(), {proc.result}_中身(&o.結果), o.外部.iter().map(外部を書く).collect(), 保存))\n        }}")
+            w(f"            let o = {n}(&c, Store, &i);\n            Store.apply(o.Write.clone());")
+        w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect(), Store))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
-        shown = ".iter().map(|x| x.表示()).collect()" if q.select else ""
-        w(f'        "{n}" => {{\n            let c = {n}文脈 {{ {", ".join(cf)} }};\n            let i = {n}入力 {{ {", ".join(inf)} }};\n            c.検査()?;\n            i.検査()?;')
-        w(f'            Ok(結果を書く("一覧", {n}(&c, 保存, &i){shown}, "{{}}".to_string(), vec![], 保存))\n        }}')
-    w('        _ => Err(format!("処理「{}」はありません", 名前)),\n    }\n}')
-    w(f"pub fn 呼ぶ(要求: &str{', 部品: &dyn 部品群' if has_parts else ''}) -> Result<String, String> {{\n"
-      '    let r = parse(要求)?;\n    let mut s = 保存を読む(r.get("保存")?)?;\n'
-      f'    呼ぶ内部(r.get("名前")?.as_str()?, r.get("文脈")?, r.get("入力")?, &mut s{", 部品" if has_parts else ""})\n}}')
+        shown = ".iter().map(|x| x.show()).collect()" if q.select else ""
+        w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
+        w(f'            Ok(write_result("一覧", {n}(&c, Store, &i){shown}, "{{}}".to_string(), vec![], Store))\n        }}')
+    w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
+    w(f"pub fn call(request: &str{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n"
+      '    let r = parse(request)?;\n    let mut s = read_store(r.get("保存")?)?;\n'
+      f'    call_inner(r.get("名前")?.as_str()?, r.get("文脈")?, r.get("入力")?, &mut s{", parts" if has_parts else ""})\n}}')
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
-    w(f'pub const 定義JSON: &str = r####"{defs}"####;')
+    w(f'pub const DEFS_JSON: &str = r####"{defs}"####;')
     w(r'''
-fn 返す(s: String) -> u64 {
+fn ret(s: String) -> u64 {
     let b = s.into_bytes().into_boxed_slice();
     let l = b.len();
     let p = Box::into_raw(b) as *mut u8;
@@ -291,6 +291,6 @@ pub extern "C" fn alloc(n: usize) -> *mut u8 { let mut v = Vec::<u8>::with_capac
 #[no_mangle]
 pub extern "C" fn dealloc(p: *mut u8, n: usize) { unsafe { drop(Vec::from_raw_parts(p, 0, n)); } }
 @@CALL@@#[no_mangle]
-pub extern "C" fn geas_defs() -> u64 { 返す(定義JSON.to_string()) }
+pub extern "C" fn geas_defs() -> u64 { ret(DEFS_JSON.to_string()) }
 '''.replace("@@CALL@@", "" if has_parts else CALL_WASM))
     return "\n".join(out) + "\n"

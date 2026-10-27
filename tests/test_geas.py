@@ -344,7 +344,7 @@ def test_if_の中に_let_は書けない():
 def test_条件つきの変更は_Rust_の_if_の中に出る():
     prog = parse(mutate(CODE, GUARD, COND))
     src = generate(check(prog))
-    assert "    if (order.status == OrderStatus::Received) {\n        書込列.push(書込::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));\n    }" in src
+    assert "    if (order.status == OrderStatus::Received) {\n        writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));\n    }" in src
 
 
 # ---- 問い合わせの条件（または・数との比較） ----
@@ -442,13 +442,13 @@ def test_生成した照合は大小_かな_幅をそろえる(tmp_path):
     if shutil.which("rustc") is None:
         pytest.skip("rustc が無い")
     src = generate(chk(MEMO))
-    start = src.index("pub fn 照合")
-    end = src.index("pub fn 集合表示")
+    start = src.index("pub fn fold_text")
+    end = src.index("pub fn show_set")
     main = src[start:end] + '''
 fn main() {
-    assert_eq!(照合("ＡＢＣ　abc", true, false, true), "abc　abc");
-    assert_eq!(照合("カタカナ", false, true, false), "かたかな");
-    assert_eq!(照合("Ａｂ", false, false, false), "Ａｂ");
+    assert_eq!(fold_text("ＡＢＣ　abc", true, false, true), "abc　abc");
+    assert_eq!(fold_text("カタカナ", false, true, false), "かたかな");
+    assert_eq!(fold_text("Ａｂ", false, false, false), "Ａｂ");
 }
 '''
     f = tmp_path / "t.rs"
@@ -632,13 +632,13 @@ def test_for_の中の冪等キーは回す値と外の値の組にする():
 
 
 @needs_cargo
-def test_冪等キーの組は区切りがあいまいにならない(tmp_path):
+def test_join_idem_keyは区切りがあいまいにならない(tmp_path):
     ck = with_for("(order_id, k)")
     assert ck.ready, ck.diags
     main = """fn main() {
-    println!("{}", geas_app::冪等キーの組(&["a,b".to_string(), "c".to_string()]));
-    println!("{}", geas_app::冪等キーの組(&["a".to_string(), "b\\",\\"c".to_string()]));
-    println!("{}", geas_app::冪等キーの組(&["O1".to_string(), "P1".to_string()]));
+    println!("{}", geas_app::join_idem_key(&["a,b".to_string(), "c".to_string()]));
+    println!("{}", geas_app::join_idem_key(&["a".to_string(), "b\\",\\"c".to_string()]));
+    println!("{}", geas_app::join_idem_key(&["O1".to_string(), "P1".to_string()]));
 }
 """
     write_crate(ck, generate(ck), main, tmp_path)
@@ -702,7 +702,7 @@ def test_同じ結果に処理を続けて書くと_書いた順に起こす行�
     assert build(ck)["処理"][0]["結果"][0] == ("受付", "並列［メール通知 ＋ プッシュ通知］")
     assert any("2回書かれています" in m for m in msgs(fanout(FANOUT[0], "place_order: Received → par { メール通知, メール通知 }, OutOfStock"), ERROR))
     src = generate(ck)
-    assert "vec![行き先::処理(\"メール通知\"), 行き先::処理(\"プッシュ通知\")]" in src
+    assert "vec![Dest::Deed(\"メール通知\"), Dest::Deed(\"プッシュ通知\")]" in src
 
 
 def test_par_の枝がデータを書くと止まる():
@@ -760,8 +760,8 @@ def test_update_の値の型を確かめる():
 @needs_cargo
 def test_割合の参照があってもホストつきでビルドできる(tmp_path):
     ck = chk(CODE)
-    write_crate(ck, generate(ck), "fn main() {\n    let r = geas_app::host::有理を読む(\"1/10\", Some(0), Some(1)).unwrap();\n"
-                "    assert_eq!(r.to_string(), \"1/10\");\n    assert!(geas_app::host::有理を読む(\"3/2\", Some(0), Some(1)).is_err());\n}\n", tmp_path, host=True)
+    write_crate(ck, generate(ck), "fn main() {\n    let r = geas_app::host::read_ratio(\"1/10\", Some(0), Some(1)).unwrap();\n"
+                "    assert_eq!(r.to_string(), \"1/10\");\n    assert!(geas_app::host::read_ratio(\"3/2\", Some(0), Some(1)).is_err());\n}\n", tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
 
@@ -801,7 +801,7 @@ def test_ホストは結果の中身を名前つきで返す(tmp_path):
     ck = chk(CODE)
     req = ('{"名前":"place_order","文脈":{"tax_rate":"1/10","新OrderID":"N1"},"入力":{"customer_id":"C1","items":{"A":2}},'
            '"保存":{"Product":{"A":{"product_id":"A","stock":5,"unit_price":100}},"Customer":{"C1":{"customer_id":"C1"}}}}')
-    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     assert '"中身":{"order_id":"N1"}' in r.stdout, r.stdout
@@ -936,7 +936,7 @@ def test_ホストは_null_とキーが無いことを区別する(tmp_path):
     ck = chk(NOTE)
     call = lambda store: '{"名前":"題を見る","文脈":{},"入力":{"メモID":"M1"},"保存":{"メモ":{"M1":' + store + '}}}'
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{call(s)}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{call(s)}"#));\n'
         for s in ['{"メモID":"M1","本文":"a","題":"t","重さ":null}', '{"メモID":"M1","本文":"a","題":null,"重さ":null}',
                   '{"メモID":"M1","本文":"a","重さ":null}']) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
@@ -1009,7 +1009,7 @@ def test_ホストは無いかもしれない入力のキー無しと_null_を�
              ("書く", '{"本文":"a","題":"","重さ":3}'), ("書く", '{"題":"t","重さ":3}'), ("書く", '{"本文":null,"題":"t","重さ":3}'),
              ("書く", '{"本文":"a","題":"t","重さ":10}'), ("下書き", '{"本文":"a"}')]
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"{n}","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"{n}","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
         for n, i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1026,7 +1026,7 @@ def test_ホストは宣言にない入力の項目を無いものとして扱�
     ck = chk(NULLIN)
     calls = ['{"本文":"a","重さ":3}', '{"本文":"a","重さ":3,"余分":"x","題名":"typo"}']
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"書く","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"書く","文脈":{{"新メモID":"M1"}},"入力":{i},"保存":{{}}}}"#));\n'
         for i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1095,7 +1095,7 @@ def test_ホストは入力の長さと文字を境界で確かめる(tmp_path):
     ck = chk(TEXT)
     calls = ['{"名":"abc_09"}', '{"名":""}', '{"名":"' + "a" * 21 + '"}', '{"名":"ABC"}', '{"名":"あ"}', '{"名":"' + "a" * 20 + '"}']
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"登録する","文脈":{{"新利用者ID":"U1"}},"入力":{i},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"登録する","文脈":{{"新利用者ID":"U1"}},"入力":{i},"保存":{{}}}}"#));\n'
         for i in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1151,7 +1151,7 @@ def test_ホストは時刻の計算をして_範囲外の時刻は境界で止�
     ck = chk(TIMEC)
     calls = [(1000, 400), (1000, 10**16), (10**16, 400)]
     main = "fn main() {\n" + "".join(
-        f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{{"名前":"約束する","文脈":{{"新約束ID":"K1","現在":{n}}},"入力":{{"開始":{b}}},"保存":{{}}}}"#));\n'
+        f'    println!("{{:?}}", geas_app::host::call(r#"{{"名前":"約束する","文脈":{{"新約束ID":"K1","現在":{n}}},"入力":{{"開始":{b}}},"保存":{{}}}}"#));\n'
         for n, b in calls) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
@@ -1193,7 +1193,7 @@ def test_slot_も境界で宣言の範囲を確かめる(tmp_path):
     ck = chk(SLOT)
     assert ck.ready, ck.diags
     call = lambda k: f'{{"名前":"置く","文脈":{{"倍率":{k},"新品ID":"A"}},"入力":{{"数":10}},"保存":{{}}}}'
-    main = "fn main() {\n" + "".join(f'    println!("{{:?}}", geas_app::host::呼ぶ(r#"{call(k)}"#));\n' for k in (100, 101, 0)) + "}\n"
+    main = "fn main() {\n" + "".join(f'    println!("{{:?}}", geas_app::host::call(r#"{call(k)}"#));\n' for k in (100, 101, 0)) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
@@ -1250,15 +1250,15 @@ def test_部品の呼び出しは宣言と型が合わないと止まる():
 def test_部品の保証は呼ぶたびに確かめ_違反は保存を変えずに止まる(tmp_path):
     ck = chk(PART)
     main = """use geas_app::*;
-use geas_app::host::呼ぶ;
+use geas_app::host::call;
 struct 良い;
-impl 部品群 for 良い { fn 税込(&self, x: i64) -> i64 { x + x / 10 } }
+impl Parts for 良い { fn 税込(&self, x: i64) -> i64 { x + x / 10 } }
 struct 悪い;
-impl 部品群 for 悪い { fn 税込(&self, x: i64) -> i64 { x - 1 } }
+impl Parts for 悪い { fn 税込(&self, x: i64) -> i64 { x - 1 } }
 fn main() {
     let req = r#"{"名前":"置く","文脈":{"新品ID":"A"},"入力":{"税抜":1000},"保存":{}}"#;
-    println!("{:?}", 呼ぶ(req, &良い));
-    println!("{:?}", 呼ぶ(req, &悪い));
+    println!("{:?}", call(req, &良い));
+    println!("{:?}", call(req, &悪い));
 }
 """
     write_crate(ck, generate(ck), main, tmp_path, host=True)
@@ -1278,7 +1278,7 @@ fn main() {
     let mut bad = 0;
     for a in -50i128..50 {
         for b in 1i128..13 {
-            let x = 有理 { 分子: a, 分母: b };
+            let x = Ratio { num: a, den: b };
             let (lo, up, rn) = (floor(x), ceil(x), half_up(x));
             if !(lo * b <= a && a < (lo + 1) * b) { bad += 1; }
             if !((up - 1) * b < a && a <= up * b) { bad += 1; }
@@ -1325,13 +1325,13 @@ def test_null_になりうる項目の問い合わせも_Rust_がビルドでき
     assert ck.ok, ck.diags
     main = """use geas_app::*;
 fn main() {
-    let mut s = 保存::default();
+    let mut s = Store::default();
     s.人.insert("P".into(), 人 { 人ID: "P".into(), 名前: None });
     s.メモ.insert("A".into(), メモ { メモID: "A".into(), 書いた人: Some("P".into()), 重さ: None, 札: None });
     s.メモ.insert("B".into(), メモ { メモID: "B".into(), 書いた人: None, 重さ: Some(3), 札: Some([("P".to_string(), 2u8)].into()) });
-    let all = 一覧(&一覧文脈 {}, &s, &一覧入力 { 最小: None });
-    println!("{}", all.iter().map(|x| x.表示()).collect::<Vec<_>>().join(";"));
-    println!("{}", 一覧(&一覧文脈 {}, &s, &一覧入力 { 最小: Some(1) }).len());
+    let all = 一覧(&一覧Ctx {}, &s, &一覧Input { 最小: None });
+    println!("{}", all.iter().map(|x| x.show()).collect::<Vec<_>>().join(";"));
+    println!("{}", 一覧(&一覧Ctx {}, &s, &一覧Input { 最小: Some(1) }).len());
 }
 """
     write_crate(ck, generate(ck), main, tmp_path)
@@ -1386,10 +1386,10 @@ def test_page_は並びのうえで先頭の1ページを返す(tmp_path):
     ck = chk(PAGEQ)
     main = """use geas_app::*;
 fn main() {
-    let mut s = 保存::default();
+    let mut s = Store::default();
     for (id, w) in [("A", 1i64), ("B", 5), ("C", 3)] { s.メモ.insert(id.into(), メモ { メモID: id.into(), 重さ: Some(w as _) }); }
-    println!("{:?}", 先頭(&先頭文脈 {}, &s, &先頭入力 {}));
-    println!("{:?}", 一覧(&一覧文脈 {}, &s, &一覧入力 { 件数: Some(2) }));
+    println!("{:?}", 先頭(&先頭Ctx {}, &s, &先頭Input {}));
+    println!("{:?}", 一覧(&一覧Ctx {}, &s, &一覧Input { 件数: Some(2) }));
 }
 """
     write_crate(ck, generate(ck), main, tmp_path)
@@ -1567,7 +1567,7 @@ def test_合成型の宣言の誤りは止まる():
 @needs_cargo
 def test_合成型はホストの境界で成分ごとに確かめる(tmp_path):
     ck = chk(COMP)
-    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::呼ぶ(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
     rec = lambda x: '{"地図":{"G1":{"地図ID":"G1","位置":{"x":1,"y":2},"道":{"始点":{"x":1,"y":2},"終点":{"x":' + str(x) + ',"y":5}}}}}'
     main = "fn main() {\n" + "".join([
         call("置く", '{"新地図ID":"G1"}', '{"位置":{"x":10,"y":20}}', "{}"),
@@ -1658,7 +1658,7 @@ def test_vtimeの成分の範囲は構造の上限だけ():
 @needs_cargo
 def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(tmp_path):
     ck = chk(VDT)
-    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::呼ぶ(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
+    call = lambda n, ctx, i, store: ('    println!("{:?}", geas_app::host::call(r#"{"名前":"' + n + '","文脈":' + ctx + ',"入力":' + i + ',"保存":' + store + '}"#));\n')
     rec = lambda body: '{"約束":{"A1":{"約束ID":"A1","期日":' + body + '}}}'
     main = "fn main() {\n" + "".join([
         call("決める", '{"新約束ID":"A1"}', '{"期日":{"year":2026,"month":10}}', "{}"),
@@ -1686,7 +1686,7 @@ def test_convert_は式が定義で_外の部品も保証も要らない():
     assert ck.ready, ck.diags
     assert build(ck)["部品"] == [("税込", "x: 金額(円) 0..", "金額(円) 0..", "= x + x")]
     assert not ck.infos["置く"].parts
-    assert "trait 部品群" not in generate(ck)
+    assert "trait Parts" not in generate(ck)
 
 
 def test_convert_の式の型が戻り値と違うと止まる():
@@ -1795,9 +1795,9 @@ def test_vtimeの変換は暦どおりの秒になり_未指定は補うルー�
     ck = chk(UTC)
     main = """use geas_app::*;
 fn t(日時: vtime) -> i64 {
-    let ctx = 予約文脈 { 新予定ID: "e1".to_string() };
-    let o = 予約(&ctx, &保存::default(), &予約入力 { 日時 });
-    match &o.書込[0] { 書込::予定_新規(r) => r.時刻 }
+    let ctx = 予約Ctx { new_予定_id: "e1".to_string() };
+    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 });
+    match &o.Write[0] { Write::予定_New(r) => r.時刻 }
 }
 fn main() {
     println!("{}", t(vtime { year: Some(2026), month: Some(10), day: Some(26), hour: Some(3), minute: Some(4), second: Some(5) }));
@@ -1909,7 +1909,7 @@ def test_id_の写像の値は合成型でも_ホストから受け取って足�
     ck = strict(IDMAP)
     assert ck.ok, ck.diags
     req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}}},"保存":{}}'
-    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6
@@ -1980,7 +1980,7 @@ def test_モジュールを使ったコードがビルドでき_動く(tmp_path)
     req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"保存":{}}'
     out = tmp_path / "crate"
     out.mkdir()
-    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', out, host=True)
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', out, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=out, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6

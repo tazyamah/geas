@@ -15,82 +15,82 @@ use std::fmt::Display;
 
 /// 端数の出る値（分子/分母）。丸めの指定が無いと整数にできない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct 有理 {
-    pub 分子: i128,
-    pub 分母: i128,
+pub struct Ratio {
+    pub num: i128,
+    pub den: i128,
 }
-impl Display for 有理 {
+impl Display for Ratio {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}/{}", self.分子, self.分母)
+        write!(f, "{}/{}", self.num, self.den)
     }
 }
-pub fn 積(x: i128, r: 有理) -> 有理 {
-    有理 { 分子: x * r.分子, 分母: r.分母 }
+pub fn scale(x: i128, r: Ratio) -> Ratio {
+    Ratio { num: x * r.num, den: r.den }
 }
-pub fn floor(x: 有理) -> i128 {
-    x.分子.div_euclid(x.分母)
+pub fn floor(x: Ratio) -> i128 {
+    x.num.div_euclid(x.den)
 }
-pub fn ceil(x: 有理) -> i128 {
-    -((-x.分子).div_euclid(x.分母))
+pub fn ceil(x: Ratio) -> i128 {
+    -((-x.num).div_euclid(x.den))
 }
-pub fn half_up(x: 有理) -> i128 {
-    (2 * x.分子 + x.分母).div_euclid(2 * x.分母)
+pub fn half_up(x: Ratio) -> i128 {
+    (2 * x.num + x.den).div_euclid(2 * x.den)
 }
-pub fn 範囲検査(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
     if lo.map_or(false, |l| x < l) || hi.map_or(false, |h| x > h) {
-        return Err(format!("{}={} は範囲外", 名, x));
+        return Err(format!("{}={} は範囲外", name, x));
     }
     Ok(())
 }
 /// 時刻（秒）の絶対値の上限。期間の足し引きが i64 であふれないよう、外から入る値を境界で止める
-pub const 時刻の限り: i128 = 1_000_000_000_000_000;
-pub fn 文字種検査(名: &str, s: &str, 許す: &[(char, char)]) -> Result<(), String> {
-    match s.chars().find(|c| !許す.iter().any(|&(a, b)| a <= *c && *c <= b)) {
-        Some(c) => Err(format!("{} に使えない文字 {:?} があります", 名, c)),
+pub const TIME_LIMIT: i128 = 1_000_000_000_000_000;
+pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), String> {
+    match s.chars().find(|c| !allowed.iter().any(|&(a, b)| a <= *c && *c <= b)) {
+        Some(c) => Err(format!("{} に使えない文字 {:?} があります", name, c)),
         None => Ok(()),
     }
 }
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
-pub fn 冪等キーの組(xs: &[String]) -> String {
+pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
     format!("[{}]", q.join(","))
 }
-pub fn 割合検査(名: &str, x: &有理, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if x.分母 <= 0 || lo.map_or(false, |l| x.分子 < l * x.分母) || hi.map_or(false, |h| x.分子 > h * x.分母) {
-        return Err(format!("{}={}/{} は範囲外", 名, x.分子, x.分母));
+pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+    if x.den <= 0 || lo.map_or(false, |l| x.num < l * x.den) || hi.map_or(false, |h| x.num > h * x.den) {
+        return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())
 }
-pub fn 範囲内(名: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
-    範囲検査(名, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
+pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
+    check_range(name, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
     x
 }
-pub fn バイト列表示(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
+pub fn show_bytes(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
 /// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
-pub fn 照合(s: &str, 大小: bool, かな: bool, 幅: bool) -> String {
+pub fn fold_text(s: &str, fold_case: bool, fold_kana: bool, fold_width: bool) -> String {
     s.chars().flat_map(|c| {
         let mut c = c;
-        if 幅 && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
-        if かな && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
-        if 大小 { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
+        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
+        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
+        if fold_case { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
     }).collect()
 }
-pub fn 集合表示(s: &BTreeSet<String>) -> String {
+pub fn show_set(s: &BTreeSet<String>) -> String {
     format!("{{{}}}", s.iter().cloned().collect::<Vec<_>>().join(","))
 }
-pub fn 写像表示<V>(m: &BTreeMap<String, V>, 表示: impl Fn(&V) -> String) -> String {
-    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, 表示(v))).collect::<Vec<_>>().join(","))
+pub fn show_map<V>(m: &BTreeMap<String, V>, show: impl Fn(&V) -> String) -> String {
+    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, show(v))).collect::<Vec<_>>().join(","))
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum 行き先 {
-    処理(&'static str),
-    待つ(&'static str),
-    応答,
+pub enum Dest {
+    Deed(&'static str),
+    Wait(&'static str),
+    Reply,
 }
-pub struct トリガ定義 {
-    pub 名前: &'static str,
+pub struct TriggerDef {
+    pub name: &'static str,
     /// (種別, 要因, 行き先の処理)。期限の要因は秒数。先に起きた要因が勝つ（実行は基盤）。
-    pub 要因: &'static [(&'static str, &'static str, &'static str)],
+    pub causes: &'static [(&'static str, &'static str, &'static str)],
 }
 '''
 
@@ -106,7 +106,7 @@ def rust_type(t: Type) -> str:
     if k in ("整数", "金額"):
         return phys(t)
     if k == "割合":
-        return "有理"
+        return "Ratio"
     if k in ("名前", "合成"):
         return t.target
     if k == "写像":
@@ -126,20 +126,20 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
     num = f"*{x}" if deref else x
     ref = x if deref else f"&{x}"
     if t.kind == "日時":
-        chk.append(f'範囲検査("{label}", {num} as i128, Some(-時刻の限り), Some(時刻の限り))?;')
+        chk.append(f'check_range("{label}", {num} as i128, Some(-TIME_LIMIT), Some(TIME_LIMIT))?;')
     if t.kind == "文字列" and t.range:
-        chk.append(f'範囲検査("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "文字列" and t.chars is not None:
-        chk.append(f'文字種検査("{label}", &{x}, {chars_rust(t.chars)})?;')
+        chk.append(f'check_chars("{label}", &{x}, {chars_rust(t.chars)})?;')
     if t.kind == "バイト列" and t.range:
-        chk.append(f'範囲検査("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        chk.append(f'check_range("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind in ("整数", "金額") and t.range:
-        chk.append(f'範囲検査("{label}", {num} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        chk.append(f'check_range("{label}", {num} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "割合" and t.range:
-        chk.append(f'割合検査("{label}", {ref}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+        chk.append(f'check_ratio("{label}", {ref}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
         r = t.value.range
-        chk.append(f'for v in {x}.values() {{ 範囲検査("{label}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
+        chk.append(f'for v in {x}.values() {{ check_range("{label}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
     if t.kind == "合成":
         for pn, pt in t.parts:
             if pt.optional:  # 未指定にできる成分は、あるときだけ確かめる
@@ -172,15 +172,15 @@ def show_expr(t: Type, x: str) -> str:
         return f'{x}.as_ref().map_or("null".to_string(), |v| format!("{{}}", {show_expr(replace(t, optional=False), "v")}))'
     k = t.kind
     if k == "名前":
-        return f"{x}.名前()"
+        return f"{x}.name()"
     if k == "合成":
         return f'format!("{{:?}}", &{x})'
     if k == "写像":
-        return f"写像表示(&{x}, |v| format!(\"{{}}\", {show_expr(t.value, 'v')}))"
+        return f"show_map(&{x}, |v| format!(\"{{}}\", {show_expr(t.value, 'v')}))"
     if k == "集合":
-        return f"集合表示(&{x})"
+        return f"show_set(&{x})"
     if k == "バイト列":
-        return f"バイト列表示(&{x})"
+        return f"show_bytes(&{x})"
     return x
 
 
@@ -230,35 +230,35 @@ class Gen:
             return f"Option<{r}>" if t.optional else r
 
         self.w(f"// ---- 問い合わせ {n}（読むだけ） ----")
-        self.w(f"pub struct {n}入力 {{")
+        self.w(f"pub struct {n}Input {{")
         for name, t in q.inputs:
             self.w(f"    pub {name}: {ty(t)},")
         self.w("}")
-        self.w(f"impl {n}入力 {{\n    pub fn 検査(&self) -> Result<(), String> {{")
+        self.w(f"impl {n}Input {{\n    pub fn validate(&self) -> Result<(), String> {{")
         for line in range_checks(q.inputs):
             self.w(line)
         self.w("        Ok(())\n    }\n}")
-        self.w(f"pub struct {n}文脈 {{")
+        self.w(f"pub struct {n}Ctx {{")
         for name, t in q.refs:
             self.w(f"    pub {name}: {rust_type(t)},")
         self.w("}")
-        self.w(f"impl {n}文脈 {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
+        self.w(f"impl {n}Ctx {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn validate(&self) -> Result<(), String> {{")
         for line in range_checks(q.refs):
             self.w(line)
         self.w("        Ok(())\n    }\n}")
         if q.select:
             cols = [(c, column_type(self.ck, q, c)) for c in q.select]
             self.w("#[derive(Clone, Debug, PartialEq)]")
-            self.w(f"pub struct {n}行 {{")
+            self.w(f"pub struct {n}Row {{")
             for c, t in cols:
                 self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else field_rust(t)},")  # 集計は桁あふれしない広い整数
             self.w("}")
             fmt = "/".join(f"{c.name}={{}}" for c, _ in cols)
             vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
-            self.w(f'impl {n}行 {{\n    pub fn 表示(&self) -> String {{ format!("{fmt}", {vals}) }}\n}}')
-        out_ty = f"{n}行" if q.select else "String"
-        self.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力) -> Vec<{out_ty}> {{")
-        self.w(f"    let mut 行: Vec<&{q.target}> = 保存.{q.target}.values().filter(|r| {{")
+            self.w(f'impl {n}Row {{\n    pub fn show(&self) -> String {{ format!("{fmt}", {vals}) }}\n}}')
+        out_ty = f"{n}Row" if q.select else "String"
+        self.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> Vec<{out_ty}> {{")
+        self.w(f"    let mut rows: Vec<&{q.target}> = Store.{q.target}.values().filter(|r| {{")
         def atom(f, op, st):
             if not st.isdigit():
                 return f"r.{f} {op} {fields[f].type.target}::{st}"
@@ -282,39 +282,39 @@ class Gen:
             if op.startswith("含む"):
                 folds = op[3:-1].split(",") if "(" in op else []
                 flags = ", ".join("true" if k in folds else "false" for k in ("大小無視", "かな無視", "幅無視"))
-                cond = f"照合(&{v}, {flags}).contains(&照合(x, {flags}))" if folds else f"{v}.contains(x.as_str())"
+                cond = f"fold_text(&{v}, {flags}).contains(&fold_text(x, {flags}))" if folds else f"{v}.contains(x.as_str())"
             else:
                 cond = {"以上": f"({v} as i128) >= (*x as i128)", "以下": f"({v} as i128) <= (*x as i128)"}[op]  # 物理数の幅が違っても比べられる
             cond = guard(cond)
             if t.optional:
-                self.w(f"        if let Some(x) = &入力.{a} {{ if !({cond}) {{ return false; }} }}")
+                self.w(f"        if let Some(x) = &Input.{a} {{ if !({cond}) {{ return false; }} }}")
             else:
-                self.w(f"        {{ let x = &入力.{a}; if !({cond}) {{ return false; }} }}")
+                self.w(f"        {{ let x = &Input.{a}; if !({cond}) {{ return false; }} }}")
         self.w("        true\n    }).collect();")
         if q.order:
             f, d = q.order
             a, b = ("b", "a") if d == "新しい順" else ("a", "b")
             nulls = f"a.{f}.is_none().cmp(&b.{f}.is_none()).then(" if fields[f].type.optional else "("  # null は最後
-            self.w(f"    行.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
+            self.w(f"    rows.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
         else:
-            self.w(f"    行.sort_by(|a, b| a.{key}.cmp(&b.{key}));")
+            self.w(f"    rows.sort_by(|a, b| a.{key}.cmp(&b.{key}));")
         if q.page or q.page_n:
             if q.page_n:
                 n_expr = str(q.page_n)
             else:
                 t = ins[q.page]
-                n_expr = f"入力.{q.page}.map_or(行.len(), |x| x as usize)" if t.optional else f"入力.{q.page} as usize"
-            self.w(f"    行.truncate({n_expr});  // 1ページ分（並びは上で決めてある）")
+                n_expr = f"Input.{q.page}.map_or(rows.len(), |x| x as usize)" if t.optional else f"Input.{q.page} as usize"
+            self.w(f"    rows.truncate({n_expr});  // 1ページ分（並びは上で決めてある）")
         if not q.select:
-            self.w(f"    行.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
+            self.w(f"    rows.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
             return
-        self.w("    行.into_iter().filter_map(|r| {")
+        self.w("    rows.into_iter().filter_map(|r| {")
         for via in dict.fromkeys(c.via for c in q.select if c.kind == "参照先"):
             tgt = fields[via].type.target
             if fields[via].type.optional:  # 参照が null なら、その先の列は null
-                self.w(f"        let j_{via} = match &r.{via} {{ Some(k) => Some(保存.{tgt}.get(k)?), None => None }};  // 参照先が無い行は出さない")
+                self.w(f"        let j_{via} = match &r.{via} {{ Some(k) => Some(Store.{tgt}.get(k)?), None => None }};  // 参照先が無い行は出さない")
             else:
-                self.w(f"        let j_{via} = 保存.{tgt}.get(&r.{via})?;  // 参照先が無い行は出さない")
+                self.w(f"        let j_{via} = Store.{tgt}.get(&r.{via})?;  // 参照先が無い行は出さない")
         parts = []
         for c, _ in cols:
             if c.kind == "参照先":
@@ -332,7 +332,7 @@ class Gen:
                              if fields[c.field].type.optional else f"{c.name}: r.{c.field}.len() as i128")
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
-        self.w(f"        Some({n}行 {{ {', '.join(parts)} }})")
+        self.w(f"        Some({n}Row {{ {', '.join(parts)} }})")
         self.w("    }).collect()\n}\n")
 
     def states(self):
@@ -341,11 +341,11 @@ class Gen:
             self.w("#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]")
             self.w(f"pub enum {s.name} {{ {', '.join(vs)} }}")
             self.w(f"impl {s.name} {{")
-            self.w("    pub fn 名前から(s: &str) -> Option<Self> {\n        match s {")
+            self.w("    pub fn from_name(s: &str) -> Option<Self> {\n        match s {")
             for v in vs:
                 self.w(f'            "{v}" => Some({s.name}::{v}),')
             self.w("            _ => None,\n        }\n    }")
-            self.w("    pub fn 名前(&self) -> &'static str {\n        match self {")
+            self.w("    pub fn name(&self) -> &'static str {\n        match self {")
             for v in vs:
                 self.w(f'            {s.name}::{v} => "{v}",')
             self.w("        }\n    }\n}\n")
@@ -366,25 +366,25 @@ class Gen:
             for f in d.fields:
                 self.w(f"    pub {f.name}: {field_rust(f.type)},")
             self.w("}\n")
-        self.w("#[derive(Clone, Debug, Default)]\npub struct 保存 {")
+        self.w("#[derive(Clone, Debug, Default)]\npub struct Store {")
         for d in self.p.data:
             self.w(f"    pub {d.name}: BTreeMap<String, {d.name}>,")
         self.w("}\n")
         # 書込の適用と差分
-        self.w("impl 保存 {")
-        self.w("    pub fn 適用(&mut self, 書込列: Vec<書込>) {\n        for w in 書込列 {\n            match w {")
+        self.w("impl Store {")
+        self.w("    pub fn apply(&mut self, writes: Vec<Write>) {\n        for w in writes {\n            match w {")
         for kind, d, f in self.write_kinds():
             if f is None:
-                self.w(f"                書込::{d}_新規(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
+                self.w(f"                Write::{d}_New(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
             else:
                 # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
-                self.w(f"                書込::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
+                self.w(f"                Write::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
         self.w("            }\n        }\n    }")
-        self.w("    pub fn 差分(&self, 後: &保存) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
+        self.w("    pub fn diff(&self, after: &Store) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
         for d in self.p.data:
             key = self.key(d.name)
             others = [f for f in d.fields if f.name != key]
-            self.w(f"        for (id, r) in &後.{d.name} {{\n            match self.{d.name}.get(id) {{")
+            self.w(f"        for (id, r) in &after.{d.name} {{\n            match self.{d.name}.get(id) {{")
             fmt = ", ".join(f"{f.name}={{}}" for f in others)
             args = ", ".join(show_expr(f.type, f"r.{f.name}") for f in others)
             self.w(f'                None => out.push(format!("{d.name}({{}})新規({fmt})", id{", " + args if args else ""})),')
@@ -393,7 +393,7 @@ class Gen:
                 self.w(f"                    if b.{f.name} != r.{f.name} {{ out.push(format!(\"{d.name}({{}}).{f.name}:{{}}→{{}}\", id, "
                        f"{show_expr(f.type, 'b.' + f.name)}, {show_expr(f.type, 'r.' + f.name)})); }}")
             self.w("                }\n            }\n        }")
-            self.w(f"        for id in self.{d.name}.keys() {{ if !後.{d.name}.contains_key(id) {{ out.push(format!(\"{d.name}({{}})削除\", id)); }} }}")
+            self.w(f"        for id in self.{d.name}.keys() {{ if !after.{d.name}.contains_key(id) {{ out.push(format!(\"{d.name}({{}})削除\", id)); }} }}")
         self.w("        out.sort();\n        out\n    }\n}\n")
 
     def write_kinds(self):
@@ -408,10 +408,10 @@ class Gen:
         return kinds
 
     def writes_enum(self):
-        self.w("#[derive(Clone, Debug, PartialEq)]\npub enum 書込 {")
+        self.w("#[derive(Clone, Debug, PartialEq)]\npub enum Write {")
         for _, d, f in self.write_kinds():
             if f is None:
-                self.w(f"    {d}_新規({d}),")
+                self.w(f"    {d}_New({d}),")
             else:
                 t = next(x.type for x in self.ck.data[d].fields if x.name == f)
                 self.w(f"    {d}_{f}(String, {field_rust(t)}),")
@@ -422,11 +422,11 @@ class Gen:
         if not self.p.parts:
             return
         self.w("/// 部品の保証に違反した。処理は書込を返す前に止まり、保存は変わらない\n"
-               "pub fn 保証違反(部品: &str, 保証: &str) -> ! {\n"
-               '    panic!("部品「{}」が保証に違反しました: {}", 部品, 保証)\n}')
+               "pub fn guarantee_violated(part: &str, guarantee: &str) -> ! {\n"
+               '    panic!("部品「{}」が保証に違反しました: {}", part, guarantee)\n}')
         if all(pt.body is not None for pt in self.p.parts):
             return
-        self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait 部品群 {")
+        self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait Parts {")
         for pt in self.p.parts:
             if pt.body is not None:
                 continue
@@ -435,18 +435,18 @@ class Gen:
         self.w("}")
 
     def effects(self):
-        self.w("#[derive(Clone, Debug, PartialEq)]\npub enum 外部作用 {")
+        self.w("#[derive(Clone, Debug, PartialEq)]\npub enum Effect {")
         for e in self.p.effects:
             fs = ", ".join(f"{n}: {rust_type(t)}" for n, t in e.params)
-            self.w(f"    {e.name.replace('.', '_')} {{ {fs}, 冪等キー: String }},")
+            self.w(f"    {e.name.replace('.', '_')} {{ {fs}, idem_key: String }},")
         # 外部作用が1つも無いときは、中身の無い enum になる。参照のまま match できないので、値で match する
-        self.w("}\nimpl 外部作用 {\n    pub fn 表示(&self) -> String {\n        match " + ("self" if self.p.effects else "*self") + " {")
+        self.w("}\nimpl Effect {\n    pub fn show(&self) -> String {\n        match " + ("self" if self.p.effects else "*self") + " {")
         for e in self.p.effects:
             names = [n for n, _ in e.params]
             pat = ", ".join(names)
             fmt = ", ".join("{}" for _ in names)
             shown = ", ".join(show_expr(t, n) for n, t in e.params)
-            self.w(f'            外部作用::{e.name.replace(".", "_")} {{ {pat}, 冪等キー }} => format!("{e.name}({fmt}, 冪等キー={{}})", {shown}, 冪等キー),')
+            self.w(f'            Effect::{e.name.replace(".", "_")} {{ {pat}, idem_key }} => format!("{e.name}({fmt}, 冪等キー={{}})", {shown}, idem_key),')
         self.w("        }\n    }\n}\n")
 
     def results(self):
@@ -457,7 +457,7 @@ class Gen:
             for v, ts in vs:
                 self.w(f"    {v}({', '.join(rust_type(t) for t in ts)})," if ts else f"    {v},")
             self.w("}")
-            self.w(f"impl {r.name} {{\n    pub fn 表示(&self) -> String {{\n        match self {{")
+            self.w(f"impl {r.name} {{\n    pub fn show(&self) -> String {{\n        match self {{")
             for v, ts in vs:
                 if ts:
                     names = [f"a{i}" for i in range(len(ts))]
@@ -467,11 +467,11 @@ class Gen:
                 else:
                     self.w(f'            {r.name}::{v} => "{v}".to_string(),')
             self.w("        }\n    }")
-            self.w("    pub fn 名前(&self) -> &'static str {\n        match self {")
+            self.w("    pub fn name(&self) -> &'static str {\n        match self {")
             for v, ts in vs:
                 self.w(f'            {r.name}::{v}' + ("(..)" if ts else "") + f' => "{v}",')
             self.w("        }\n    }")
-            self.w("    pub fn 引数(&self) -> Vec<String> {\n        match self {")
+            self.w("    pub fn args(&self) -> Vec<String> {\n        match self {")
             for v, ts in vs:
                 if ts:
                     names = [f"a{i}" for i in range(len(ts))]
@@ -488,8 +488,8 @@ class Gen:
                 rdef = self.ck.results[self.ck.procs[proc].result]
                 m = route_map(routes)
                 many = any(len(ds) > 1 for ds in m.values())  # 行き先が複数ある結果があれば、全部の結果を、書いた順の列で返す
-                one = lambda dest: "行き先::応答" if dest == "応答" else f'行き先::待つ("{dest[3:]}")' if dest.startswith("待つ ") else f'行き先::処理("{dest}")'
-                self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> {'Vec<行き先>' if many else '行き先'} {{\n    match r {{")
+                one = lambda dest: "Dest::Reply" if dest == "応答" else f'Dest::Wait("{dest[3:]}")' if dest.startswith("待つ ") else f'Dest::Deed("{dest}")'
+                self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> {'Vec<Dest>' if many else 'Dest'} {{\n    match r {{")
                 for v, ts in rdef.variants:  # ts は中身（名前, 型）。ここでは有無だけ見る
                     pat = f"{rdef.name}::{v}" + ("(..)" if ts else "")
                     ds = [one(d) for d in m[v]]
@@ -500,10 +500,10 @@ class Gen:
         if not self.p.triggers:
             return
         self.w("// 【トリガ】：待ちの宣言。要因ごとの行き先。作成・発火・期限の監視は基盤の仕事。")
-        self.w("pub const トリガ一覧: &[トリガ定義] = &[")
+        self.w("pub const triggers: &[TriggerDef] = &[")
         for tg in self.p.triggers:
             cs = ", ".join(f'("{k}", "{key}", "{d}")' for k, key, d in tg.causes)
-            self.w(f'    トリガ定義 {{ 名前: "{tg.name}", 要因: &[{cs}] }},')
+            self.w(f'    TriggerDef {{ name: "{tg.name}", causes: &[{cs}] }},')
         self.w("];\n")
 
 
@@ -543,11 +543,11 @@ class ProcGen:
     def place(self, e) -> str:
         if isinstance(e, Name):
             kind, _ = self.scope[e.n]
-            return {"input": f"入力.{e.n}", "ref": f"ctx.{e.n}"}.get(kind, e.n)
+            return {"input": f"Input.{e.n}", "ref": f"ctx.{e.n}"}.get(kind, e.n)
         if isinstance(e, Attr):
             return f"{self.place(e.e)}.{e.n}"
         if isinstance(e, Index):
-            return f"保存.{e.d}[&({self.rx(e.e)})]"
+            return f"Store.{e.d}[&({self.rx(e.e)})]"
         raise ValueError(e)
 
     def part_call(self, e: Call) -> str:
@@ -568,25 +568,25 @@ class ProcGen:
             self.fills = {}
             self.scope = saved
         else:
-            call = f"部品.{e.n}({', '.join(args)})"
+            call = f"parts.{e.n}({', '.join(args)})"
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
         if pt.body is not None:  # convert の範囲は検査器が静的に示してある。実行時には確かめない
             return "{ " + " ".join(lines) + " result }"
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = 範囲検査("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_range("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ guarantee_violated("{e.n}", &m) }}')
         if pt.ret.kind == "文字列" and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = 範囲検査("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ 保証違反("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ guarantee_violated("{e.n}", &m) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
-            lines.append(f'if let Err(m) = 文字種検査("result", &result, {chars_rust(pt.ret.chars)}) {{ 保証違反("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ guarantee_violated("{e.n}", &m) }}')
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))
         self.info.types.update(self.ck.part_types)
         cond = self.rx(pt.guarantee)
         self.scope = saved
-        lines.append(f'if !({cond}) {{ 保証違反("{e.n}", "{show(pt.guarantee)}") }}')
+        lines.append(f'if !({cond}) {{ guarantee_violated("{e.n}", "{show(pt.guarantee)}") }}')
         return "{ " + " ".join(lines) + " result }"
 
     def src(self, e) -> str:
@@ -642,7 +642,7 @@ class ProcGen:
             return "None"
         if isinstance(e, Pred):
             if e.kind in ("ある", "ない"):
-                c = f"保存.{e.e.d}.contains_key(&({self.rx(e.e.e)}))"
+                c = f"Store.{e.e.d}.contains_key(&({self.rx(e.e.e)}))"
                 return c if e.kind == "ある" else f"!{c}"
             c = f"{self.src(e.e)}.is_empty()"
             return c if e.kind == "空" else f"!{c}"
@@ -658,7 +658,7 @@ class ProcGen:
             if e.op in ("/", "%"):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
             if e.op == "*" and "Ratio" in (lt, rt):
-                return f"積({r}, {l})" if lt == "Ratio" else f"積({l}, {r})"
+                return f"scale({r}, {l})" if lt == "Ratio" else f"scale({l}, {r})"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
                 return f"(({l} as i128) - ({r} as i128))"
             op = {"かつ": "&&"}.get(e.op, e.op)
@@ -696,16 +696,16 @@ class ProcGen:
         elem = self.rx(e.elem)
         self.scope = saved
         is_set = isinstance(e, SetB)
-        init = "let mut 集め: BTreeSet<String> = BTreeSet::new();" if is_set else "let mut 集め: i128 = 0;"
-        add = f"集め.insert({elem});" if is_set else f"集め += {elem};"
+        init = "let mut acc: BTreeSet<String> = BTreeSet::new();" if is_set else "let mut acc: i128 = 0;"
+        add = f"acc.insert({elem});" if is_set else f"acc += {elem};"
         inner = " ".join(body) + (f" if {cond} {{ {add} }}" if cond else f" {add}")
-        return f"{{ {init} {head} {inner} }} 集め }}"
+        return f"{{ {init} {head} {inner} }} acc }}"
 
     # ---- 文 ----
     def ret_expr(self, r: Return) -> str:
         args = ", ".join(self.rx(a) for a in r.args)
         v = f"{self.rdef.name}::{r.variant}" + (f"({args})" if r.args else "")
-        return f"{self.proc.name}出力 {{ 結果: {v}, 書込: 書込列, 外部: 外部列 }}"
+        return f"{self.proc.name}Output {{ result: {v}, Write: writes, effects: effects }}"
 
     def conv(self, t: Type, x: str, name: str, proven: bool = False) -> str:
         """i128 の式を、項目の物理数へ。proven なら、範囲は検査で示してある（実行時には確かめない）。
@@ -718,7 +718,7 @@ class ProcGen:
         r = t.range
         lo = r.lo if r else None
         hi = r.hi if r else None
-        return f'{phys(t)}::try_from(範囲内("{name}", {x}, {opt(lo) if lo is None else f"Some({lo})"}, {"None" if hi is None else f"Some({hi})"})).expect("物理数に収まらない")'
+        return f'{phys(t)}::try_from(in_range("{name}", {x}, {opt(lo) if lo is None else f"Some({lo})"}, {"None" if hi is None else f"Some({hi})"})).expect("物理数に収まらない")'
 
     def field_value(self, t: Type, e, name: str) -> str:
         """項目へ書く値。null になりうる項目は Option で、無いかもしれない入力はそのまま渡す"""
@@ -747,17 +747,17 @@ class ProcGen:
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):
                 d = st.e.d
-                self.L(f"let {st.name} = match 保存.{d}.get(&({self.rx(st.e.e)})) {{")
+                self.L(f"let {st.name} = match Store.{d}.get(&({self.rx(st.e.e)})) {{")
                 self.L("    Some(r) => r,")
                 if st.absent and self.in_loop:
-                    self.L(f"    None => {{ 外部列.truncate(束の始め); return {self.ret_expr(st.absent)}; }}")
+                    self.L(f"    None => {{ effects.truncate(束の始め); return {self.ret_expr(st.absent)}; }}")
                 elif st.absent:
                     self.L(f"    None => return {self.ret_expr(st.absent)},")
                 self.L("};")
                 self.scope[st.name] = ("local", f"Rec:{d}")
             elif st.absent is not None and isinstance(st.e, (Attr, Name)):  # let x = y.項目／入力 else { return … }（無ければ返す）
                 tok = self.tok(st.e)
-                ty = {"Int": "i128", "Money": "i128", "Ratio": "有理", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}.get(tok, "_")
+                ty = {"Int": "i128", "Money": "i128", "Ratio": "Ratio", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}.get(tok, "_")
                 self.L(f"let {st.name}: {ty} = match {self.place(st.e)}.clone() {{")
                 self.L(f"    Some(v) => {self.wrap(tok, 'v') if tok in ('Int', 'Money') else 'v'},")
                 self.L(f"    None => return {self.ret_expr(st.absent)},")
@@ -765,7 +765,7 @@ class ProcGen:
                 self.scope[st.name] = ("local", tok)
             else:
                 tok = self.tok(st.e)
-                ty = {"Int": "i128", "Money": "i128", "Rational": "有理", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}[tok]
+                ty = {"Int": "i128", "Money": "i128", "Rational": "Ratio", "ID": "String", "Str": "String", "Time": "i64", "Set": "BTreeSet<String>"}[tok]
                 self.L(f"let {st.name}: {ty} = {self.rx(st.e)};")
                 self.scope[st.name] = ("local", tok)
         elif isinstance(st, Update):
@@ -782,13 +782,13 @@ class ProcGen:
             ft = self.field_type(d, f)
             self.L(f"    {pre}{{")
             if isinstance(st.value, Null):
-                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, None));")
+                self.L(f"        writes.push(Write::{d}_{f}({self.rx(tgt.e.e)}, None));")
             elif ft.kind in ("整数", "金額"):
-                v = self.conv(ft, '新値', d + '.' + f, proven=True)
-                self.L(f"        let 新値: i128 = {new};")
-                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({v})' if ft.optional else v}));")
+                v = self.conv(ft, 'new_value', d + '.' + f, proven=True)
+                self.L(f"        let new_value: i128 = {new};")
+                self.L(f"        writes.push(Write::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({v})' if ft.optional else v}));")
             else:
-                self.L(f"        書込列.push(書込::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({val})' if ft.optional else val}));")
+                self.L(f"        writes.push(Write::{d}_{f}({self.rx(tgt.e.e)}, {f'Some({val})' if ft.optional else val}));")
             self.L("    }")
             self.L("}")
             self.scope = saved
@@ -796,7 +796,7 @@ class ProcGen:
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
             v = self.field_value(self.field_type(d, st.f), st.e, f"{d}.{st.f}")
-            self.L(f"書込列.push(書込::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
+            self.L(f"writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Create):
             dt = self.ck.data[st.data]
             key = self.ck.key_field(st.data)
@@ -804,16 +804,16 @@ class ProcGen:
             self.L(f"let {st.name} = {st.data} {{")
             for f in dt.fields:
                 if f is key:
-                    v = f"ctx.新{st.data}ID.clone()"
+                    v = f"ctx.new_{st.data}_id.clone()"
                 else:
                     v = self.field_value(f.type, given.get(f.name, Null()), f"{st.data}.{f.name}")  # 書かなかった項目は null
                 self.L(f"    {f.name}: {v},")
             self.L("};")
-            self.L(f"書込列.push(書込::{st.data}_新規({st.name}.clone()));")
+            self.L(f"writes.push(Write::{st.data}_New({st.name}.clone()));")
             self.scope[st.name] = ("local", f"Rec:{st.data}")
         elif isinstance(st, ForEach):
             head, body, saved = self.bind_lines(st.binder, "")
-            self.L("let 束の始め = 外部列.len();")
+            self.L("let 束の始め = effects.len();")
             self.L(head)
             for b in body:
                 self.L("    " + b)
@@ -830,38 +830,38 @@ class ProcGen:
                 v = self.conv(t, self.rx(a), n) if t.kind in ("整数", "金額") else self.rx(a)
                 parts.append(f"{n}: {v}")
             if isinstance(st.idem, Tuple):  # 組は、区切りがあいまいにならない形で1つの文字列に
-                parts.append(f"冪等キー: 冪等キーの組(&[{', '.join(self.rx(x) for x in st.idem.items)}])")
+                parts.append(f"idem_key: join_idem_key(&[{', '.join(self.rx(x) for x in st.idem.items)}])")
             else:
-                parts.append(f"冪等キー: {self.rx(st.idem)}")
-            self.L(f"外部列.push(外部作用::{st.effect.replace('.', '_')} {{ {', '.join(parts)} }});")
+                parts.append(f"idem_key: {self.rx(st.idem)}")
+            self.L(f"effects.push(Effect::{st.effect.replace('.', '_')} {{ {', '.join(parts)} }});")
 
     # ---- 関数全体 ----
     def emit(self):
         g, proc, info = self.g, self.proc, self.info
         n = proc.name
         g.w(f"// ---- 処理 {n} ----")
-        g.w(f"pub struct {n}入力 {{")
+        g.w(f"pub struct {n}Input {{")
         for name, t in proc.inputs:
             g.w(f"    pub {name}: {field_rust(t)},")  # 無いかもしれない入力は Option
         g.w("}")
-        g.w(f"impl {n}入力 {{\n    /// 外部から取り込むときの、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
+        g.w(f"impl {n}Input {{\n    /// 外部から取り込むときの、範囲の宣言の検査\n    pub fn validate(&self) -> Result<(), String> {{")
         for line in range_checks(proc.inputs):
             g.w(line)
         g.w("        Ok(())\n    }\n}")
-        g.w(f"/// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）\npub struct {n}文脈 {{")
+        g.w(f"/// 文脈：【参照】（配備時に埋まる）と、採番（実行のたびに基盤が代入）\npub struct {n}Ctx {{")
         for name, t in proc.refs:
             g.w(f"    pub {name}: {rust_type(t)},")
         for d in sorted(set(info.new_ids)):
-            g.w(f"    pub 新{d}ID: String,")
+            g.w(f"    pub new_{d}_id: String,")
         g.w("}")
-        g.w(f"impl {n}文脈 {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn 検査(&self) -> Result<(), String> {{")
+        g.w(f"impl {n}Ctx {{\n    /// 外から埋まる値（slot）の、範囲の宣言の検査\n    pub fn validate(&self) -> Result<(), String> {{")
         for line in range_checks(proc.refs):
             g.w(line)
         g.w("        Ok(())\n    }\n}")
-        g.w(f"pub struct {n}出力 {{\n    pub 結果: {self.rdef.name},\n    pub 書込: Vec<書込>,\n    pub 外部: Vec<外部作用>,\n}}")
-        extra = ", 部品: &dyn 部品群" if info.parts else ""
-        g.w(f"pub fn {n}(ctx: &{n}文脈, 保存: &保存, 入力: &{n}入力{extra}) -> {n}出力 {{")
-        g.w("    let mut 書込列: Vec<書込> = Vec::new();\n    let mut 外部列: Vec<外部作用> = Vec::new();")
+        g.w(f"pub struct {n}Output {{\n    pub result: {self.rdef.name},\n    pub Write: Vec<Write>,\n    pub effects: Vec<Effect>,\n}}")
+        extra = ", parts: &dyn Parts" if info.parts else ""
+        g.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input{extra}) -> {n}Output {{")
+        g.w("    let mut writes: Vec<Write> = Vec::new();\n    let mut effects: Vec<Effect> = Vec::new();")
         self.null_inputs = {name for name, t in proc.inputs if t.optional}
         for name, t in proc.inputs:
             self.scope[name] = ("input", tok_of(t))
