@@ -2239,3 +2239,56 @@ def test_待ち合わせでは全部の応答の中身が渡り_名前が重な�
 
 def test_使われない応答の宣言は警告():
     assert any("使われていません" in m for m in msgs(chk(REPLY_SRC.replace("reply PaymentDeclined", "reply Unused")), WARN))
+
+
+# ---- 金額の単位 ----
+USD_SRC = SHOP_SRC.replace("  unit_price: NonNegMoney required\n", "  unit_price: NonNegMoney required\n  price_usd: money(USD) required\n  note_usd: money(USD)\n")
+
+
+def usd_deed(body, reads="Product.unit_price, Product.price_usd", writes=""):
+    w = f"  writes {writes}\n" if writes else ""
+    return USD_SRC + f"""
+deed usd_probe {{
+  input product_id: id required
+  reads {reads}
+{w}  result ReleaseResult
+  effects none
+
+  let p = Product[product_id] else {{ return NoSuchOrder }}
+{body}
+  return Applied
+}}
+"""
+
+
+def unit_errors(src):
+    return [m for m in msgs(chk(src), ERROR) if "金額" in m and "単位" in m or "換算" in m]
+
+
+def test_円とドルの金額は足せず比べられない():
+    assert unit_errors(usd_deed("  let t = p.unit_price + p.price_usd"))
+    assert unit_errors(usd_deed("  if p.unit_price > p.price_usd { return WrongStatus }"))
+    assert not unit_errors(usd_deed("  let t = p.price_usd + p.price_usd\n  if t > p.price_usd { return WrongStatus }"))
+
+
+def test_金額を入れる先の単位が違うと止まる():
+    bad = usd_deed("  p.note_usd = p.unit_price", writes="Product.note_usd")
+    assert any("ドルの金額ですが、円の金額" in m for m in msgs(chk(bad), ERROR)), msgs(chk(bad), ERROR)
+    assert not unit_errors(usd_deed("  p.note_usd = p.price_usd * 2", writes="Product.note_usd"))
+    # let の変数、掛け算、丸めを通しても単位は引き継がれる
+    assert unit_errors(usd_deed("  let t = p.unit_price * 3\n  p.note_usd = t", writes="Product.note_usd"))
+
+
+def test_ドルの金額に_0以外の数字は直接書けず_money_で最小単位から作る():
+    assert any("直接書けません" in m for m in msgs(chk(usd_deed("  p.note_usd = 500", writes="Product.note_usd")), ERROR))
+    assert not unit_errors(usd_deed("  p.note_usd = money(500, USD)", writes="Product.note_usd"))
+    assert any("直接書けません" in m for m in msgs(chk(usd_deed("  if p.price_usd > 100 { return WrongStatus }")), ERROR))
+    assert not unit_errors(usd_deed("  if p.price_usd > 0 { return WrongStatus }"))
+    assert any("単位" in m for m in msgs(chk(usd_deed("  p.note_usd = money(500, GBP)", writes="Product.note_usd")), ERROR))
+
+
+def test_丸めの単位は金額の単位と合わせる():
+    ok = usd_deed("  p.note_usd = round(p.price_usd * 0.5, floor, USD)".replace("0.5", "tax"), writes="Product.note_usd")
+    ok = ok.replace("input product_id: id required", "input product_id: id required\n  slot tax: TaxRateValue")
+    assert not unit_errors(ok)
+    assert any("単位で丸めています" in m for m in msgs(chk(ok.replace("floor, USD", "floor, JPY")), ERROR))
