@@ -556,6 +556,6 @@ pub fn PaymentRelease_expire_payment(r: &ReleaseResult) -> Dest {
 
 // 【トリガ】：待ちの宣言。要因ごとの行き先。作成・発火・期限の監視は基盤の仕事。
 pub const triggers: &[TriggerDef] = &[
-    TriggerDef { name: "PaymentPending", causes: &[("応答", "PaymentSucceeded", "apply_payment_result"), ("期限", "1800", "expire_payment")] },
+    TriggerDef { name: "PaymentPending", causes: &[("reply", "PaymentSucceeded", "apply_payment_result"), ("deadline", "1800", "expire_payment")] },
 ];
 

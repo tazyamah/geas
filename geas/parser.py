@@ -801,16 +801,16 @@ class Parser:
                         raise self.err("par には2つ以上の処理を書きます")
                     if "wait" in ds:
                         raise self.err("wait は par に入れられません（待つ行き先は、ほかの行き先と並べられません）")
-                    ds = ["応答" if x == "reply" else x for x in ds]
+                    ds = ["reply" if x == "reply" else x for x in ds]
                     routes.extend((v, x) for x in ds)
                     if not self.accept(","):
                         break
                     self.skip_nl()
                     continue
                 if d == "reply":
-                    d = "応答"
+                    d = "reply"
                 elif d == "wait":
-                    d = "待つ " + self.name()
+                    d = "wait " + self.name()
                 routes.append((v, d))
                 if not self.accept(","):
                     break
@@ -946,9 +946,9 @@ class Parser:
         while not self.accept("}"):
             kind = self.name()
             if kind == "reply":
-                kind, key = "応答", self.name()
+                kind, key = "reply", self.name()
             elif kind == "deadline":
-                kind = "期限"
+                kind = "deadline"
                 if self.accept("now"):  # 「now + 30 min」。now は動的具体化の【参照】
                     self.expect("+")
                 n = self.num()

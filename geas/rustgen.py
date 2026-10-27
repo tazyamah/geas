@@ -488,7 +488,7 @@ class Gen:
                 rdef = self.ck.results[self.ck.procs[proc].result]
                 m = route_map(routes)
                 many = any(len(ds) > 1 for ds in m.values())  # 行き先が複数ある結果があれば、全部の結果を、書いた順の列で返す
-                one = lambda dest: "Dest::Reply" if dest == "応答" else f'Dest::Wait("{dest[3:]}")' if dest.startswith("待つ ") else f'Dest::Deed("{dest}")'
+                one = lambda dest: "Dest::Reply" if dest == "reply" else f'Dest::Wait("{dest[5:]}")' if dest.startswith("wait ") else f'Dest::Deed("{dest}")'
                 self.w(f"pub fn {fl.name}_{proc}(r: &{rdef.name}) -> {'Vec<Dest>' if many else 'Dest'} {{\n    match r {{")
                 for v, ts in rdef.variants:  # ts は中身（名前, 型）。ここでは有無だけ見る
                     pat = f"{rdef.name}::{v}" + ("(..)" if ts else "")

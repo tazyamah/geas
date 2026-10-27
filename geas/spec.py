@@ -4,8 +4,17 @@ from .ast import *  # noqa: F401,F403
 from .check import Checker, phys, tok_of
 
 
+def ja_dest(d: str) -> str:
+    """行き先の内部の書き方（reply / wait 名前）を、仕様書の日本語にする"""
+    return "応答" if d == "reply" else "待つ " + d[5:] if d.startswith("wait ") else d
+
+
+def ja_kind(k: str) -> str:
+    return {"reply": "応答", "deadline": "期限"}.get(k, k)
+
+
 def fmt_cause(kind: str, key: str) -> str:
-    if kind != "期限":
+    if kind != "deadline":
         return key
     s = int(key)
     for unit, sec in (("日", 86400), ("時間", 3600), ("分", 60)):
@@ -86,7 +95,7 @@ def build_raw(ck: Checker) -> dict:
     routes: dict[str, dict[str, str]] = {}
     for fl in p.flows:
         for proc, rs in fl.entries:
-            routes.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else "並列［" + " ＋ ".join(ds) + "］" for v, ds in route_map(rs).items()})
+            routes.setdefault(proc, {}).update({v: ja_dest(ds[0]) if len(ds) == 1 else "並列［" + " ＋ ".join(ja_dest(x) for x in ds) + "］" for v, ds in route_map(rs).items()})
     procs = []
     for proc in p.processes:
         info = ck.infos[proc.name]
@@ -109,7 +118,7 @@ def build_raw(ck: Checker) -> dict:
         })
     spec["処理"] = procs
     spec["問い合わせ"] = [query_rows(q) for q in p.queries]
-    spec["トリガ"] = [(tg.name, f"{k} {fmt_cause(k, key)}", d) for tg in p.triggers for k, key, d in tg.causes]
+    spec["トリガ"] = [(tg.name, f"{ja_kind(k)} {fmt_cause(k, key)}", d) for tg in p.triggers for k, key, d in tg.causes]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     spec["出来事"] = [(ev.name, (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
@@ -133,10 +142,10 @@ def flow_diagram(fl) -> list[str]:
         return ids[key]
 
     def dest(d: str) -> str:
-        if d == "応答":
-            return node("応答", "応答（reply）", "([{}])")
-        if d.startswith("待つ "):
-            return node(d, "待つ " + d[3:], "[[{}]]")
+        if d == "reply":
+            return node("reply", "応答（reply）", "([{}])")
+        if d.startswith("wait "):
+            return node(d, "待つ " + d[5:], "[[{}]]")
         return node("処理:" + d, d)
 
     for proc, routes in fl.entries:

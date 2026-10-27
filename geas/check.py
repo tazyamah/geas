@@ -330,7 +330,7 @@ class Checker:
                 names = [v for v, _ in routes]
                 rm = route_map(routes)
                 for v, ds in rm.items():
-                    if len(ds) > 1 and any(d == "応答" or d.startswith("待つ ") for d in ds):
+                    if len(ds) > 1 and any(d == "reply" or d.startswith("wait ") for d in ds):
                         self.d(ERROR, "行き先", where, f"結果「{v}」の行き先が複数あります。応答（reply）と待つ（wait）は、par に入れられません")
                     for d in dict.fromkeys(d for d in ds if ds.count(d) > 1):
                         self.d(ERROR, "行き先", where, f"結果「{v}」の行き先「{d}」が2回書かれています")
@@ -354,12 +354,12 @@ class Checker:
                                 self.d(ERROR, "並列", where, f"par の枝「{d}」は、データを書いています（{'、'.join(sorted(info.writes))}）。"
                                        "par の枝は、読むことと外部作用の要求だけにして、書き込みは応答を受ける別の処理に回してください")
                 for v, dest in routes:
-                    base = dest.split(" ", 1)[1] if dest.startswith("待つ ") else dest
-                    if dest.startswith("待つ "):
+                    base = dest.split(" ", 1)[1] if dest.startswith("wait ") else dest
+                    if dest.startswith("wait "):
                         self.check_wait(where, proc, base)
-                    elif base != "応答" and base not in self.procs:
+                    elif base != "reply" and base not in self.procs:
                         self.d(ERROR, "行き先", where, f"結果「{v}」の行き先「{base}」が未定義の処理です")
-                    elif base != "応答" and rdef:
+                    elif base != "reply" and rdef:
                         self.check_pass(where, rdef, v, self.procs[base])
         for name in self.procs:
             if name not in in_flow:
@@ -373,7 +373,7 @@ class Checker:
         for fl in self.p.flows:
             for proc, routes in fl.entries:
                 for _, d in routes:
-                    if d.startswith("待つ "):
+                    if d.startswith("wait "):
                         waits.setdefault(proc, set()).add(d.split(" ", 1)[1])
         triggers = {t.name: t for t in self.p.triggers}
         used = {e for info in self.infos.values() for e, _ in info.effects}
@@ -393,7 +393,7 @@ class Checker:
                     continue
                 for tname in sorted(waits[proc]):
                     tg = triggers.get(tname)
-                    answered = {key for k, key, _ in tg.causes if k == "応答"} if tg else set()
+                    answered = {key for k, key, _ in tg.causes if k == "reply"} if tg else set()
                     for reason in decl.failures:
                         if reason not in answered:
                             self.d(ERROR, "失敗", f"処理 {proc}", f"外部作用 {eff} の失敗の理由「{reason}」への応答が、トリガ {tname} にありません")
@@ -532,20 +532,20 @@ class Checker:
         waited = set()
         for fl in self.p.flows:
             for _, routes in fl.entries:
-                waited |= {d.split(" ", 1)[1] for _, d in routes if d.startswith("待つ ")}
+                waited |= {d.split(" ", 1)[1] for _, d in routes if d.startswith("wait ")}
         names = [t.name for t in self.p.triggers]
         for tg in self.p.triggers:
             where = f"トリガ {tg.name}"
             if names.count(tg.name) > 1:
                 self.d(ERROR, "トリガ", where, "同じ名前のトリガが複数あります")
-            deadlines = [key for k, key, _ in tg.causes if k == "期限"]
+            deadlines = [key for k, key, _ in tg.causes if k == "deadline"]
             if len(deadlines) > 1:
                 self.d(ERROR, "トリガ", where, "期限が複数あります（先に起きた方が勝つので、長い方は起きません）")
             if any(int(x) <= 0 for x in deadlines):
                 self.d(ERROR, "トリガ", where, "期限は0より長くしてください")
-            if not any(k == "期限" for k, _, _ in tg.causes):
+            if not any(k == "deadline" for k, _, _ in tg.causes):
                 self.d(ERROR, "トリガ", where, "期限がありません（待ち続けないよう、期限と期限切れの行き先が必要です）")
-            if not any(k == "応答" for k, _, _ in tg.causes):
+            if not any(k == "reply" for k, _, _ in tg.causes):
                 self.d(WARN, "トリガ", where, "解く応答がありません（期限切れでしか終わらない待ちです）")
             seen = set()
             for k, key, dest in tg.causes:

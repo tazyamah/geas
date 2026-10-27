@@ -183,7 +183,7 @@ def to_j(t: Type, x: str) -> str:
 CALL_WASM = r'''#[no_mangle]
 pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
     let s = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) };
-    ret(match call(s) { Ok(x) => x, Err(e) => format!("{{\"エラー\":{}}}", js_str(&e)) })
+    ret(match call(s) { Ok(x) => x, Err(e) => format!("{{\"error\":{}}}", js_str(&e)) })
 }
 '''
 
@@ -195,12 +195,12 @@ def definitions(ck: Checker) -> dict:
         for proc, routes in fl.entries:  # 行き先が1つなら文字列、複数なら書いた順の配列
             flows.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else ds for v, ds in route_map(routes).items()})
     return {
-        "処理": {x.name: {"入力": [n for n, _ in x.inputs], "参照": [n for n, _ in x.refs], "採番": sorted(set(ck.infos[x.name].new_ids))} for x in p.processes},
-        "問い合わせ": {q.name: {"入力": [n for n, _ in q.inputs], "参照": [n for n, _ in q.refs]} for q in p.queries},
-        "フロー": flows,
-        "出来事": {ev.name: [{"種別": k, "問い合わせ": q, "処理": d} for k, q, d in ev.steps] for ev in p.events},
-        "トリガ": [{"名前": t.name, "引数": [n for n, _ in t.params],
-                  "要因": [{"種別": k, "キー": key, "秒": int(key) if k == "期限" else None, "行き先": d} for k, key, d in t.causes]} for t in p.triggers],
+        "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids))} for x in p.processes},
+        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
+        "flows": flows,
+        "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
+        "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
+                  "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
     }
 
 
@@ -234,7 +234,7 @@ def host_source(ck: Checker) -> str:
         pat = ", ".join(names + ["idem_key"])
         args = ",".join(f'{{}}:{{}}' for _ in names)
         vals = ", ".join(f'js_str("{n}"), {to_j(t, n)}' for n, t in e.params)
-        w(f'        Effect::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"名前\\":{{}},\\"引数\\":{{{{{args}}}}},\\"idem_key\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(idem_key)),')
+        w(f'        Effect::{e.name.replace(".", "_")} {{ {pat} }} => format!("{{{{\\"name\\":{{}},\\"args\\":{{{{{args}}}}},\\"idem_key\\":{{}}}}}}", js_str("{e.name}"), {vals}, js_str(idem_key)),')
     w("    }\n}")
     # 結果の中身（名前つき）。ネクサスの次の処理へは、これをそのまま入力として渡す
     for r in p.results:
@@ -250,13 +250,13 @@ def host_source(ck: Checker) -> str:
         w("    }\n}")
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
-      '    format!("{{\\"結果\\":{},\\"引数\\":{},\\"中身\\":{},\\"外部\\":[{}],\\"保存\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
+      '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}],\\"store\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
     has_parts = any(pt.body is None for pt in p.parts)
     w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n    match name {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
         n = proc.name
-        cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("新{d}ID")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
+        cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("new_{d}_id")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         if info.parts:  # 部品の保証違反は panic で処理を止める。書込を適用する前なので、保存は変わらない
@@ -275,8 +275,8 @@ def host_source(ck: Checker) -> str:
         w(f'            Ok(write_result("一覧", {n}(&c, Store, &i){shown}, "{{}}".to_string(), vec![], Store))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
     w(f"pub fn call(request: &str{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n"
-      '    let r = parse(request)?;\n    let mut s = read_store(r.get("保存")?)?;\n'
-      f'    call_inner(r.get("名前")?.as_str()?, r.get("文脈")?, r.get("入力")?, &mut s{", parts" if has_parts else ""})\n}}')
+      '    let r = parse(request)?;\n    let mut s = read_store(r.get("store")?)?;\n'
+      f'    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s{", parts" if has_parts else ""})\n}}')
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
     w(f'pub const DEFS_JSON: &str = r####"{defs}"####;')
     w(r'''
