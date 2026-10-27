@@ -70,8 +70,8 @@ pub fn 照合(s: &str, 大小: bool, かな: bool, 幅: bool) -> String {
 pub fn 集合表示(s: &BTreeSet<String>) -> String {
     format!("{{{}}}", s.iter().cloned().collect::<Vec<_>>().join(","))
 }
-pub fn 写像表示<V: Display>(m: &BTreeMap<String, V>) -> String {
-    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, v)).collect::<Vec<_>>().join(","))
+pub fn 写像表示<V>(m: &BTreeMap<String, V>, 表示: impl Fn(&V) -> String) -> String {
+    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, 表示(v))).collect::<Vec<_>>().join(","))
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum 行き先 {
@@ -167,10 +167,10 @@ impl 保存 {
         for id in self.Customer.keys() { if !後.Customer.contains_key(id) { out.push(format!("Customer({})削除", id)); } }
         for (id, r) in &後.Order {
             match self.Order.get(id) {
-                None => out.push(format!("Order({})新規(customer={}, items={}, total={}, status={})", id, r.customer, 写像表示(&r.items), r.total, r.status.名前())),
+                None => out.push(format!("Order({})新規(customer={}, items={}, total={}, status={})", id, r.customer, 写像表示(&r.items, |v| format!("{}", v)), r.total, r.status.名前())),
                 Some(b) => {
                     if b.customer != r.customer { out.push(format!("Order({}).customer:{}→{}", id, b.customer, r.customer)); }
-                    if b.items != r.items { out.push(format!("Order({}).items:{}→{}", id, 写像表示(&b.items), 写像表示(&r.items))); }
+                    if b.items != r.items { out.push(format!("Order({}).items:{}→{}", id, 写像表示(&b.items, |v| format!("{}", v)), 写像表示(&r.items, |v| format!("{}", v)))); }
                     if b.total != r.total { out.push(format!("Order({}).total:{}→{}", id, b.total, r.total)); }
                     if b.status != r.status { out.push(format!("Order({}).status:{}→{}", id, b.status.名前(), r.status.名前())); }
                 }

@@ -1868,3 +1868,47 @@ def test_小文字の名前は組み込みや予約語と同じにできない()
 
 def test_名前の規則は_チェックの関数では既定で見ない():
     assert chk("ltype 点数 = int 0..\n").ok
+
+
+# ---- id → 値（キーが entity のキーに限られない、読み取り専用の値の入れ物）----
+IDMAP = """ltype Dots = int 0..100
+ltype Pos { x: Dots, y: Dots optional }
+ltype Table = id → Pos
+result Shown {
+  Big
+  Small
+}
+deed show {
+  input table: Table required
+  result Shown
+  effects none
+
+  let n = sum { v.x | (k, v) in table }
+  if n > 6 { return Big }
+  return Small
+}
+nexus Flow {
+  show: Big → reply, Small → reply
+}
+"""
+
+
+def test_id_から値への写像は_entity_を介さず書ける():
+    ck = strict(IDMAP)
+    assert ck.ok, ck.diags
+
+
+def test_id_の写像も_ltype_で名前を付けてから使う():
+    with pytest.raises(ParseError, match="ltype"):
+        parse(mutate(IDMAP, "input table: Table required", "input table: id → Pos required"))
+
+
+@needs_cargo
+def test_id_の写像の値は合成型でも_ホストから受け取って足せる(tmp_path):
+    ck = strict(IDMAP)
+    assert ck.ok, ck.diags
+    req = '{"名前":"show","文脈":{},"入力":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}}},"保存":{}}'
+    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::呼ぶ(r#"{req}"#).unwrap());\n}}\n', tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6

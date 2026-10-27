@@ -78,8 +78,8 @@ pub fn 照合(s: &str, 大小: bool, かな: bool, 幅: bool) -> String {
 pub fn 集合表示(s: &BTreeSet<String>) -> String {
     format!("{{{}}}", s.iter().cloned().collect::<Vec<_>>().join(","))
 }
-pub fn 写像表示<V: Display>(m: &BTreeMap<String, V>) -> String {
-    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, v)).collect::<Vec<_>>().join(","))
+pub fn 写像表示<V>(m: &BTreeMap<String, V>, 表示: impl Fn(&V) -> String) -> String {
+    format!("{{{}}}", m.iter().map(|(k, v)| format!("{}:{}", k, 表示(v))).collect::<Vec<_>>().join(","))
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum 行き先 {
@@ -176,7 +176,7 @@ def show_expr(t: Type, x: str) -> str:
     if k == "合成":
         return f'format!("{{:?}}", &{x})'
     if k == "写像":
-        return f"写像表示(&{x})"
+        return f"写像表示(&{x}, |v| format!(\"{{}}\", {show_expr(t.value, 'v')}))"
     if k == "集合":
         return f"集合表示(&{x})"
     if k == "バイト列":

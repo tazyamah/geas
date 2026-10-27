@@ -198,10 +198,10 @@ class Checker:
             self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です")
         if t.kind == "名前" and t.target not in self.states:
             self.d(ERROR, "名前", where, f"型「{t.target}」が未定義です")
-        if t.kind == "写像" and t.key not in self.data:
+        if t.kind == "写像" and t.key != "id" and t.key not in self.data:
             self.d(ERROR, "名前", where, f"キーのデータ「{t.key}」が未定義です")
         if t.kind in ("写像", "集合") and t.value is not None:
-            self.check_type(t.value, where)
+            self.check_type(t.value, where, comp_ok)
 
     def check_unique(self, names, where, what):
         for n in dict.fromkeys(n for n in names if names.count(n) > 1):
