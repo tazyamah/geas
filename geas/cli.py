@@ -76,10 +76,9 @@ def main(argv=None) -> int:
     r.add_argument("-o", required=True)
     r.add_argument("--plan", help="具体例の実行用 bin も生成する")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
-    k = sub.add_parser("package", help="モジュールのパッケージ（インターフェースと crate）を作る")
+    k = sub.add_parser("package", help="モジュールのパッケージ（ソースとインターフェース）を作る")
     k.add_argument("code")
     k.add_argument("-o", required=True)
-    k.add_argument("--no-source", action="store_true", help="ソースを同梱しない（ソース付きを強く推す。ソースなしは、使う側で警告される）")
     m = sub.add_parser("compare", help="plan の仕様書（①）とコードの突合。具体例も実行する")
     m.add_argument("code")
     m.add_argument("plan")
@@ -91,13 +90,11 @@ def main(argv=None) -> int:
         return run_interview(a)
     if a.cmd == "package":
         try:
-            iface, digest = build_package(Path(a.code), Path(a.o), a.no_source)
+            iface, digest = build_package(Path(a.code), Path(a.o))
         except (ParseError, LexError, ModuleError, PackageError) as e:
             print(f"パッケージを作れません: {e}", file=sys.stderr)
             return 1
         print(f"作りました: {iface}\nパッケージのハッシュ（使う側が固定する）: sha256 {digest}")
-        if a.no_source:
-            print("注意: ソースを同梱していません。使う側には、中身を確かめられない警告が出ます。")
         return 0
     ck = load(a.code)
     if a.cmd == "check":

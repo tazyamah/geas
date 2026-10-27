@@ -83,12 +83,11 @@ class Part:
     guarantee: object
     line: int = 0
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
-    extern_crate: Optional[str] = None  # ソースなしのパッケージの変換：定義はこの crate の関数にある（本体と保証は無い。宣言の戻り値の範囲を信じる）
 
     @property
     def external(self) -> bool:
-        """アプリが実装する部品（本体が無く、パッケージの変換でもない）"""
-        return self.body is None and self.extern_crate is None
+        """アプリが実装する部品（本体が無い）"""
+        return self.body is None
 
 
 @dataclass
@@ -181,9 +180,6 @@ class Program:
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     ltype_defs: dict = field(default_factory=dict)  # 論理型の名前 → 型（パッケージのインターフェースに出す）
-    extern_names: set = field(default_factory=set)  # ソースなしのパッケージで定義された名前（定義は、パッケージの crate にある）
-    extern_crates: list = field(default_factory=list)  # ソースなしのパッケージの crate：(crate 名, crate の場所)
-    sourceless: list = field(default_factory=list)  # ソースなしで取り込んだパッケージ：(モジュール名, version, ハッシュ, 警告を消したか)
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
 
     def resolve(self, text: str, names) -> str:

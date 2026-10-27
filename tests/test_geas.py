@@ -2091,7 +2091,7 @@ def test_表示名の無い名前は警告で教える(tmp_path):
 
 
 # ---- モジュールのパッケージ ----
-def test_パッケージはインターフェースとcrateとソースを出し_ハッシュが合う(tmp_path):
+def test_パッケージはインターフェースとソースを出し_ハッシュが合う(tmp_path):
     import hashlib
     import json
 
@@ -2104,18 +2104,14 @@ def test_パッケージはインターフェースとcrateとソースを出し
     assert j["ltypes"]["Geo_Dots"]["range"] == {"lo": 0, "hi": 100}  # 下限の 0 を落とさない
     assert j["converts"][0]["name"] == "Geo_same" and "body" not in j["converts"][0]  # 中身は出さない
     assert j["source_sha256"] == hashlib.sha256((tmp_path / "geo.geas").read_bytes()).hexdigest()
-    lib = (tmp_path / "out" / "crate" / "src" / "lib.rs").read_text()
-    assert j["crate_sha256"] == hashlib.sha256(lib.encode()).hexdigest() and "pub struct Geo_Pos" in lib
+    assert not (tmp_path / "out" / "crate").exists()  # 使う側がソースから生成するので、crate は出さない
     assert digest == hashlib.sha256(iface.read_bytes()).hexdigest()
-    assert (tmp_path / "out" / "geo.geas").exists()  # 既定でソースを同梱する
+    assert (tmp_path / "out" / "geo.geas").exists()  # ソースは必ず同梱する
 
 
-def test_パッケージはソースを外せるが_検査のエラーと取り込むモジュールは断る(tmp_path):
+def test_パッケージは検査のエラーと取り込むモジュールを断る(tmp_path):
     from geas.package import PackageError, build_package
 
-    mod_dir(tmp_path, geo=GEO)
-    build_package(tmp_path / "geo.geas", tmp_path / "out", no_source=True)
-    assert not (tmp_path / "out" / "geo.geas").exists()
     mod_dir(tmp_path, bad=GEO.replace("module Geo", "module Bad").replace("Dots", "dots"))
     with pytest.raises(PackageError, match="検査にエラー"):
         build_package(tmp_path / "bad.geas", tmp_path / "o2")
@@ -2124,11 +2120,11 @@ def test_パッケージはソースを外せるが_検査のエラーと取り�
         build_package(tmp_path / "user.geas", tmp_path / "o3")
 
 
-def pkg_app(tmp_path, sha, no_source=False, path="out/geo.geasi"):
+def pkg_app(tmp_path, sha, path="out/geo.geasi"):
     from geas.package import build_package
 
     mod_dir(tmp_path, geo=GEO)
-    _, digest = build_package(tmp_path / "geo.geas", tmp_path / "out", no_source=no_source)
+    _, digest = build_package(tmp_path / "geo.geas", tmp_path / "out")
     app = GEO_APP.replace('use "geo.geas"', f'use "{path}" sha256 "{sha or digest}"' if sha != "" else f'use "{path}"')
     (tmp_path / "app.geas").write_text(app)
     return digest
@@ -2154,106 +2150,10 @@ def test_パッケージのハッシュが無い_違う_ソースが変わると
         parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
 
 
-TYPES_ONLY = """module Geo
-
-/// 位置の数
-ltype Dots = int 0..100
-/// 位置
-ltype Pos { x: Dots, y: Dots optional }
-/// 判定
-result Verdict {
-  Big
-  Small
-}
-"""
-TYPES_APP = """use "out/geo.geasi" sha256 "{sha}"{tail}
-
-ltype Table = id → Geo.Pos
-ltype Limit = int 0..1000
-deed show {
-  input table: Table required, limit: Limit required
-  result Geo.Verdict
-  effects none
-
-  let n = sum { v.x | (k, v) in table }
-  if n > limit { return Big }
-  return Small
-}
-nexus Flow {
-  show: Big → reply, Small → reply
-}
-"""
-
-
-def sourceless_app(tmp_path, tail=""):
-    from geas.package import build_package
-
-    mod_dir(tmp_path, geo=TYPES_ONLY)
-    _, digest = build_package(tmp_path / "geo.geas", tmp_path / "out", no_source=True)
-    (tmp_path / "app.geas").write_text(TYPES_APP.replace("{sha}", digest).replace("{tail}", tail))
-
-
-def test_ソースなしのパッケージは型と結果の形だけ取り込め_警告が出る(tmp_path):
-    sourceless_app(tmp_path)
-    ck = load_strict(tmp_path)
-    assert ck.ok, ck.diags
-    assert [d.code for d in ck.diags if d.code == "パッケージ"] and "確かめられません" in str(ck.diags)
-    assert ck.p.extern_names == {"Geo_Dots", "Geo_Pos", "Geo_Verdict"}
-    sourceless_app(tmp_path, " sourceless")  # 承知のうえなら警告を消せる
-    assert not [d for d in load_strict(tmp_path).diags if d.code == "パッケージ"]
-
-
-@needs_cargo
-def test_ソースなしのパッケージの型を使ったコードがビルドでき_動く(tmp_path):
-    sourceless_app(tmp_path, " sourceless")
-    ck = load_strict(tmp_path)
-    assert ck.ok, ck.diags
-    req = '{"name":"show","ctx":{},"input":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"store":{}}'
-    out = tmp_path / "crate"
-    out.mkdir()
-    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', out, host=True)
-    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=out, capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr[-1500:]
-    assert "Big" in r.stdout, r.stdout  # 3 + 4 = 7 > 6
-
-
-@needs_cargo
-def test_ソースなしのパッケージの変換も呼べる(tmp_path):
-    pkg_app(tmp_path, None, no_source=True)  # GEO には変換 same がある。GEO_APP が呼ぶ
-    app = (tmp_path / "app.geas").read_text().replace('"\n', '" sourceless\n', 1)
-    (tmp_path / "app.geas").write_text(app)
-    ck = load_strict(tmp_path)
-    assert ck.ok, ck.diags
-    assert ck.p.parts[0].extern_crate == "geas_mod_geo"
-    req = '{"name":"show","ctx":{},"input":{"table":{"a":{"x":3,"y":null},"b":{"x":4,"y":5}},"limit":6},"store":{}}'
-    out = tmp_path / "crate"
-    out.mkdir()
-    write_crate(ck, generate(ck), f'fn main() {{\n    println!("{{}}", geas_app::host::call(r#"{req}"#).unwrap());\n}}\n', out, host=True)
-    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=out, capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr[-1500:]
-    assert "Big" in r.stdout, r.stdout
-
-
-def test_ソースなしのパッケージの部品と処理は今は使えず_sha256は_geas_には付けられない(tmp_path):
-    from geas.package import build_package
-
-    mod_dir(tmp_path, judge="""module Judge
-
-ltype Score = int 0..100
-result Verdict {
-  Pass
-}
-deed grade {
-  input score: Score required
-  result Verdict
-  effects none
-
-  return Pass
-}
-""")
-    _, digest = build_package(tmp_path / "judge.geas", tmp_path / "out", no_source=True)
-    (tmp_path / "app.geas").write_text(f'use "out/judge.geasi" sha256 "{digest}"\n')
-    with pytest.raises(ModuleError, match="部品・処理は、ソースなしではまだ使えません"):
+def test_ソースの無いパッケージは使えない_sha256は_geas_には付けられない(tmp_path):
+    pkg_app(tmp_path, None)
+    (tmp_path / "out" / "geo.geas").unlink()  # 配り手がソースを付けなかった
+    with pytest.raises(ModuleError, match="ソースを公開しないモジュールは使えません"):
         parse((tmp_path / "app.geas").read_text(), tmp_path / "app.geas")
     mod_dir(tmp_path, geo=GEO, app=GEO_APP.replace('"geo.geas"', '"geo.geas" sha256 "abc"'))
     with pytest.raises(ModuleError, match="パッケージ（.geasi）の取り込みだけ"):
