@@ -475,3 +475,53 @@ event Reconnected {
 
 invariant Product: stock >= 0
 invariant Order: status == PaymentRequested implies total > 0
+
+/// 商品一覧の画面
+screen ProductList {
+  show product_list
+  open OrderForm
+  design {
+    layout grid
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 注文の画面
+screen OrderForm(product_id: id) {
+  field customer_id, items, ship_to
+  action place_order {
+    Received → MyOrders
+    OutOfStock → stay
+    NoSuchProduct → stay
+    OtherCurrency → stay
+    NoSuchCustomer → stay
+  }
+  design {
+    layout form
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 注文の履歴の画面
+screen MyOrders {
+  field customer
+  show orders_of
+  design {
+    layout list
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 価格の確認の画面（Chrome 拡張）
+screen PriceCheck entry {
+  field jan
+  show price_by_jan
+  design {
+    layout stack
+    accent "#e47911"
+    mode dark
+  }
+}

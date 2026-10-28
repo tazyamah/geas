@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """検査器。型の推論つき。宣言（読む・書く・遷移・外部・結果）と本体のずれ、
 行き先の漏れ、丸めの指定漏れ、冪等キーの漏れなどを見つける。"""
+import re
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import ceil, floor
@@ -193,6 +194,7 @@ class Checker:
         self.check_triggers()
         self.check_effect_waits()
         self.check_events()
+        self.check_screens()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -319,7 +321,7 @@ class Checker:
     def check_defs(self):
         p = self.p
         # 生成するコードでは、データ・状態・結果・処理・問い合わせ・トリガ・ネクサス・出来事は同じ名前の空間に並ぶ
-        tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events, p.parts) for x in xs]
+        tops = [x.name for xs in (p.data, p.states, p.results, p.processes, p.queries, p.triggers, p.flows, p.events, p.screens, p.parts) for x in xs]
         tops += [c.target for c in p.composites]
         self.check_unique(tops, "全体", "定義の名前")
         self.check_unique([e.name for e in p.effects], "全体", "外部作用")
@@ -747,6 +749,91 @@ class Checker:
                 key = self.key_field(dt.name)
                 if [(n, show_type(t)) for n, t in proc.inputs] != [(key.name, "ID")]:
                     self.d(ERROR, "出来事", where, f"「each {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
+
+    DESIGN_KEYS = {"layout": {"stack", "list", "grid", "form"}, "mode": {"light", "dark"}, "accent": None}
+
+    def check_screens(self):
+        """画面の検査。見せる問い合わせ・呼ぶ処理・行き先が実在し、処理の入力が入力欄か受け取る値で埋まり、
+        結果の種類ごとの行き先に漏れがないこと。最初に宣言した画面から行けない画面は警告。見た目の指定（design）は形だけ確かめる。"""
+        scr = {s.name: s for s in self.p.screens}
+        edges: dict[str, set[str]] = {s.name: set() for s in self.p.screens}
+        for sc in self.p.screens:
+            where = f"画面 {sc.name}"
+            if not (sc.shows or sc.actions or sc.opens):
+                self.d(WARN, "画面", where, "見せるものも、操作もありません")
+            covered: set[str] = set()
+            have = {n for n, _ in sc.params}
+            for qn in sc.shows:
+                q = self.queries.get(qn)
+                if q is None:
+                    self.d(ERROR, "画面", where, f"見せる問い合わせ「{qn}」が未定義です")
+                    continue
+                for n, ty in q.inputs:
+                    covered.add(n)
+                    if n not in have and n not in sc.fields and not ty.optional:
+                        self.d(ERROR, "画面", where, f"問い合わせ {qn} の入力「{n}」を埋めるものがありません（field か画面の受け取る値に書いてください）")
+            for tn in sc.opens:
+                t = scr.get(tn)
+                if t is None:
+                    self.d(ERROR, "画面", where, f"開く画面「{tn}」が未定義です")
+                    continue
+                edges[sc.name].add(tn)
+                if not sc.shows:
+                    self.d(ERROR, "画面", where, f"「open {tn}」は、見せる問い合わせの行を選んだときの行き先なので、show が要ります")
+                if len(t.params) > 1 or any(ty.kind != "ID" for _, ty in t.params):
+                    self.d(ERROR, "画面", where, f"画面 {tn} は、行を選んで開かれるので、受け取る値は ID 1つだけにしてください")
+            for dn, routes in sc.actions:
+                proc = self.procs.get(dn)
+                if proc is None:
+                    self.d(ERROR, "画面", where, f"操作の処理「{dn}」が未定義です")
+                    continue
+                for n, ty in proc.inputs:
+                    covered.add(n)
+                    if n not in have and n not in sc.fields and not ty.optional:
+                        self.d(ERROR, "画面", where, f"処理 {dn} の入力「{n}」を埋めるものがありません（field か画面の受け取る値に書いてください）")
+                rdef = self.results.get(proc.result)
+                variants = dict(rdef.variants) if rdef else {}
+                seen = [v for v, _ in routes]
+                for v in variants:
+                    if v not in seen:
+                        self.d(ERROR, "画面", f"{where} / {dn}", f"結果「{v}」の行き先がありません")
+                for v, dest in routes:
+                    if v not in variants:
+                        self.d(ERROR, "画面", f"{where} / {dn}", f"「{v}」は処理 {dn} の結果の種類ではありません")
+                    if seen.count(v) > 1:
+                        self.d(ERROR, "画面", f"{where} / {dn}", f"結果「{v}」の行き先が複数あります")
+                    if dest in ("stay", "back"):
+                        continue
+                    t = scr.get(dest)
+                    if t is None:
+                        self.d(ERROR, "画面", f"{where} / {dn}", f"行き先「{dest}」が、画面でも stay／back でもありません")
+                        continue
+                    edges[sc.name].add(dest)
+                    avail = have | {n for n, _ in proc.inputs} | {n for n, _ in variants.get(v, [])}
+                    for n, _ in t.params:
+                        if n not in avail:
+                            self.d(ERROR, "画面", f"{where} / {dn}", f"行き先の画面 {dest} が受け取る「{n}」を、この結果から渡せません")
+            for f in sc.fields:
+                if f not in covered:
+                    self.d(ERROR, "画面", where, f"入力欄「{f}」は、どの操作の処理の入力でもありません")
+            for k, v in sc.design.items():
+                if k not in self.DESIGN_KEYS:
+                    self.d(ERROR, "画面", where, f"design の「{k}」は使えません（layout／mode／accent）")
+                elif k == "accent":
+                    if not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+                        self.d(ERROR, "画面", where, f"design の accent は \"#rrggbb\" の形で書きます（\"{v}\"）")
+                elif v not in self.DESIGN_KEYS[k]:
+                    self.d(ERROR, "画面", where, f"design の {k} は {'／'.join(sorted(self.DESIGN_KEYS[k]))} のどれかです（{v}）")
+        if self.p.screens:
+            reach, todo = set(), [x.name for i, x in enumerate(self.p.screens) if i == 0 or x.entry]
+            while todo:
+                x = todo.pop()
+                if x not in reach:
+                    reach.add(x)
+                    todo += edges.get(x, ())
+            for sc in self.p.screens:
+                if sc.name not in reach:
+                    self.d(WARN, "画面", f"画面 {sc.name}", f"入口の画面から行けません（別の入口なら entry を付けてください）")
 
     def check_states(self):
         for s in self.p.states:

@@ -176,6 +176,22 @@ class Event:
 
 
 @dataclass
+class Screen:
+    """画面。見せるもの（問い合わせの結果）、入力欄、押すと呼ぶ処理と結果ごとの行き先、行を選んだときの行き先を持つ。
+    design は見た目の指定（配置・色）で、計画書との突合には含めず、画面デザインの文書とモックにだけ使う。
+    最初に宣言した画面と、entry と付けた画面が入口。"""
+    name: str
+    params: list[tuple[str, Type]] = field(default_factory=list)  # 遷移元から渡される値
+    shows: list[str] = field(default_factory=list)  # 見せる問い合わせ
+    opens: list[str] = field(default_factory=list)  # 結果の行を選んだときに開く画面
+    fields: list[str] = field(default_factory=list)  # 入力欄（呼ぶ処理の入力の名前）
+    actions: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)  # (処理, [(結果の種類, 行き先)])。行き先は画面名か stay／back
+    design: dict = field(default_factory=dict)
+    entry: bool = False  # 別の入口（拡張など、ほかの画面から来ない画面）。最初に宣言した画面も入口
+    line: int = 0
+
+
+@dataclass
 class Program:
     data: list[Data] = field(default_factory=list)
     states: list[State] = field(default_factory=list)
@@ -189,6 +205,7 @@ class Program:
     replies: list[ReplyDef] = field(default_factory=list)
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
+    screens: list[Screen] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）

@@ -125,6 +125,11 @@ def build_raw(ck: Checker) -> dict:
     spec["合流"] = [(e.name, e.joins) for e in p.effects if e.joins]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     spec["出来事"] = [(ev.name, (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
+    spec["画面"] = [(sc.name, ", ".join(sc.shows), ", ".join(sc.fields), ", ".join(n for n, _ in sc.params), "○" if i == 0 or sc.entry else "")
+                  for i, sc in enumerate(p.screens)]
+    spec["画面遷移"] = [(sc.name, "行を選ぶ", "", t) for sc in p.screens for t in sc.opens] + \
+                     [(sc.name, dn, v, {"stay": "そのまま", "back": "戻る"}.get(dest, dest)) for sc in p.screens for dn, rs in sc.actions for v, dest in rs]
+    spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee) if pt.body is None else "= " + show(pt.body))
                   for pt in p.parts]
@@ -206,6 +211,13 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["出来事"]:
         out += ["", "## 出来事（外の出来事をきっかけに起こす処理）", "", "| 出来事 | ◆起こし方 | ◆処理 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["出来事"]]
+    if spec["画面"]:
+        out += ["", "## 画面（入口は最初の画面と entry の画面）", "", "| 画面 | ◆見せる | ◆入力欄 | ◆受け取る値 | ◆入口 |", "|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["画面"]]
+        out += ["", "## 画面遷移", "", "| 画面 | ◆操作 | ◆結果 | ◆行き先 |", "|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
+        out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["画面デザイン"]]
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")
