@@ -19,12 +19,19 @@ const base = process.argv[2] || "http://localhost:8787";
   // 商品を選ぶと注文の画面が開き、その商品の通貨になる
   await p.click('[data-row="tea-jp"] [data-open="OrderForm"]');
   await p.waitForSelector('[data-screen="OrderForm"] [data-row]');
+  assert.ok(p.url().endsWith("/orders/new#product_id=tea-jp"), "画面の URL はリソースの URL（受け取る値はフラグメント）: " + p.url());
   assert.strictEqual(await p.locator('[data-slot="currency"] button.on').getAttribute("data-slotval"), "JPY");
   assert.strictEqual(await p.locator('#screen [data-row]').count(), 4, "円の商品は4つ");
   assert.strictEqual(await p.locator('[data-qty="tea-jp"]').innerText(), "1", "選んだ商品は1個で始まる");
 
   // 通貨を切り替えると、その通貨の商品だけになる
   const rows = async (n) => p.waitForFunction((n) => document.querySelectorAll("#screen [data-row]").length === n, n, { timeout: 5000 });
+  // URL を直接開いても同じ画面になる（形式 html）
+  const q = await ctx.newPage();
+  await q.goto(base + "/orders/new#product_id=tea-jp");
+  await q.waitForSelector('[data-screen="OrderForm"] [data-row]');
+  assert.strictEqual(await q.locator('[data-qty="tea-jp"]').innerText(), "1");
+  await q.close();
   await p.click('[data-slotval="USD"]');
   await rows(3); // ドルの商品は3つ
   assert.ok((await p.locator('#screen [data-col="price"]').first().innerText()).includes("$"));

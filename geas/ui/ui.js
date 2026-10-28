@@ -14,7 +14,7 @@ let qty = {};                      // 写像の入力欄 → {行のID: 数}
 
 let ROUTE = {};                    // 処理・問い合わせ・出来事の名前 → resource の URL（defs の routes）
 async function api(method, path, body, keep) {
-  const r = await fetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
   if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
   return j;
@@ -200,14 +200,35 @@ async function act(sc, a) {
 }
 
 // ---- 移動 ----
-function parseHash() {
-  const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
-  const name = S[path] ? path : D.screens.first;
-  return { name, params: Object.fromEntries(new URLSearchParams(qs || "")) };
+// 画面の URL は、リソースの URL（defs の screens[].url。例 /orders/new）。渡す値は、パスの :名前 か URL のフラグメント（#名前=値）に載せる（クエリ文字列は使わない）。
+// リソースに付かない画面だけ、/#/画面名 を使う。
+const pathNames = (url) => [...url.matchAll(/:([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+const patOf = (url) => new RegExp("^" + url.split("/").map((p) => (p.startsWith(":") ? "([^/]+)" : p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/") + "/?$");
+function parseLocation() {
+  const frag = location.hash.replace(/^#/, "");
+  if (frag.startsWith("/")) {
+    const [n, qs] = frag.slice(1).split("?");
+    if (S[n]) return { name: n, params: Object.fromEntries(new URLSearchParams(qs || "")) };
+  }
+  for (const [name, sc] of Object.entries(S)) {
+    const m = sc.url && patOf(sc.url).exec(location.pathname);
+    if (!m) continue;
+    const params = Object.fromEntries(new URLSearchParams(frag));
+    pathNames(sc.url).forEach((n, i) => { const v = decodeURIComponent(m[i + 1]); if (v !== ":" + n) params[n] = v; });  // 値が入っていないパス（:名前 のまま）は、渡された値なし
+    return { name, params };
+  }
+  return { name: D.screens.first, params: {} };
 }
-function go(name, params) { location.hash = `#/${name}` + (Object.keys(params).length ? "?" + new URLSearchParams(params) : ""); }
+function urlFor(name, params) {
+  const sc = S[name], rest = { ...params };
+  if (!sc.url) { const qs = new URLSearchParams(rest).toString(); return `/#/${name}` + (qs ? "?" + qs : ""); }
+  const path = sc.url.replace(/:([A-Za-z0-9_]+)/g, (m, n) => { if (!(n in rest)) return m; const v = rest[n]; delete rest[n]; return encodeURIComponent(v); });
+  const frag = new URLSearchParams(rest).toString();
+  return path + (frag ? "#" + frag : "");
+}
+function go(name, params) { history.pushState(null, "", urlFor(name, params)); return route(); }
 async function route() {
-  const next = parseHash();
+  const next = parseLocation();
   if (!cur || cur.name !== next.name) qty = {};
   cur = next;
   await render().catch((e) => notice("画面を作れません: " + e.message, "warn"));
@@ -239,7 +260,7 @@ const eventsOn = (when) => Object.entries(D.screens.events_on).filter(([, on]) =
 window.addEventListener("online", () => { $("#offline").hidden = true; eventsOn("online").forEach(fire); });
 window.addEventListener("offline", () => ($("#offline").hidden = false));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) eventsOn("opened").forEach(fire); });
-window.addEventListener("hashchange", route);
+window.addEventListener("popstate", route);
 
 // 見せている問い合わせは、状態が変わる（返事が届く）ので引き直す。入力中の欄には触らない
 setInterval(() => {
@@ -257,7 +278,7 @@ setInterval(() => {
   document.title = D.screens.title;
   $("#app-title").textContent = D.screens.title;
   $("#tabs").innerHTML = D.screens.order.map((n) => [n, S[n]]).filter(([, s]) => !s.params.length && s.entry === (s === S[D.screens.first])).map(([n, s]) => `<button data-screen="${n}">${esc(s.label)}</button>`).join("");
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (!navigator.onLine) $("#offline").hidden = false;
   eventsOn("opened").forEach(fire);
   await route();

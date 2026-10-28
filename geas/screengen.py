@@ -3,6 +3,7 @@
 画面のファイル（HTML・JS）は shop を知らない汎用のもの（geas/ui）で、ここで作る定義だけで動く。
 手で書く画面は無い。見た目（design）は、定義と Rust の定数 SCREENS に載り、サーバーの manifest（テーマ色）にも使われる。"""
 from .check import column_type
+from .rest import screen_url
 
 # 通貨ごとの最小単位の桁数（金額は最小単位の整数で持つ。check.CURRENCIES と同じ並び）
 CURRENCY_MINOR = {"JPY": 0, "USD": 2, "EUR": 2}
@@ -80,7 +81,7 @@ def screens_def(ck) -> dict:
                 if n in sc.slots and all(s["name"] != n for s in slots):
                     slots.append({"name": n, "label": show(n), **type_def(ck, t, show)})
         screens[sc.name] = {
-            "label": show(sc.name), "entry": sc.entry or sc.name == first,
+            "label": show(sc.name), "url": screen_url(p, sc), "entry": sc.entry or sc.name == first,
             "params": [{"name": n, "label": show(n)} for n, _ in sc.params],
             "shows": list(sc.shows), "opens": list(sc.opens),
             "fields": [{"name": f, "label": show(f), "from": sc.field_from.get(f), "type": field_type(ck, sc, f, show)} for f in sc.fields],
@@ -106,14 +107,14 @@ def rust_screens(ck) -> str:
     first = p.screens[0].name
     title = (p.title or show(first)).replace("\\", "\\\\").replace('"', '\\"')
     out = ["// 【画面】：screen の宣言。見た目（design）はここに載る。画面のファイルは汎用で、定義（DEFS_JSON の screens）で動く。",
-           "pub struct ScreenDef { pub name: &'static str, pub label: &'static str, pub entry: bool, pub layout: &'static str, pub accent: &'static str, pub mode: &'static str }",
+           "pub struct ScreenDef { pub name: &'static str, pub label: &'static str, pub url: &'static str, pub entry: bool, pub layout: &'static str, pub accent: &'static str, pub mode: &'static str }",
            f'pub const APP_TITLE: &str = "{title}";',
            "pub const screens: &[ScreenDef] = &["]
     for sc in p.screens:
         d = design_of(sc)
         label = show(sc.name).replace("\\", "\\\\").replace('"', '\\"')
         entry = "true" if sc.entry or sc.name == first else "false"
-        out.append(f'    ScreenDef {{ name: "{sc.name}", label: "{label}", entry: {entry}, layout: "{d["layout"]}", accent: "{d["accent"]}", mode: "{d["mode"]}" }},')
+        out.append(f'    ScreenDef {{ name: "{sc.name}", label: "{label}", url: "{screen_url(p, sc)}", entry: {entry}, layout: "{d["layout"]}", accent: "{d["accent"]}", mode: "{d["mode"]}" }},')
     out.append("];\n")
     return "\n".join(out)
 
