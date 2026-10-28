@@ -662,7 +662,27 @@ class Checker:
                     args.append((pn, pt))
         return args
 
+    MOCK_KINDS = ("ID", "参照", "文字列", "集合", "整数")
+
+    def check_replies(self):
+        """応答の結果の種類（outcome）と、外部作用が受ける応答。開発用の模擬が返事を作れること"""
+        reps = {x.name: x for x in self.p.replies}
+        for rp in self.p.replies:
+            where = f"応答 {rp.name}"
+            self.check_unique([n for n, _ in rp.outcomes], where, "結果の種類")
+            have = {n: t for n, t in rp.params}
+            for on, gives in rp.outcomes:
+                for g in gives:
+                    if g not in have:
+                        self.d(ERROR, "応答", where, f"結果の種類「{on}」の gives「{g}」は、応答の中身にありません")
+                    elif have[g].kind not in self.MOCK_KINDS:
+                        self.d(ERROR, "応答", where, f"中身「{g}」は、{have[g].kind} 型なので、模擬が値を作れません（ID・文字列・整数・集合だけ）")
+        for e in self.p.effects:
+            if e.replies is not None and e.replies not in reps:
+                self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
+
     def check_triggers(self):
+        self.check_replies()
         used = {x for tg in self.p.triggers for k, key, _ in tg.causes for x in (key.split(",") if k == "all" else [key] if k == "reply" else [])}
         for rp in self.p.replies:
             if rp.name not in used:

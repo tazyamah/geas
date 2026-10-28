@@ -66,6 +66,19 @@ const base = process.argv[2] || "http://localhost:8787";
   await p.waitForFunction(() => !document.querySelector('[data-row="knife-jp"]'), null, { timeout: 5000 });
   assert.strictEqual(await p.locator('[data-field="product_id"] option[value="knife-jp"]').count(), 0, "取り下げた商品は選ぶ元からも消える");
 
+  // 開発用の操作パネル（応答の結果の種類の宣言から生成）：結果の種類を選ぶと、模擬の設定に反映される
+  const t = await ctx.newPage();
+  await t.goto(base + "/test.html");
+  await t.waitForSelector('[data-reply="PaymentSettled"] [data-outcome]');
+  assert.deepStrictEqual(await t.locator('[data-reply="PaymentSettled"] option').allInnerTexts(), ["承認", "拒否"]);
+  await t.selectOption('[data-reply="PaymentSettled"] [data-outcome]', "Declined");
+  await t.click("#t-save");
+  const st = await t.evaluate(() => fetch("/api/test/state").then((r) => r.json()));
+  assert.strictEqual(st.settings.replies.PaymentSettled.outcome, "Declined");
+  await t.selectOption('[data-reply="PaymentSettled"] [data-outcome]', "Approved");
+  await t.click("#t-save");
+  await t.close();
+
   // サービスワーカーが殻を覚え、オフラインでも画面が開く
   await p.evaluate(() => navigator.serviceWorker.ready);
   await ctx.setOffline(true);

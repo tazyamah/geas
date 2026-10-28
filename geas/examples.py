@@ -186,6 +186,8 @@ def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bo
         (dest / "src" / "host.rs").write_text(host_source(ck))
         from .screengen import write_ui
         write_ui(ck, dest)
+        from .devgen import write_dev
+        write_dev(ck, dest)
     (dest / "src" / "bin" / "plan_examples.rs").write_text(runner_src)
 
 

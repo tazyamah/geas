@@ -41,3 +41,23 @@ def test_拡張の画面は問い合わせを1つ見せるだけ():
 def test_readerが無ければ生成を止める(tmp_path):
     r = subprocess.run([sys.executable, "-m", "geas", "rust", str(DIR / "overseas_shop.geas"), "-o", str(tmp_path / "o"), "--host"], capture_output=True, text=True)
     assert r.returncode == 1 and "--reader" in r.stderr
+
+
+def test_応答の結果の種類は検査され_模擬の定義になる():
+    from geas.hostgen import definitions
+    ck = chk(CODE)
+    m = definitions(ck)["mock"]
+    assert m["effects"]["Payment.charge"]["reply"] == "PaymentSettled"
+    assert [o["name"] for o in m["replies"]["PaymentSettled"]["outcomes"]] == ["Approved", "Declined"]
+    assert m["replies"]["StockSettled"]["outcomes"][1] == {"name": "Short", "label": "在庫不足", "gives": ["short"]}
+    assert m["events"] == [{"name": "Reconnected", "label": "つながりが戻った"}]
+    bad = CODE.replace("Approved gives auth_id", "Approved gives nothing_here")
+    assert any("応答の中身にありません" in d.msg for d in chk(bad).diags if d.level == ERROR)
+    bad = CODE.replace("replies StockSettled", "replies NoSuchReply")
+    assert any("未定義の応答" in d.msg for d in chk(bad).diags if d.level == ERROR)
+
+
+def test_開発用の操作パネルは汎用のページとして生成される(tmp_path):
+    from geas.devgen import write_dev
+    write_dev(chk(CODE), tmp_path)
+    assert {f.name for f in (tmp_path / "dev").iterdir()} == {"test.html", "test.js"}
