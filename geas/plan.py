@@ -165,9 +165,9 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
     b = {(e, n(h), n(d)): {} for e, h, d in spec["出来事"]}
     cmp_map("出来事", a, b, out, lambda k: f"{k[0]}: {k[1]} → {k[2]}")
     # 画面と遷移（画面デザインは突合に含めない）
-    a = {r["画面"]: {"見せる": items(r["見せる"]), "入力欄": items(r["入力欄"]), "受け取る値": items(r.get("受け取る値", "")), "入口": r["入口"].strip()}
-         for r in sect("画面")}
-    b = {x: {"見せる": items(q), "入力欄": items(f), "受け取る値": items(pr), "入口": e} for x, q, f, pr, e in spec["画面"]}
+    a = {r["画面"]: {"見せる": items(r["見せる"]), "入力欄": items(r["入力欄"]), "受け取る値": items(r.get("受け取る値", "")), "入口": r["入口"].strip(),
+                     "選ばせる slot": items(r.get("選ばせる slot", ""))} for r in sect("画面")}
+    b = {x: {"見せる": items(q), "入力欄": items(f), "受け取る値": items(pr), "入口": e, "選ばせる slot": items(sl)} for x, q, f, pr, e, sl in spec["画面"]}
     cmp_map("画面", a, b, out, str)
     a = {(r["画面"], n(r["操作"]), n(r["結果"])): {"行き先": n(r["行き先"])} for r in sect("画面遷移")}
     b = {(x, n(o), n(v)): {"行き先": n(d)} for x, o, v, d in spec["画面遷移"]}
@@ -207,7 +207,7 @@ def check_usecases(spec: dict, rows: list[dict]) -> list[Finding]:
         return []
     out: list[Finding] = []
     trans = {(n(a), n(o), n(v)): n(d) for a, o, v, d in spec["画面遷移"]}
-    entries = {n(a) for a, _, _, _, e in spec["画面"] if e}
+    entries = {n(a) for a, _, _, _, e, _ in spec["画面"] if e}
     used = set()
     for uc, steps in usecases(rows).items():
         here = None  # 直前の手順の後に見えている画面

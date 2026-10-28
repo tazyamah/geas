@@ -813,9 +813,28 @@ class Checker:
                     for n, _ in t.params:
                         if n not in avail:
                             self.d(ERROR, "画面", f"{where} / {dn}", f"行き先の画面 {dest} が受け取る「{n}」を、この結果から渡せません")
+            types = {n: ty for dn, _ in sc.actions if dn in self.procs for n, ty in self.procs[dn].inputs}
+            types |= {n: ty for qn in sc.shows if qn in self.queries for n, ty in self.queries[qn].inputs}
             for f in sc.fields:
                 if f not in covered:
-                    self.d(ERROR, "画面", where, f"入力欄「{f}」は、どの操作の処理の入力でもありません")
+                    self.d(ERROR, "画面", where, f"入力欄「{f}」は、どの操作の処理や問い合わせの入力でもありません")
+            for f, qn in sc.field_from.items():
+                q, ty = self.queries.get(qn), types.get(f)
+                if q is None:
+                    self.d(ERROR, "画面", where, f"入力欄「{f}」の選ぶ元の問い合わせ「{qn}」が未定義です")
+                elif ty is not None:
+                    ok = ty.kind in ("ID", "参照") or (ty.kind == "写像" and ty.value.kind == "整数" and ty.key == q.target)
+                    if not ok:
+                        self.d(ERROR, "画面", where, f"入力欄「{f}」（{show_type(ty)}）は、問い合わせ {qn} から選べません（ID か、{q.target} をキーにした数の写像だけです）")
+                    elif ty.kind == "写像" and q.select:
+                        pass
+            for sl in sc.slots:
+                refs = {n: ty for dn, _ in sc.actions if dn in self.procs for n, ty in self.procs[dn].refs}
+                ty = refs.get(sl)
+                if ty is None:
+                    self.d(ERROR, "画面", where, f"slot「{sl}」は、この画面の操作の処理の slot ではありません")
+                elif ty.kind != "名前":
+                    self.d(ERROR, "画面", where, f"slot「{sl}」（{show_type(ty)}）は、利用者に選ばせられません（状態や通貨のように、選べる値のものだけです）")
             for k, v in sc.design.items():
                 if k not in self.DESIGN_KEYS:
                     self.d(ERROR, "画面", where, f"design の「{k}」は使えません（layout／mode／accent）")

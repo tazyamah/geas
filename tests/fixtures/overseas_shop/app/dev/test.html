@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>開発用：模擬の操作</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <!-- 開発用の手書きのページ。アプリの画面ではない（仕様書に現れない）。決済・倉庫・配送の模擬を操作する -->
+  <header><h1>開発用：模擬の操作</h1><a href="./">アプリへ</a></header>
+  <div id="notice" class="banner info" hidden></div>
+  <main>
+    <p class="hint">決済・倉庫・配送は模擬です。返事が来ない・在庫が足りないなどの状況を作れます。</p>
+    <div class="group">
+      <label class="f"><input type="checkbox" id="t-drop"> 決済の返事を落とす（届かないまま）</label>
+      <label class="f"><input type="checkbox" id="t-short"> 倉庫が在庫不足を返す</label>
+      <label class="f">請求を拒否する金額（最小単位）<input type="number" id="t-decline" min="1"></label>
+      <label class="f">返事までの秒数<input type="number" id="t-delay" min="0" max="600"></label>
+      <button class="primary" id="t-save">設定を反映</button>
+    </div>
+    <div class="actions">
+      <button class="primary" id="t-reconnect">つながりが戻った（出来事）</button>
+      <button class="primary" id="t-advance">時計を30分進める</button>
+    </div>
+    <h2>返事待ちの注文</h2><div id="t-waits"></div>
+    <h2>外へ出した作用</h2><div id="t-effects"></div>
+  </main>
+  <script src="test.js"></script>
+</body>
+</html>

@@ -42,7 +42,7 @@ def test_結果の行き先に漏れがあるとエラー():
 
 
 def test_処理の入力を埋めるものが無いとエラー():
-    ck = chk(mutate(CODE, "field customer_id, items, ship_to", "field customer_id, items"))
+    ck = chk(mutate(CODE, "field customer_id from customer_list, items from product_list, ship_to", "field customer_id from customer_list, items from product_list"))
     assert any("入力「" in m and "埋めるものがありません" in m for m in msgs(ck, ERROR))
 
 
@@ -62,8 +62,8 @@ def test_計画書との突合は画面と遷移を比べ_デザインは比べ�
     ck = chk(CODE)
     spec = build(ck)
     plan = "\n".join(
-        ["| 画面 | ◆見せる | ◆入力欄 | ◆受け取る値 | ◆入口 |", "|---|---|---|---|---|"]
-        + [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["画面"]]
+        ["| 画面 | ◆見せる | ◆入力欄 | ◆受け取る値 | ◆入口 | ◆選ばせる slot |", "|---|---|---|---|---|---|"]
+        + [f"| {a} | {b} | {c} | {d} | {e} | {f} |" for a, b, c, d, e, f in spec["画面"]]
         + ["", "| 画面 | ◆操作 | ◆結果 | ◆行き先 |", "|---|---|---|---|"]
         + [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
     )
@@ -97,3 +97,31 @@ def test_人向けの仕様書は画面の遷移とモックとデザインを�
     for s in ("画面の遷移", "画面デザイン", "ユースケースを画面でたどる", 'id="screens-data"', "商品を見つけて注文する", "stateDiagram-v2", "flowchart LR"):
         assert s in html, s
     assert "計画書との食い違いはなく" in html
+
+
+def test_画面の定義と_design_が生成物に載る():
+    from geas.hostgen import definitions
+    from geas.rustgen import generate
+    ck = chk(CODE)
+    d = definitions(ck)["screens"]
+    assert d["title"] == "海外にも売るお店"
+    assert d["screens"]["ProductList"]["design"] == {"layout": "grid", "accent": "#0b5cad", "mode": "light"}
+    assert d["screens"]["PriceCheck"]["design"]["mode"] == "dark"
+    form = d["screens"]["OrderForm"]
+    assert [f["from"] for f in form["fields"]] == ["customer_list", "product_list", None]
+    assert form["fields"][1]["type"]["kind"] == "map" and form["slots"][0]["name"] == "currency"
+    price = next(c for c in d["queries"]["product_list"]["columns"] if c["name"] == "price")
+    assert price["kind"] == "money" and price["unit"] == "currency"
+    assert d["events_on"] == {"Reconnected": "online"}
+    rs = generate(ck)
+    assert 'pub const APP_TITLE: &str = "海外にも売るお店";' in rs
+    assert 'ScreenDef { name: "PriceCheck"' in rs and 'accent: "#e47911", mode: "dark"' in rs
+
+
+def test_画面の汎用UIとアイコンを生成物へ置く(tmp_path):
+    from geas.screengen import write_ui
+    write_ui(chk(CODE), tmp_path)
+    ui = tmp_path / "ui"
+    assert {"index.html", "ui.js", "ui.css", "sw.js", "icon.svg", "icon-192.png", "icon-512.png"} <= {p.name for p in ui.iterdir()}
+    assert "#0b5cad" in (ui / "icon.svg").read_text()
+    assert (ui / "icon-192.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

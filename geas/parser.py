@@ -162,6 +162,13 @@ class Parser:
                 p.events.append(self.event(line))
             elif kw == "screen":
                 p.screens.append(self.screen(line))
+            elif kw == "app":  # app "名前"：アプリの名前（画面の見出しとインストール名）
+                t = self.peek()
+                if t.kind != "STR" or not t.val:
+                    raise ParseError('app は `app "アプリの名前"` と書きます', line)
+                self.i += 1
+                p.title = t.val
+                self.end_line()
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
@@ -962,6 +969,10 @@ class Parser:
     # ---- 出来事（外の出来事をきっかけに処理を起こす） ----
     def event(self, line) -> Event:
         ev = Event(self.name(), line=line)
+        if self.accept("on"):
+            ev.on = self.name()
+            if ev.on not in ("online", "opened"):
+                raise self.err("event の「on」は、online（つながりが戻った）か opened（アプリを開いた）です")
         self.block_open()
         while not self.accept("}"):
             kw = self.name()
@@ -993,7 +1004,14 @@ class Parser:
             elif kw == "open":
                 sc.opens.append(self.name())
             elif kw == "field":
-                sc.fields += self.comma_list(self.name)
+                def item():
+                    f = self.name()
+                    sc.fields.append(f)
+                    if self.accept("from"):
+                        sc.field_from[f] = self.name()
+                self.comma_list(item)
+            elif kw == "slot":
+                sc.slots += self.comma_list(self.name)
             elif kw == "action":
                 deed = self.name()
                 self.block_open()
@@ -1014,7 +1032,7 @@ class Parser:
                     sc.design[k] = t.val
                     self.end_line()
             else:
-                raise self.err("screen の中は「show」「open」「field」「action」「design」です")
+                raise self.err("screen の中は「show」「open」「field」「slot」「action」「design」です")
             self.end_line()
         return sc
 

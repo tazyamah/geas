@@ -172,6 +172,7 @@ class Event:
     または ("外から", "", 処理名)＝出来事といっしょに外から届く入力で処理を起こす。"""
     name: str
     steps: list[tuple[str, str, str]] = field(default_factory=list)
+    on: str = ""  # 画面（クライアント）が出来事を起こす契機：online＝つながりが戻ったとき、opened＝アプリを開いた（画面に戻った）とき。空なら外から呼ばれるだけ
     line: int = 0
 
 
@@ -185,6 +186,8 @@ class Screen:
     shows: list[str] = field(default_factory=list)  # 見せる問い合わせ
     opens: list[str] = field(default_factory=list)  # 結果の行を選んだときに開く画面
     fields: list[str] = field(default_factory=list)  # 入力欄（呼ぶ処理の入力の名前）
+    field_from: dict = field(default_factory=dict)  # 入力欄 → 選ぶ元の問い合わせ（IDは1件を選ぶ、写像は行ごとに数を入れる）
+    slots: list[str] = field(default_factory=list)  # 画面が利用者に選ばせて渡す、処理の slot の名前
     actions: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)  # (処理, [(結果の種類, 行き先)])。行き先は画面名か stay／back
     design: dict = field(default_factory=dict)
     entry: bool = False  # 別の入口（拡張など、ほかの画面から来ない画面）。最初に宣言した画面も入口
@@ -209,6 +212,7 @@ class Program:
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
+    title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う
     tz_offset: int = 0  # アプリの標準のタイムゾーン：UTC からのずれ（秒）。`timezone +09:00` で宣言する。書かなければ UTC
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない
 

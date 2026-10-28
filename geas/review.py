@@ -281,7 +281,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         sj = screens_json(ck)
         entries = [show(s.name) for i, s in enumerate(p.screens) if i == 0 or s.entry]
         add("screens", "画面の遷移", f'<pre class="mermaid">{escape(screen_graph(ck))}</pre>'
-            + table(["画面", "見せる", "入力欄", "受け取る値", "入口"], [(show(a), show(b), show(c), show(d), e) for a, b, c, d, e in [(x[0], x[1], x[2], x[3], x[4]) for x in build(ck)["画面"]]]
+            + table(["画面", "見せる", "入力欄（←選ぶ元）", "受け取る値", "入口", "選ばせる slot"], [tuple(show(c) for c in x) for x in spec["画面"]]
                     ) + "<h3>遷移の表</h3>" + table(["画面", "操作", "結果", "行き先"], spec["画面遷移"]))
         wfs = []
         for n, s in sj.items():
@@ -293,7 +293,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             btn = f'<div class="btn" style="background:{d["accent"]}"></div>' if s["actions"] else ""
             wfs.append(f'<div class="wf {"dark" if d["mode"] == "dark" else ""}"><header style="background:{escape(d["accent"])}">{escape(n)}</header><div class="body">{tiles}{btn}</div>'
                        f'<div class="sub" style="padding:0 10px 8px">配置 {d["layout"]}／色 {escape(d["accent"])}／{"ダーク" if d["mode"] == "dark" else "ライト"}</div></div>')
-        add("design", "画面デザイン（①との突合には含めない）", f'<div class="grid">{"".join(wfs)}</div>' + table(["画面", "指定", "値"], spec["画面デザイン"]))
+        add("design", "画面デザイン（①との突合には含めない）", f'<p class="sub">この指定は、実際の画面（geas が生成する汎用の画面）の配置・色・明暗にそのまま使われ、最初の画面の色はインストール時のアイコンとテーマ色にもなります。下の絵は、その配置の見取り図です。</p><div class="grid">{"".join(wfs)}</div>' + table(["画面", "指定", "値"], spec["画面デザイン"]))
         dest_of = {(x[0], x[1], x[2]): x[3] for x in spec["画面遷移"]}
         uj = []
         for i, (k, v) in enumerate(ucs.items(), 1):

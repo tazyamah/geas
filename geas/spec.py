@@ -124,8 +124,10 @@ def build_raw(ck: Checker) -> dict:
     spec["応答"] = [(rp.name, ", ".join(input_names(rp.params))) for rp in p.replies]
     spec["合流"] = [(e.name, e.joins) for e in p.effects if e.joins]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
-    spec["出来事"] = [(ev.name, (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
-    spec["画面"] = [(sc.name, ", ".join(sc.shows), ", ".join(sc.fields), ", ".join(n for n, _ in sc.params), "○" if i == 0 or sc.entry else "")
+    on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
+    spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
+    spec["画面"] = [(sc.name, ", ".join(sc.shows), ", ".join(f + (f"←{sc.field_from[f]}" if f in sc.field_from else "") for f in sc.fields),
+                   ", ".join(n for n, _ in sc.params), "○" if i == 0 or sc.entry else "", ", ".join(sc.slots))
                   for i, sc in enumerate(p.screens)]
     spec["画面遷移"] = [(sc.name, "行を選ぶ", "", t) for sc in p.screens for t in sc.opens] + \
                      [(sc.name, dn, v, {"stay": "そのまま", "back": "戻る"}.get(dest, dest)) for sc in p.screens for dn, rs in sc.actions for v, dest in rs]
@@ -212,8 +214,8 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## 出来事（外の出来事をきっかけに起こす処理）", "", "| 出来事 | ◆起こし方 | ◆処理 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["出来事"]]
     if spec["画面"]:
-        out += ["", "## 画面（入口は最初の画面と entry の画面）", "", "| 画面 | ◆見せる | ◆入力欄 | ◆受け取る値 | ◆入口 |", "|---|---|---|---|---|"]
-        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["画面"]]
+        out += ["", "## 画面（入口は最初の画面と entry の画面。入力欄の「←」は選ぶ元の問い合わせ）", "", "| 画面 | ◆見せる | ◆入力欄 | ◆受け取る値 | ◆入口 | ◆選ばせる slot |", "|---|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" for a, b, c, d, e, f in spec["画面"]]
         out += ["", "## 画面遷移", "", "| 画面 | ◆操作 | ◆結果 | ◆行き先 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
         out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]

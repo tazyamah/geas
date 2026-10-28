@@ -1,3 +1,5 @@
+app "海外にも売るお店"
+
 // 海外にも売るお店：商品ごとに売る通貨（円・ドル）、決済と在庫の確保を並行で待つ注文。通貨は slot で渡す。
 // 「使うようになったら考える」だった4件（応答の中身・par の書き込み・合成型を使える場所・金額の単位）を使う題材。
 // お店の例（../shop/shop.geas）の続きで、名前は半角英数、日本語の表示名は /// で付ける。
@@ -469,7 +471,7 @@ nexus Recheck {
 
 // アプリの「つながりが戻った」は、サーバーの外で起きる出来事。サーバーは、返事待ちの注文1件ずつに引き直しを起こす
 /// つながりが戻った
-event Reconnected {
+event Reconnected on online {
   each awaiting_payment → recheck_payment
 }
 
@@ -489,7 +491,8 @@ screen ProductList {
 
 /// 注文の画面
 screen OrderForm(product_id: id) {
-  field customer_id, items, ship_to
+  field customer_id from customer_list, items from product_list, ship_to
+  slot currency
   action place_order {
     Received → MyOrders
     OutOfStock → stay
@@ -506,7 +509,7 @@ screen OrderForm(product_id: id) {
 
 /// 注文の履歴の画面
 screen MyOrders {
-  field customer
+  field customer from customer_list
   show orders_of
   design {
     layout list
