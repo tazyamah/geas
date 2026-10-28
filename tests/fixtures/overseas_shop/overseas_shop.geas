@@ -20,6 +20,8 @@ ltype CountryCode = text 2..2 of "A-Z"
 ltype PostalCode = text 3..10 of "0-9A-Z-"
 /// 住所の行
 ltype AddressLine = text 1..80
+/// 商品名
+ltype ProductName = text 1..80
 /// JANコード
 ltype JanCode = text 13..13 of "0-9" check gtin
 /// 配送先
@@ -36,6 +38,8 @@ ltype Address {
 entity Product {
   /// 商品ID
   product_id: id unique
+  /// 商品名
+  name: ProductName required
   /// JANコード
   jan: JanCode required
   /// 在庫
@@ -390,6 +394,30 @@ query order_list {
   select order_id, customer.customer_id as customer, sum(items) as /// 点数
     item_count
   reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
+}
+
+/// 商品一覧
+query product_list {
+  from Product
+  select product_id, name, jan, currency, price, stock
+  reads Product.product_id, Product.name, Product.jan, Product.currency, Product.price, Product.stock
+}
+
+/// 顧客一覧
+query customer_list {
+  from Customer
+  select customer_id, points
+  reads Customer.customer_id, Customer.points
+}
+
+/// 顧客の注文一覧
+query orders_of {
+  input customer: id required
+  from Order
+  filter customer equals customer
+  select order_id, status, currency, total, sum(items) as /// 点数
+    item_count
+  reads Order.customer, Order.order_id, Order.status, Order.currency, Order.total, Order.items
 }
 
 /// 決済の返事待ちの注文

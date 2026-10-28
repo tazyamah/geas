@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
-from .rustgen import opt
+from .rustgen import column_type, opt
 from .spec import fmt_cause
 
 JSON_PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -199,6 +199,7 @@ def definitions(ck: Checker) -> dict:
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
+        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
                   "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "replies": key.split(",") if k == "all" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
@@ -249,6 +250,12 @@ def host_source(ck: Checker) -> str:
             else:
                 w(f'        {r.name}::{v} => "{{}}".to_string(),')
         w("    }\n}")
+    for q in p.queries:  # 列つきの問い合わせの行は、列名を持つ JSON のオブジェクトにして返す
+        if q.select:
+            n = q.name
+            cols = [(c, column_type(ck, q, c)) for c in q.select]
+            items = ", ".join(f'format!("{{}}:{{}}", js_str("{c.name}"), {to_j(t, f"r.{c.name}")})' for c, t in cols)
+            w(f'fn {n}_row_json(r: &{n}Row) -> String {{\n    format!("{{{{{{}}}}}}", vec![{items}].join(","))\n}}')
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
       '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}],\\"store\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
@@ -271,9 +278,11 @@ def host_source(ck: Checker) -> str:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
-        shown = ".iter().map(|x| x.show()).collect()" if q.select else ""
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
-        w(f'            Ok(write_result("一覧", {n}(&c, Store, &i){shown}, "{{}}".to_string(), vec![], Store))\n        }}')
+        if q.select:
+            w(f'            let rows = {n}(&c, Store, &i);\n            Ok(write_result("一覧", Vec::new(), format!("{{{{\\"rows\\":[{{}}]}}}}", rows.iter().map({n}_row_json).collect::<Vec<_>>().join(",")), vec![], Store))\n        }}')
+        else:
+            w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![], Store))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
     w(f"pub fn call(request: &str{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n"
       '    let r = parse(request)?;\n    let mut s = read_store(r.get("store")?)?;\n'

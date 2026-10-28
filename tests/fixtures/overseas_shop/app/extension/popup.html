@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>お店の価格を見る</title>
+<style>
+  body { width: 340px; margin: 0; padding: 12px; font: 14px/1.5 system-ui, "Hiragino Sans", sans-serif; color: #1d2321; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e8ece9; background: #1e2422; } input, textarea { background: #151918; color: inherit; border-color: #333c38; } }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  label { display: block; margin: 8px 0; }
+  input, textarea { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #d9ded9; border-radius: 6px; font: inherit; }
+  textarea { height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { background: #1f6f5c; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  #msg { color: #1f6f5c; min-height: 1.4em; }
+  .hint { color: #5d6762; font-size: 12px; }
+</style></head>
+<body>
+  <h1>お店の価格を見る</h1>
+  <p class="hint">Amazon の商品ページに、お店の価格を表示します。JAN はページから読み、読めなければ下の対応表（ASIN → JAN）で引きます。</p>
+  <label>お店のサーバー<input id="url" placeholder="http://localhost:8787"></label>
+  <label>ASIN → JAN の対応表（JSON）<textarea id="table" placeholder='{"B0XXXXXXXX": "4901234567894"}'></textarea></label>
+  <button id="save">保存</button> <span id="msg"></span>
+  <script src="popup.js"></script>
+</body></html>

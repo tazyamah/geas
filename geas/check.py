@@ -558,8 +558,8 @@ class Checker:
                     continue
                 if op.startswith("含む") and not (f.type.kind == "文字列" and t.kind == "文字列"):
                     self.d(ERROR, "型", where, f"「{fn} 含む {arg}」は文字列どうしにだけ使えます")
-                if op == "一致" and not (f.type.kind == t.kind and f.type.kind in ("文字列", "ID", "整数")):
-                    self.d(ERROR, "型", where, f"「{fn} equals {arg}」は同じ種類の文字列・ID・整数どうしにだけ使えます")
+                if op == "一致" and not ((f.type.kind == t.kind and f.type.kind in ("文字列", "ID", "整数")) or (f.type.kind == "参照" and t.kind == "ID")):
+                    self.d(ERROR, "型", where, f"「{fn} equals {arg}」は同じ種類の文字列・ID・整数どうし（参照の項目はIDの入力）にだけ使えます")
                 if op in ("以上", "以下") and not (f.type.kind == t.kind and f.type.kind in ("日時", "整数", "金額")):
                     self.d(ERROR, "型", where, f"「{fn} {op} {arg}」は同じ種類の数・日時どうしにだけ使えます")
             seen_cols = set()
