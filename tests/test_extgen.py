@@ -63,14 +63,14 @@ def test_開発用の操作パネルは汎用のページとして生成され�
     assert {f.name for f in (tmp_path / "dev").iterdir()} == {"test.html", "test.js"}
 
 
-def test_サーバーの実行部は生成物と一緒に置かれ_app_rs_だけを差し替えられる(tmp_path):
+def test_サーバーの実行部は生成物と一緒に置かれ_最初のデータは埋め込まれる(tmp_path):
     from geas.servergen import write_server
     write_server(tmp_path)
     s = tmp_path / "server"
-    assert {f.name for f in (s / "src").iterdir()} == {"app.rs", "db.rs", "engine.rs", "http.rs", "main.rs", "mock.rs"}
+    assert {f.name for f in (s / "src").iterdir()} == {"app.rs", "db.rs", "engine.rs", "http.rs", "main.rs", "mock.rs", "seed.json"}
     assert 'geas_app = { path = ".." }' in (s / "Cargo.toml").read_text() and (s / "Cargo.lock").exists()
-    assert "取り決めがありません" in (s / "src" / "app.rs").read_text()  # 既定は何も持たない
-    mine = tmp_path / "mine.rs"
-    mine.write_text("// 自分の取り決め\n")
+    assert (s / "src" / "seed.json").read_text() == "{}"  # 既定は何も入れない
+    mine = tmp_path / "mine.json"
+    mine.write_text('{"A": {}}')
     write_server(tmp_path, mine)
-    assert (s / "src" / "app.rs").read_text() == "// 自分の取り決め\n"
+    assert (s / "src" / "seed.json").read_text() == '{"A": {}}'

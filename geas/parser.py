@@ -154,6 +154,8 @@ class Parser:
                 p.flows.append(self.flow(line))
             elif kw == "reply":  # reply 名前(中身の名前: 型 [required], …)：応答が運ぶ中身の宣言
                 p.replies.append(self.reply_def(line))
+            elif kw == "rule":  # rule slot名 { 条件 [and 条件]: 値 … default: 値 }：サーバーが決める slot の値の表
+                p.rules.append(self.slot_rule(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
             elif kw == "query":
@@ -560,7 +562,7 @@ class Parser:
     def fill_value(self) -> int:
         t = self.next()
         if t.kind != "NUM":
-            raise self.err("fill の値は整数です")
+            raise self.err("rule の値は整数です")
         return int(t.val)
 
     def invariant(self, line) -> Invariant:
@@ -1125,6 +1127,37 @@ class Parser:
                 self.end_line()
         self.end_line()
         return ReplyDef(name, params, line, outcomes)
+
+    def slot_rule(self, line) -> SlotRule:
+        slot = self.name()
+        self.block_open()
+        rows = []
+        while not self.accept("}"):
+            conds = []
+            if not self.accept("default"):
+                def cond():
+                    path = [self.name()]
+                    while self.accept("."):
+                        path.append(self.name())
+                    self.expect("==")
+                    t = self.next()
+                    if t.kind not in ("NAME", "STR", "NUM"):
+                        raise ParseError("条件の右は、名前・文字列・数です", t.line)
+                    return ".".join(path), t.val
+                conds = [cond()]
+                while self.accept("and"):
+                    conds.append(cond())
+            self.expect(":")
+            t = self.next()
+            if t.kind != "NUM":
+                raise ParseError("rule の値は、数か 分子/分母 です", t.line)
+            val = int(t.val)
+            if self.accept("/"):
+                val = f"{val}/{self.num()}"
+            rows.append((conds, val))
+            self.end_line()
+        self.end_line()
+        return SlotRule(slot, rows, line)
 
     def trigger(self, line) -> Trigger:
         name = self.name()

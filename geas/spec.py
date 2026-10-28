@@ -130,6 +130,7 @@ def build_raw(ck: Checker) -> dict:
     reps = {r.name: r for r in p.replies}
     spec["模擬"] = [(e.name, e.replies, " ／ ".join(on + (f"（{', '.join(g)}）" if g else "") for on, g in (reps[e.replies].outcomes or [("平常", [n for n, _ in reps[e.replies].params])])))
                   for e in p.effects if e.replies and e.replies in reps]
+    spec["決め方"] = [(f.slot, " かつ ".join(f"{pa} = {v}" for pa, v in conds) or "上のどれでもない", str(val)) for f in p.rules for conds, val in f.rows]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
     spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
@@ -217,6 +218,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["応答"]:
         out += ["", "## 応答の中身（外から返ってくる内容。入出力型）", "", "| 応答 | ◆中身 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["応答"]]
+    if spec["決め方"]:
+        out += ["", "## slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値になる）", "", "| slot | 条件 | 値 |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["決め方"]]
     if spec["模擬"]:
         out += ["", "## 開発用の模擬（外部作用の返事。先頭が平常。開発用の操作パネルで切り替える）", "", "| 外部作用 | 返ってくる応答 | 結果の種類（返事に入る中身） |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["模擬"]]

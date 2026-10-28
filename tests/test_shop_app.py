@@ -31,7 +31,7 @@ def server(tmp_path_factory):
     work = tmp_path_factory.mktemp("shop")
     proc = subprocess.Popen(
         [str(APP / "generated" / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(work / "shop.sqlite"),
-         "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev"), "--seed", str(APP / "seed.json")],
+         "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev")],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     for _ in range(50):
@@ -199,7 +199,7 @@ def _fresh_server(tmp_path, port=0):
     port = s.getsockname()[1]
     s.close()
     proc = subprocess.Popen([str(APP / "generated" / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(tmp_path / "ui.sqlite"),
-                             "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev"), "--seed", str(APP / "seed.json")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _fresh.append(proc)
     for _ in range(50):
         try:

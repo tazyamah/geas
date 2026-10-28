@@ -87,7 +87,7 @@ impl Engine {
         }
         let def = self.defs["deeds"].get(deed).ok_or(format!("処理「{}」はありません", deed))?.clone();
         let names = |k: &str| -> Vec<String> { def[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
-        let ctx = app::fill_ctx(&self.db, &names("refs"), &names("new_ids"), input, requested)?;
+        let ctx = app::fill_ctx(&self.db, &self.defs, &names("refs"), &names("new_ids"), input, requested)?;
         // 宣言にない入力は渡さない（生成物も無視するが、記録をきれいにする）
         let mut inp = Map::new();
         for k in names("inputs") {

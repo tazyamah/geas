@@ -681,8 +681,43 @@ class Checker:
             if e.replies is not None and e.replies not in reps:
                 self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
 
+    def check_slot_rules(self):
+        """slot の値の決め方（rule）。決める slot が処理にあり、条件の名前が使え、最後が default で、値の種類が合うこと"""
+        seen = set()
+        for f in self.p.rules:
+            where = f"rule {f.slot}"
+            users = [x for x in self.p.processes if any(n == f.slot for n, _ in x.refs)]
+            if f.slot in seen:
+                self.d(ERROR, "rule", where, "同じ slot の rule が2つあります")
+            seen.add(f.slot)
+            if not users:
+                self.d(ERROR, "rule", where, "この名前の slot を持つ処理がありません")
+                continue
+            kinds = {t.kind for x in users for n, t in x.refs if n == f.slot}
+            if len(kinds) > 1:
+                self.d(ERROR, "rule", where, "この slot は、処理によって型が違うので、1つの表では決められません")
+                continue
+            kind = kinds.pop()
+            if kind not in ("割合", "金額", "整数"):
+                self.d(ERROR, "rule", where, f"{kind} 型の slot は、rule で決められません（割合・金額・整数だけです。通貨や状態は、画面が選ばせます）")
+            if not f.rows or f.rows[-1][0]:
+                self.d(ERROR, "rule", where, "最後の行は default にしてください（どれにも当てはまらない場合の値が決まりません）")
+            for i, (conds, val) in enumerate(f.rows):
+                if not conds and i != len(f.rows) - 1:
+                    self.d(ERROR, "rule", where, "default より後ろの行には、決して届きません")
+                if (kind == "割合") != isinstance(val, str):
+                    self.d(ERROR, "rule", where, f"値が{kind}の書き方ではありません（割合は 分子/分母、金額と整数は数）")
+                elif isinstance(val, str) and int(val.split("/")[1]) == 0:
+                    self.d(ERROR, "rule", where, "割合の分母が0です")
+                for path, _ in conds:
+                    head = path.split(".")[0]
+                    for x in users:
+                        if head == f.slot or head not in [n for n, _ in [*x.inputs, *x.refs]]:
+                            self.d(ERROR, "rule", where, f"条件の「{path}」は、処理 {x.name} の入力か、ほかの slot の名前で始めてください")
+
     def check_triggers(self):
         self.check_replies()
+        self.check_slot_rules()
         used = {x for tg in self.p.triggers for k, key, _ in tg.causes for x in (key.split(",") if k == "all" else [key] if k == "reply" else [])}
         for rp in self.p.replies:
             if rp.name not in used:
