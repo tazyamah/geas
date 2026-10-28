@@ -1,0 +1,97 @@
+// 削除の例：ユーザーを消しても、書いたメモは「削除済みのユーザーのメモ」として残る（detach）。メモは、保管した状態でだけ消せる。
+/// 本文
+ltype NoteBody = text 1..200
+
+/// ユーザー
+entity Customer {
+  /// ユーザーID
+  customer_id: id unique
+  // 消したとき、メモの書き手は空にして、メモは残す
+  on delete Note.author → detach
+}
+
+/// メモ
+entity Note {
+  /// メモID
+  note_id: id unique
+  /// 書き手
+  author: ref Customer
+  /// 本文
+  body: NoteBody required
+  /// 状態
+  status: NoteStatus
+  // 下書きと保管済みのメモだけ消してよい
+  removable in Draft, Archived
+}
+
+/// メモの状態
+state NoteStatus {
+  /// 下書き
+  initial Draft
+  /// 公開
+  middle Published
+  final /// 保管済み
+    Archived
+}
+
+/// 削除の結果
+result DeleteResult {
+  /// 削除済
+  Deleted
+  /// 対象なし
+  NotFound
+}
+
+/// メモの削除の結果
+result DeleteNoteResult {
+  /// 削除済
+  Deleted
+  /// 対象なし
+  NotFound
+  /// 保管していない
+  NotArchived
+}
+
+/// ユーザーの削除
+deed delete_customer {
+  input customer_id: id required
+  reads Customer
+  writes Customer
+  result DeleteResult
+  effects none
+
+  let customer = Customer[customer_id] else { return NotFound }
+  delete customer
+  return Deleted
+}
+
+/// メモの削除
+deed delete_note {
+  input note_id: id required
+  reads Note.status
+  writes Note
+  result DeleteNoteResult
+  effects none
+
+  let note = Note[note_id] else { return NotFound }
+  if note.status != Archived { return NotArchived }
+  delete note
+  return Deleted
+}
+
+/// ユーザー
+resource Customers {
+  destroy delete_customer {
+    Deleted → 200
+    NotFound → 404
+  }
+}
+
+/// メモ
+resource Notes {
+  destroy delete_note {
+    Deleted → 200
+    NotFound → 404
+    NotArchived → 409
+  }
+}

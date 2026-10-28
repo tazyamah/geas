@@ -275,7 +275,32 @@ class Parser:
             raise self.err(f"保存先は entity の中ではなく、別の行で store {name} in 保存先 と書きます")
         self.block_open()
         fields = []
+        keep, removable, on_delete = False, [], []
         while not self.accept("}"):
+            if self.is_("keep") and not self.is_(":", 1):  # 削除させない
+                self.next()
+                keep = True
+                self.end_line()
+                continue
+            if self.is_("removable") and not self.is_(":", 1):  # removable in 状態, …：消してよい状態
+                self.next()
+                self.expect("in")
+                removable += self.comma_list(self.name)
+                self.end_line()
+                continue
+            if self.is_("on") and self.is_("delete", 1) and not self.is_(":", 1):  # on delete 参照元.項目 → detach｜cascade｜leave
+                self.next()
+                self.next()
+                src = self.name()
+                self.expect(".")
+                fld = self.name()
+                self.expect("→")
+                pol = self.name()
+                if pol not in ("detach", "cascade", "leave"):
+                    raise self.err("on delete の扱いは「detach」（参照を空にする）「cascade」（参照元も消す）「leave」（参照元はそのまま残す）です")
+                on_delete.append((src, fld, pol))
+                self.end_line()
+                continue
             fname = self.name()
             self.expect(":")
             t = self.type()
@@ -290,7 +315,9 @@ class Parser:
                     raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
             fields.append(f)
             self.end_line()
-        return Data(name, fields, line)
+        d = Data(name, fields, line)
+        d.keep, d.removable, d.on_delete = keep, removable, on_delete
+        return d
 
     def signed_num(self):
         """範囲の端：負の数も書ける（UTC からのずれなど）"""
@@ -683,6 +710,9 @@ class Parser:
                     break
             self.expect(")")
             s = Request(eff, args, idem, line)
+        elif self.is_("delete") and self.peek(1).kind == "NAME" and not self.is_(".", 1):
+            self.next()
+            s = Delete(self.name(), line)
         elif self.accept("let"):
             n = self.name()
             self.expect("=")
