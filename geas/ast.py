@@ -46,6 +46,9 @@ class Data:
     fields: list[Field]
     line: int = 0
     store: Optional[str] = None  # 保存先（外部）。あれば、未同期かどうかの状態「記録」を言語が足す（J63）
+    keep: bool = False  # 削除させない（keep）。書かなければ、削除されうるものとして扱う
+    removable: list[str] = field(default_factory=list)  # 消してよい状態（removable in …）。状態を持つデータは、これか keep が要る
+    on_delete: list[tuple[str, str, str]] = field(default_factory=list)  # 消したとき、参照元の扱い：(参照元のデータ, 項目, detach｜cascade｜leave)
 
 
 @dataclass
@@ -373,6 +376,13 @@ class Create:
     name: str
     data: str
     fields: list[tuple[str, object]]
+    line: int = 0
+
+
+@dataclass
+class Delete:
+    """delete 変数：let で引いた1件を消す（RESTful の destroy）"""
+    var: str
     line: int = 0
 
 

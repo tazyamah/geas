@@ -170,15 +170,20 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -
                 en.query(&target, &Value::Object(args)).map(|v| (200, v)).map_err(|m| (400, m))
             }
             "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(|m| (400, m)),
-            "create" => {
+            "create" | "update" | "destroy" => {
                 let mut input = parsed.clone();
+                if let (Some(c), Some(k)) = (caps.first(), r["id_input"].as_str().filter(|k| !k.is_empty())) {  // /…/:id の ID は、処理の ID の入力になる
+                    if let Some(m) = input.as_object_mut() {
+                        m.insert(k.to_string(), Value::String(c.clone()));
+                    }
+                }
                 let slots = input.as_object_mut().and_then(|m| m.remove("slots")).unwrap_or(json!({}));
                 en.run(&target, &input, &slots).map(|v| {
                     let code = v["result"].as_str().and_then(|k| r["statuses"][k].as_u64()).unwrap_or(200) as u16;
                     (code, v)
                 }).map_err(|m| (400, m))
             }
-            k => Err((501, format!("動作 {} はまだ実装していません", k))),
+            k => Err((501, format!("動作 {} は実装していません", k))),
         };
         return Some(match out {
             Ok((code, v)) => json_resp(code, v),

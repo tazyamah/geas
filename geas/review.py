@@ -331,6 +331,9 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             + (("<h3>外から返ってくる内容</h3>" + table(["応答", "中身"], spec["応答"])) if spec["応答"] else ""))
     if spec["出来事"]:
         add("events", "外の出来事", table(["出来事", "起こし方", "処理"], spec["出来事"]))
+    if spec["削除"]:
+        add("deletes", "削除", '<p class="sub">消してよい状態と、消したときの参照元の扱いです。「削除させない」と書いていないデータは、消されうるものとして扱います（決まっていないことは、確認してほしいことに出ます）。</p>'
+            + table(["データ", "消してよい状態", "参照元の扱い"], spec["削除"]))
     if spec["ルート"]:
         add("routes", "URL（ルート）", '<p class="sub">外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。クエリ文字列は使わず、条件はパスで渡します。結果の種類ごとの HTTP の状態も決まっています。</p>'
             + table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"]))

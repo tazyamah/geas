@@ -95,6 +95,7 @@ class ProcInfo:
     new_ids: list = field(default_factory=list)  # 採番するデータ名
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
+    deletes: set = field(default_factory=set)  # delete したデータ名
 
     @property
     def reads(self) -> set:
@@ -196,6 +197,7 @@ class Checker:
         self.check_events()
         self.check_screens()
         self.check_resources()
+        self.check_deletes()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -752,6 +754,45 @@ class Checker:
                     self.d(ERROR, "出来事", where, f"「each {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
 
     DESIGN_KEYS = {"layout": {"stack", "list", "grid", "form"}, "mode": {"light", "dark"}, "accent": None}
+
+    def check_deletes(self):
+        """削除の検査。on delete の宣言先が実在し、keep と removable が食い違わず、消されるデータを参照している項目は、扱い（detach・cascade・leave）が決まっていること（決まっていなければ問い）。
+        detach は項目が無いかもしれない（optional）ときだけ。cascade で消える参照元も、消されるものとして同じ検査をする"""
+        p = self.p
+        for dt in p.data:
+            where = f"データ {dt.name}"
+            if dt.keep and dt.removable:
+                self.d(ERROR, "削除", where, "keep（削除させない）と removable（消してよい状態）は、両方は書けません")
+            for st in dt.removable:
+                if not any(st in [s.initial, *s.middle, *s.final] for s in self.states.values() if any(f.type.kind == "名前" and f.type.target == s.name for f in dt.fields)):
+                    self.d(ERROR, "削除", where, f"removable の「{st}」は、{dt.name} のどの状態にもありません")
+            for src, fld, pol in dt.on_delete:
+                sd = self.data.get(src)
+                f = next((x for x in sd.fields if x.name == fld), None) if sd else None
+                if f is None or not (f.type.kind == "参照" and f.type.target == dt.name) and not (f.type.kind == "写像" and f.type.key == dt.name):
+                    self.d(ERROR, "削除", where, f"on delete の「{src}.{fld}」は、{dt.name} を参照する項目ではありません")
+                elif pol == "detach" and (f.type.kind != "参照" or not f.type.optional):
+                    self.d(ERROR, "削除", where, f"{src}.{fld} は、無いかもしれない（optional）参照ではないので、detach（参照を空にする）できません（leave か cascade にします）")
+                elif pol == "cascade" and f.type.kind != "参照":
+                    self.d(ERROR, "削除", where, f"{src}.{fld} は写像なので、cascade はできません（leave にします）")
+        deleted = {d for info in self.infos.values() for d in info.deletes}
+        todo, seen = list(deleted), set()
+        while todo:
+            d = todo.pop()
+            if d in seen:
+                continue
+            seen.add(d)
+            dt = self.data[d]
+            for rd in p.data:
+                for f in rd.fields:
+                    ref = (f.type.kind == "参照" and f.type.target == d) or (f.type.kind == "写像" and f.type.key == d)
+                    if not ref:
+                        continue
+                    pol = next((x[2] for x in dt.on_delete if x[0] == rd.name and x[1] == f.name), None)
+                    if pol is None:
+                        self.d(QUESTION, "削除", f"データ {d}", f"{d} を消すと、{rd.name}.{f.name} の参照が残ります。どう扱うか決めてください（{d} の中に on delete {rd.name}.{f.name} → detach｜cascade｜leave）")
+                    elif pol == "cascade":
+                        todo.append(rd.name)
 
     def check_resources(self):
         """リソースの検査。親と対象が実在し、動作の種類と対象（処理か問い合わせ）が合い、URL にクエリ文字列を使わず（問い合わせの入力はパスのキーか親のIDで埋まる）、
@@ -1868,6 +1909,8 @@ class ProcChecker:
                 self.state_guards.add((b, st.f, st.e.n))
         elif isinstance(st, Create):
             self.create(st)
+        elif isinstance(st, Delete):
+            self.delete(st)
         elif isinstance(st, Request):
             self.request(st)
         elif isinstance(st, ForEach):
@@ -1938,6 +1981,28 @@ class ProcChecker:
         if dst.check is not None and src.check != dst.check:
             self.d(ERROR, "検査数字", f"{where} に書く文字列が、検査数字（{dst.check}）を満たすと示せません"
                    f"（書く値{'は検査数字なし' if src.check is None else 'の検査数字は ' + src.check} ／ 項目は {dst.check}）", line)
+
+    def delete(self, st: Delete):
+        """delete 変数：let で引いた1件を消す。keep のデータは消せない。状態を持つデータは、消してよい状態（removable）と、その状態だと確かめた後でだけ消せる（足りなければ問い）"""
+        ck, info = self.ck, self.info
+        data = self.lookup_data.get(st.var)
+        if data is None or data not in ck.data:
+            self.d(ERROR, "削除", f"delete は、let で引いた1件の変数に書きます（「{st.var}」は引いた1件ではありません）", st.line)
+            return
+        dt = ck.data[data]
+        if dt.keep:
+            self.d(ERROR, "削除", f"{data} は keep（削除させない）と宣言されているので、消せません", st.line)
+            return
+        states = [f for f in dt.fields if f.type.kind == "名前" and not ck.states[f.type.target].plain]
+        if states:
+            if not dt.removable:
+                self.d(QUESTION, "削除", f"{data} は状態を持つので、消してよい状態を決めてください（entity の中に removable in 状態 と書く。消させないなら keep）", st.line)
+            else:
+                b = self.bindings.get(st.var, st.var)
+                if not any(g[0] == b and g[2] in dt.removable for g in self.state_guards):
+                    self.d(QUESTION, "削除", f"{data} を消す前に、状態が {', '.join(dt.removable)} のどれかだと確かめていません（if で確かめるか、消してよい状態を見直してください）", st.line)
+        info.writes.add(data)
+        info.deletes.add(data)
 
     def create(self, st: Create):
         ck, info = self.ck, self.info

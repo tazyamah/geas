@@ -399,10 +399,13 @@ class Gen:
         for kind, d, f in self.write_kinds():
             if f is None:
                 self.w(f"                Write::{d}_New(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
+            elif f == "削除":
+                self.w(f"                Write::{d}_Del(id) => {{ self.del_{d}(&id); }}")
             else:
                 # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
                 self.w(f"                Write::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
         self.w("            }\n        }\n    }")
+        self.delete_methods()
         self.w("    pub fn diff(&self, after: &Store) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
         for d in self.p.data:
             key = self.key(d.name)
@@ -419,6 +422,29 @@ class Gen:
             self.w(f"        for id in self.{d.name}.keys() {{ if !after.{d.name}.contains_key(id) {{ out.push(format!(\"{d.name}({{}})削除\", id)); }} }}")
         self.w("        out.sort();\n        out\n    }\n}\n")
 
+    def delete_methods(self):
+        """del_データ(id)：1件を消し、参照元を on delete の宣言どおりに扱う（detach＝参照を空に、cascade＝参照元も消す、leave＝そのまま）。消されうるデータ（delete と、cascade でたどれるもの）だけ作る"""
+        deleted = {d for info in self.ck.infos.values() for d in info.deletes}
+        todo, seen = sorted(deleted), []
+        while todo:
+            d = todo.pop(0)
+            if d in seen:
+                continue
+            seen.append(d)
+            dt = self.ck.data[d]
+            lines = [f"    fn del_{d}(&mut self, id: &str) {{", f"        self.{d}.remove(id);"]
+            for src, fld, pol in dt.on_delete:
+                f = next(x for x in self.ck.data[src].fields if x.name == fld)
+                if pol == "detach":
+                    lines.append(f"        for r in self.{src}.values_mut() {{ if r.{fld}.as_deref() == Some(id) {{ r.{fld} = None; }} }}")
+                elif pol == "cascade":
+                    test = f"r.{fld}.as_deref() == Some(id)" if f.type.optional else f"r.{fld} == id"
+                    lines.append(f"        let gone: Vec<String> = self.{src}.iter().filter(|(_, r)| {test}).map(|(k, _)| k.clone()).collect();")
+                    lines.append(f"        for k in gone {{ self.del_{src}(&k); }}")
+                    todo.append(src)
+            lines.append("    }")
+            self.w("\n".join(lines))
+
     def write_kinds(self):
         kinds = []
         for proc in self.p.processes:
@@ -428,6 +454,9 @@ class Gen:
                 k = (d, f or None)
                 if k not in [(a, b) for _, a, b in kinds]:
                     kinds.append(("w", d, f or None))
+            for d in sorted(info.deletes):
+                if (d, "削除") not in [(a, b) for _, a, b in kinds]:
+                    kinds.append(("w", d, "削除"))
         return kinds
 
     def writes_enum(self):
@@ -435,6 +464,8 @@ class Gen:
         for _, d, f in self.write_kinds():
             if f is None:
                 self.w(f"    {d}_New({d}),")
+            elif f == "削除":
+                self.w(f"    {d}_Del(String),")
             else:
                 t = next(x.type for x in self.ck.data[d].fields if x.name == f)
                 self.w(f"    {d}_{f}(String, {field_rust(t)}),")
@@ -828,6 +859,9 @@ class ProcGen:
             key = self.g.key(d)
             v = self.field_value(self.field_type(d, st.f), st.e, f"{d}.{st.f}")
             self.L(f"writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
+        elif isinstance(st, Delete):
+            d = self.info.lookup_vars[st.var]
+            self.L(f"writes.push(Write::{d}_Del({st.var}.{self.g.key(d)}.clone()));")
         elif isinstance(st, Create):
             dt = self.ck.data[st.data]
             key = self.ck.key_field(st.data)

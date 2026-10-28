@@ -134,6 +134,10 @@ def build_raw(ck: Checker) -> dict:
     spec["画面遷移"] = [(sc.name, "行を選ぶ", "", t) for sc in p.screens for t in sc.opens] + \
                      [(sc.name, dn, v, {"stay": "そのまま", "back": "戻る"}.get(dest, dest)) for sc in p.screens for dn, rs in sc.actions for v, dest in rs]
     from .rest import routes
+    deleted = {d for info in ck.infos.values() for d in info.deletes}
+    spec["削除"] = [(d.name, "削除させない" if d.keep else (", ".join(d.removable) or ("消せる" if d.name in deleted else "")),
+                   ", ".join(f"{s}.{f}→{ {'detach': '参照を空に', 'cascade': '参照元も消す', 'leave': 'そのまま残す'}[pol] }" for s, f, pol in d.on_delete))
+                  for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee) if pt.body is None else "= " + show(pt.body))
@@ -223,6 +227,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
         out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["画面デザイン"]]
+    if spec["削除"]:
+        out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]
     if spec["ルート"]:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。計画書との突合は未対応）", "", "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["ルート"]]
