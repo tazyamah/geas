@@ -1057,12 +1057,13 @@ class Parser:
                 rs.actions.append(ResAction(kw, self.name(), line=l2))
             elif kw in ("create", "update", "destroy"):
                 act = ResAction(kw, self.name(), line=l2)
-                self.block_open()
-                while not self.accept("}"):
-                    v = self.name()
-                    self.expect("→")
-                    act.statuses.append((v, self.num()))
-                    self.end_line()
+                if self.peek().val == "{":  # 出来事を呼ぶ create は、結果の種類を持たないので省ける
+                    self.block_open()
+                    while not self.accept("}"):
+                        v = self.name()
+                        self.expect("→")
+                        act.statuses.append((v, self.num()))
+                        self.end_line()
                 rs.actions.append(act)
             else:
                 raise self.err("resource の中は「index」「show」「create」「update」「destroy」です")

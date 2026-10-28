@@ -26,7 +26,7 @@ $("#t-save").addEventListener("click", async () => {
 });
 $("#t-reconnect").addEventListener("click", async () => {
   const d = await api("GET", "defs");
-  for (const [name, on] of Object.entries(d.screens.events_on)) if (on === "online") await api("POST", "events/" + name, {});
+  for (const [name, on] of Object.entries(d.screens.events_on)) if (on === "online") await api("POST", d.routes.find((r) => r.target === name).path, {});
   notice("つながりが戻った出来事を起こしました。"); load();
 });
 $("#t-advance").addEventListener("click", async () => { await api("POST", "test/advance", { secs: 1800 }); notice("時計を30分進めました。"); load(); });

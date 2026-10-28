@@ -263,6 +263,7 @@ flowchart LR
 | GET | /customers/:customer_id/orders | index | 顧客の注文一覧 |  |
 | GET | /awaiting_payment_orders | index | 決済の返事待ちの注文 |  |
 | GET | /product_prices/:jan | show | JANコードから価格を引く |  |
+| POST | /reconnections | create | つながりが戻った |  |
 
 ## 不変条件
 
@@ -402,6 +403,7 @@ flowchart LR
 | CustomerOrders | 既定: 顧客の注文 |
 | AwaitingPaymentOrders | 既定: 決済待ちの注文 |
 | ProductPrices | 既定: 商品の価格 |
+| Reconnections | 既定: つながりが戻った |
 
 ## 実現の報告（振る舞いの仕様には含めない）
 

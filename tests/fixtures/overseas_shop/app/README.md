@@ -40,6 +40,8 @@ SQLite に決めているのは `db.rs` だけ。別の DB に替えるなら、
 
 ## 口
 
+URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customers/:customer_id/orders`、`/product_prices/:jan` など）。結果の種類ごとの HTTP の状態も宣言どおりです（受付＝201、在庫不足＝422、注文なし＝404 …）。`create` の本文は処理の入力で、slot は `slots` に入れます。クエリ文字列は使いません。下の `/api/…` は、これまでの口で、残してあります。
+
 | 口 | 中身 |
 |---|---|
 | `GET /api/queries/{問い合わせ}?入力=値` | `{"rows":[…]}`（列のある問い合わせ）か `{"ids":[…]}` |

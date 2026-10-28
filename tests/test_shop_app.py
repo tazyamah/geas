@@ -244,3 +244,35 @@ def test_Chrome拡張がAmazonの商品ページにお店の価格を出す(serv
         pytest.skip("ポート 8787 が使用中")
     r = subprocess.run(["node", str(APP / "e2e" / "extension.js"), str(tmp_path)], env=_node_env(), capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def rest(base, method, path, body=None):
+    """resource 宣言の URL（/api は付かない）"""
+    req = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_RESTのURLで読み_結果の種類ごとの状態が返る(server):
+    b = server["base"]
+    reset_mock(b)
+    code, j = rest(b, "GET", "/products")
+    assert code == 200 and any(p["product_id"] == "tea-jp" for p in j["rows"])
+    assert rest(b, "GET", "/product_prices/4901234567894")[1]["rows"][0]["price"] in (680, 699)
+    assert rest(b, "GET", "/product_prices/12345")[0] == 400  # 境界の検査はそのまま効く
+    body = {"customer_id": "c-001", "items": {"tea-jp": 1}, "ship_to": {"country": "JP", "postal_code": "100-0001", "line": "x"}}
+    code, j = rest(b, "POST", "/orders", {**body, "slots": {"currency": "USD"}})
+    assert (code, j["result"]) == (422, "OtherCurrency")  # 通貨が違う
+    code, j = rest(b, "POST", "/orders", {**body, "customer_id": "c-999", "slots": {"currency": "JPY"}})
+    assert (code, j["result"]) == (404, "NoSuchCustomer")
+    code, j = rest(b, "POST", "/orders", {**body, "slots": {"currency": "JPY"}})
+    assert (code, j["result"]) == (201, "Received")
+    code, j = rest(b, "GET", "/customers/c-001/orders")
+    assert code == 200 and any(r["order_id"] == j2 for j2 in [rest(b, "GET", "/customers/c-001/orders")[1]["rows"][-1]["order_id"]] for r in j["rows"])
+    assert rest(b, "POST", "/order_settlements", {"order_id": "nothing"})[0] == 404  # 注文なし
+    assert rest(b, "POST", "/reconnections", {})[0] == 201
+    assert rest(b, "GET", "/nothing")[0] == 404

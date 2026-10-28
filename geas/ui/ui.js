@@ -12,14 +12,16 @@ let cur = null;                    // いまの画面 {name, params}
 const slotVal = {};                // slot 名 → 選んだ値
 let qty = {};                      // 写像の入力欄 → {行のID: 数}
 
-async function api(method, path, body) {
-  const r = await fetch("/api/" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+let ROUTE = {};                    // 処理・問い合わせ・出来事の名前 → resource の URL（defs の routes）
+async function api(method, path, body, keep) {
+  const r = await fetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
   return j;
 }
+const urlOf = (name, args) => ROUTE[name].path.replace(/:[a-z_]+/, encodeURIComponent(Object.values(args || {})[0] ?? ""));  // 条件はパスで渡す（クエリ文字列は使わない）
 const query = async (name, args) => {
-  const j = await api("GET", "queries/" + name + (args && Object.keys(args).length ? "?" + new URLSearchParams(args) : ""));
+  const j = await api("GET", urlOf(name, args));
   return (rowsOf[name] = j.rows || (j.ids || []).map((id) => ({ id })));
 };
 
@@ -184,7 +186,7 @@ async function act(sc, a) {
   const slots = Object.fromEntries(sc.slots.map((s) => [s.name, slotVal[s.name]]));
   const btn = $(`[data-action="${a.deed}"]`); btn.disabled = true;
   try {
-    const r = await api("POST", "deeds/" + a.deed, { input, slots });
+    const r = await api("POST", ROUTE[a.deed].path, { ...input, slots }, true);
     const rt = a.routes.find((x) => x.result === r.result);
     const b = r.body || {};
     const detail = (rt?.body || []).filter((p) => b[p.name] !== undefined && !(Array.isArray(b[p.name]) && !b[p.name].length)).map((p) => `${p.label} ${bodyText(b[p.name])}`).join("　");
@@ -230,7 +232,7 @@ document.addEventListener("click", (e) => {
 
 // ---- 出来事・つながり ----
 async function fire(name) {
-  try { await api("POST", "events/" + name, {}); } catch (e) { notice("確かめ直せません: " + e.message, "warn"); }
+  try { await api("POST", ROUTE[name].path, {}); } catch (e) { notice("確かめ直せません: " + e.message, "warn"); }
   if (cur) await Promise.all(S[cur.name].shows.map((q) => loadShow(S[cur.name], q).catch(() => {})));
 }
 const eventsOn = (when) => Object.entries(D.screens.events_on).filter(([, on]) => on === when).map(([n]) => n);
@@ -251,6 +253,7 @@ setInterval(() => {
   try { D = await api("GET", "defs"); store.set("defs", JSON.stringify(D)); }
   catch (e) { const c = store.get("defs"); if (!c) throw e; D = JSON.parse(c); }
   S = D.screens.screens; Q = D.screens.queries;
+  ROUTE = Object.fromEntries(D.routes.map((r) => [r.target, r]));
   document.title = D.screens.title;
   $("#app-title").textContent = D.screens.title;
   $("#tabs").innerHTML = D.screens.order.map((n) => [n, S[n]]).filter(([, s]) => !s.params.length && s.entry === (s === S[D.screens.first])).map(([n, s]) => `<button data-screen="${n}">${esc(s.label)}</button>`).join("");
