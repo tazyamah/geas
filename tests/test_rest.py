@@ -67,3 +67,11 @@ def test_同じ処理を2か所に割り当てられない_URLの重なりもエ
 def test_割り当てのない処理は警告():
     ck = chk(mutate(CODE, "/// 商品\nresource Products {\n  index product_list\n}\n", ""))
     assert any("product_list" in d.where or "商品一覧" in d.where for d in ck.diags if d.level == WARN)
+
+
+def test_画面はリソースの動作のURLに付き_割り当て漏れと重なりは誤り():
+    from geas.rest import screen_url
+    ck = chk(CODE)
+    urls = {sc.name: screen_url(ck.p, sc) for sc in ck.p.screens}
+    assert urls  # 画面があるなら URL が付く
+    assert all(u.startswith("/") for u in urls.values() if u)
