@@ -71,6 +71,7 @@ def build(ck: Checker) -> dict:
     names = spec["名前"]
     spec = show_all(ck.p, spec)
     spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st)) for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
+    spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
 
@@ -232,7 +233,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]
     if spec["ルート"]:
-        out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。計画書との突合は未対応）", "", "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |", "|---|---|---|---|---|"]
+        out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき）", "", "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["ルート"]]
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:

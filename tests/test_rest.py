@@ -75,3 +75,27 @@ def test_画面はリソースの動作のURLに付き_割り当て漏れと重�
     urls = {sc.name: screen_url(ck.p, sc) for sc in ck.p.screens}
     assert urls  # 画面があるなら URL が付く
     assert all(u.startswith("/") for u in urls.values() if u)
+
+
+PLAN = (Path(__file__).parent / "fixtures" / "overseas_shop" / "overseas_shop_plan.md").read_text()
+
+
+def _compare(plan):
+    from geas.plan import compare_static, read_plan
+    return compare_static(build(chk(CODE)), read_plan(plan))
+
+
+def test_計画書のルートの表と突合する():
+    assert _compare(PLAN) == []
+    # 経路が違う／状態が違う／計画に無いルート
+    f = _compare(PLAN.replace("| POST | /order_settlements |", "| POST | /order_settlement |"))
+    assert any("ルート POST /order_settlement" in x.where and "コードから生成した仕様書に無い" in x.msg for x in f)
+    f = _compare(PLAN.replace("注文なし→404, 状態違い→409 |\n| POST | /order_completions", "注文なし→400, 状態違い→409 |\n| POST | /order_completions", 1))
+    assert any("結果→状態" in x.where for x in f)
+    f = _compare(PLAN.replace("| GET | /products | index | 商品一覧 |  |\n", ""))
+    assert any("ルート GET /products" in x.where for x in f)
+
+
+def test_計画書の画面のURLが違えば食い違う():
+    f = _compare(PLAN.replace("| /orders/new |", "| /orders/add |"))
+    assert any("画面 注文の画面 のURL" in x.where for x in f)
