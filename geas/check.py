@@ -855,6 +855,21 @@ class Checker:
             if (m, path) in seen_routes:
                 self.d(ERROR, "リソース", f"リソース {rn}", f"{m} {path} が {seen_routes[(m, path)]} と重なります")
             seen_routes[(m, path)] = rn
+        urls: dict[str, str] = {}
+        for sc in p.screens:  # 画面は、リソースの動作（URL）に付く。見せる問い合わせと呼ぶ処理が、どれかのリソースに割り当てられていること
+            where = f"画面 {sc.name}"
+            for qn in sc.shows:
+                if qn not in used:
+                    self.d(ERROR, "リソース", where, f"見せる問い合わせ「{qn}」が、どのリソースの index／show にも割り当てられていません")
+            for dn, _ in sc.actions:
+                if dn not in used:
+                    self.d(ERROR, "リソース", where, f"操作の処理「{dn}」が、どのリソースの create／update／destroy にも割り当てられていません")
+            from .rest import screen_url
+            u = screen_url(p, sc)
+            if u and u in urls:
+                self.d(ERROR, "リソース", where, f"URL {u} が、画面 {urls[u]} と重なります（1つの URL に画面は1つ）")
+            if u:
+                urls[u] = sc.name
         for pr in p.processes:
             if pr.name not in used:
                 self.d(WARN, "リソース", f"処理 {pr.name}", "どのリソースの動作にも割り当てていません（外から呼べません）")

@@ -281,7 +281,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         sj = screens_json(ck)
         entries = [show(s.name) for i, s in enumerate(p.screens) if i == 0 or s.entry]
         add("screens", "画面の遷移", f'<pre class="mermaid">{escape(screen_graph(ck))}</pre>'
-            + table(["画面", "見せる", "入力欄（←選ぶ元）", "受け取る値", "入口", "選ばせる slot"], [tuple(show(c) for c in x) for x in spec["画面"]]
+            + table(["画面", "見せる", "入力欄（←選ぶ元）", "受け取る値", "入口", "選ばせる slot", "URL"], [tuple(show(c) for c in x) for x in spec["画面"]]
                     ) + "<h3>遷移の表</h3>" + table(["画面", "操作", "結果", "行き先"], spec["画面遷移"]))
         wfs = []
         for n, s in sj.items():

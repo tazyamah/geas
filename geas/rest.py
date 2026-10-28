@@ -41,3 +41,18 @@ def routes(p) -> list[tuple]:
                 path += "/:" + (res.key or "id")
             out.append((METHOD[a.kind], path, a.kind, a.target, res.name, list(a.statuses)))
     return out
+
+
+def screen_url(p, sc) -> str:
+    """画面の URL（html の形式）。操作のある画面は、その処理を create するリソースの /new（入力欄を教える画面）、見せるだけの画面は、見せる問い合わせの URL。
+    画面に渡す値（受け取る値）は、URL のフラグメント（#名前=値）に載せる。クエリ文字列は使わない。リソースが無ければ空"""
+    by = {tgt: (path, kind) for _, path, kind, tgt, _, _ in routes(p)}
+    for dn, _ in sc.actions:
+        if dn in by and by[dn][1] == "create":
+            return by[dn][0] + "/new"
+        if dn in by and by[dn][1] == "update":
+            return by[dn][0] + "/edit"
+    for qn in sc.shows:
+        if qn in by:
+            return by[qn][0]
+    return ""
