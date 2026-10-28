@@ -167,14 +167,15 @@ def state_graphs(spec) -> list[tuple[str, str]]:
 
 CSS = """
 :root{--bg:#fafaf8;--fg:#1c1c1a;--mut:#62625c;--line:#d9d8d2;--card:#fff;--acc:#0b5cad;--warn:#8a5a00;--bad:#b3261e;--ok:#1b6e3c}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#161615;--fg:#ececea;--mut:#a3a39b;--line:#3a3a36;--card:#20201e;--acc:#6aa8ee;--warn:#e0a63c;--bad:#f2867f;--ok:#6cc58d}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#161615;--fg:#ececea;--mut:#a3a39b;--line:#3a3a36;--card:#20201e;--acc:#6aa8ee;--warn:#e0a63c;--bad:#f2867f;--ok:#6cc58d;color-scheme:dark}}
+:root[data-theme=dark]{--bg:#161615;--fg:#ececea;--mut:#a3a39b;--line:#3a3a36;--card:#20201e;--acc:#6aa8ee;--warn:#e0a63c;--bad:#f2867f;--ok:#6cc58d;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
-main{max-width:980px;margin:0 auto;padding:16px}h1{font-size:1.5rem;margin:.6em 0 .2em}h2{font-size:1.2rem;margin:2em 0 .5em;padding-top:.6em;border-top:1px solid var(--line)}h3{font-size:1rem;margin:1.2em 0 .4em}
+main{max-width:980px;margin:0 auto;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}h1{font-size:1.5rem;margin:.6em 0 .2em}h2{font-size:1.2rem;margin:2em 0 .5em;padding-top:.6em;border-top:1px solid var(--line)}h3{font-size:1rem;margin:1.2em 0 .4em}
 .sub{color:var(--mut);font-size:.9rem}nav{display:flex;flex-wrap:wrap;gap:6px 14px;margin:.8em 0;font-size:.9rem}nav a{color:var(--acc)}
 .tw{overflow-x:auto;margin:.5em 0}table{border-collapse:collapse;font-size:.88rem;min-width:100%}th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}th{background:var(--card);white-space:nowrap}
 code{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:.85em}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:.6em 0}.q{border-left:4px solid var(--warn)}.q.bad{border-color:var(--bad)}
-.ok{color:var(--ok)}.mermaid{overflow-x:auto;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px}
+.ok{color:var(--ok)}.mermaid{overflow-x:auto;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;margin:.5em 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
 .wf{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}.wf header{padding:6px 10px;color:#fff;font-size:.9rem}.wf .body{padding:10px;display:grid;gap:6px;min-height:90px}
 .wf .bar{background:var(--line);border-radius:4px;height:14px}.wf .tile{background:var(--line);border-radius:6px;height:46px}.wf .g{display:grid;grid-template-columns:1fr 1fr;gap:6px}.wf .btn{border-radius:6px;height:22px}
@@ -226,7 +227,8 @@ def tbl(spec, key, head):
     return table(head, spec[key])
 
 
-def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None, name: str = "") -> str:
+def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None, name: str = "", fragment: bool = False) -> str:
+    """fragment=True は、<head> などの外枠と Mermaid の読み込みを持たない本文だけ（Artifact として公開する用）"""
     p, show = ck.p, ck.p.show_names
     ucs = usecases(read_plan(plan_md).get("ユースケース", [])) if plan_md else {}
     spec = build(ck)
@@ -255,7 +257,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if p.screens:
         sj = screens_json(ck)
         entries = [show(s.name) for i, s in enumerate(p.screens) if i == 0 or s.entry]
-        add("screens", "画面の遷移", f'<div class="mermaid">{escape(screen_graph(ck))}</div>'
+        add("screens", "画面の遷移", f'<pre class="mermaid">{escape(screen_graph(ck))}</pre>'
             + table(["画面", "見せる", "入力欄", "受け取る値", "入口"], [(show(a), show(b), show(c), show(d), e) for a, b, c, d, e in [(x[0], x[1], x[2], x[3], x[4]) for x in build(ck)["画面"]]]
                     ) + "<h3>遷移の表</h3>" + table(["画面", "操作", "結果", "行き先"], spec["画面遷移"]))
         wfs = []
@@ -277,12 +279,12 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
 
     # 仕様
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
-    gs = "".join(f'<h3>{escape(d)}</h3><div class="mermaid">{escape(g)}</div>' for d, g in state_graphs(spec))
+    gs = "".join(f'<h3>{escape(d)}</h3><pre class="mermaid">{escape(g)}</pre>' for d, g in state_graphs(spec))
     add("states", "状態と遷移", gs + table(["データ", "状態", "区分"], spec["状態"]) + "<h3>遷移</h3>" + table(["データ", "元", "先", "起こす処理"], spec["遷移"])
         + ("<h3>拒否</h3>" + table(["データ", "元", "先", "理由"], spec["拒否"]) if spec["拒否"] else ""))
     procs = [(x["処理"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["書く"]), " / ".join(f"{v}→{d}" for v, d in x["結果"]), ", ".join(x["外部"]) or "なし") for x in spec["処理"]]
     add("deeds", "処理", table(["処理", "入力", "読む", "書く", "結果 → 行き先", "外部作用"], procs))
-    add("flows", "処理のつながり", "".join(f'<h3>{escape(show(f.name))}（×＝結果で行き先が分かれる、＋＝並列に起こす）</h3><div class="mermaid">{escape(show(chr(10).join(flow_diagram(f))))}</div>' for f in p.flows))
+    add("flows", "処理のつながり", "".join(f'<h3>{escape(show(f.name))}（×＝結果で行き先が分かれる、＋＝並列に起こす）</h3><pre class="mermaid">{escape(show(chr(10).join(flow_diagram(f))))}</pre>' for f in p.flows))
     if spec["問い合わせ"]:
         add("queries", "問い合わせ", table(["問い合わせ", "入力", "読む", "条件", "並び", "ページ"],
                                      [(x["問い合わせ"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["条件"]), x["並び"], x["ページ"]) for x in spec["問い合わせ"]]))
@@ -296,10 +298,11 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
 
     nav = "".join(f'<a href="#{a}">{escape(t)}</a>' for a, t, _ in sec)
     title = f"仕様書 {name}".strip()
+    body = (f'<main><h1>{escape(title)}</h1><p class="sub">コードから生成した人向けの仕様書です。直さずに、会話で答えてコードを変えます。</p><nav>{nav}</nav>'
+            + "".join(h for _, _, h in sec) + f'</main><script>{JS if p.screens else ""}</script>')
+    if fragment:
+        return f'<meta name="claude:viewport-fit-sides" content="cover"><title>{escape(title)}</title><style>{CSS}body{{background:var(--bg);color:var(--fg)}}</style>{body}'
     return (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title>'
-            f"<style>{CSS}</style></head><body><main><h1>{escape(title)}</h1>"
-            f'<p class="sub">コードから生成した人向けの仕様書です。直さずに、会話で答えてコードを変えます。</p><nav>{nav}</nav>'
-            + "".join(h for _, _, h in sec)
-            + f'</main><script>{JS if p.screens else ""}</script><script src="{MERMAID}"></script><script>'
-              'if(window.mermaid)mermaid.initialize({startOnLoad:true,theme:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default",flowchart:{useMaxWidth:true,htmlLabels:false}});'
+            f'<style>{CSS}body{{background:var(--bg);color:var(--fg)}}</style></head><body>{body}<script src="{MERMAID}"></script><script>'
+            'if(window.mermaid)mermaid.initialize({startOnLoad:true,theme:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default",flowchart:{useMaxWidth:true,htmlLabels:false}});'
             "</script></body></html>")
