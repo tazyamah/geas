@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """page を持つ screen（ブラウザ拡張の画面）から、Chrome 拡張を作る。
 拡張のファイル（background.js・content.js・popup）は、お店を知らない汎用のもの（geas/ext）で、ここで作る defs.js だけで動く。
-手で書く部分は、ページから値を読む reader.js だけ（self.GeasReader.read(url, document, config) が { subject, value, source } を返す）。"""
+ページから値を読む reader.js も汎用で、読み方は screen の read（defs.js の read）で決まる。手で書く部分は無い。"""
 import json
 import shutil
 from pathlib import Path
@@ -25,20 +25,20 @@ def defs_of(ck, sc, server: str) -> dict:
     return {
         "title": title, "label": show(sc.name), "about": f"ページを開くと、{title}の「{show(qn)}」を表示します。",
         "server": server, "route": {"method": route[0], "path": route[1]},
-        "input": {**qd["inputs"][0], "label": show(qd["inputs"][0]["name"])}, "columns": qd["columns"], "minor": CURRENCY_MINOR,
+        "input": {**qd["inputs"][0], "label": show(qd["inputs"][0]["name"]), "check": ck.queries[qn].inputs[0][1].check or ""},
+        "read": {"subject": sc.read.subject, "urls": sc.read.urls, "elements": [list(e) for e in sc.read.elements], "rows": sc.read.value_rows, "lookup": sc.read.lookup}, "columns": qd["columns"], "minor": CURRENCY_MINOR,
         "texts": {"loading": "調べています…", "unknown": "この商品の{input}が分かりません（{subject}）。",
                   "none": f"この商品は、{title}では扱っていません（{{input}} {{value}}）。", "open": f"{title}を開く",
                   "failed": "調べられません", "offline": f"{title}のサーバーにつながりません"},
     }
 
 
-def write_ext(ck, dest, reader: Path, server: str = DEFAULT_SERVER) -> None:
+def write_ext(ck, dest, server: str = DEFAULT_SERVER) -> None:
     sc = ext_screens(ck)[0]
     out = Path(dest) / "ext"
     out.mkdir(parents=True, exist_ok=True)
     for f in (Path(__file__).parent / "ext").iterdir():
         shutil.copy(f, out / f.name)
-    shutil.copy(reader, out / "reader.js")
     d = defs_of(ck, sc, server)
     (out / "defs.js").write_text("self.GEAS_EXT = " + json.dumps(d, ensure_ascii=False, indent=1) + ";\n")
     origin = server.rstrip("/") + "/*"

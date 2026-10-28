@@ -3,6 +3,6 @@
 # 使い方: ./build.sh   →   cd generated/server && ./target/release/geas_server
 set -e
 cd "$(dirname "$0")/../../../.."
-python -m geas rust tests/fixtures/overseas_shop/overseas_shop.geas -o tests/fixtures/overseas_shop/app/generated --host --runtime --seed tests/fixtures/overseas_shop/app/seed.json --reader tests/fixtures/overseas_shop/app/extension/reader.js
+python -m geas rust tests/fixtures/overseas_shop/overseas_shop.geas -o tests/fixtures/overseas_shop/app/generated --host --runtime --seed tests/fixtures/overseas_shop/app/seed.json
 cd tests/fixtures/overseas_shop/app/generated/server
 cargo build --release

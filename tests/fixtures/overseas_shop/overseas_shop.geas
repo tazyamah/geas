@@ -600,6 +600,15 @@ screen MyOrders {
 /// 価格の確認の画面（Chrome 拡張）
 screen PriceCheck entry {
   page "*://www.amazon.co.jp/*", "*://www.amazon.com/*"
+  read {
+    subject ASIN url "/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)"
+    subject ASIN element "input#ASIN" matches "[A-Z0-9]{10}"
+    value row "JAN", "EAN", "GTIN"
+    value lookup "B0SHOPTEA1": "4901234567894"
+    value lookup "B0SHOPKNF1": "4909876543214"
+    value lookup "B0SHOPBWL1": "4911112222333"
+    value lookup "B0SHOPVSE1": "4922223333443"
+  }
   field jan
   show price_by_jan
   design {

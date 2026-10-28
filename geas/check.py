@@ -9,8 +9,18 @@ from math import ceil, floor
 from .ast import *  # noqa: F401,F403
 from .names import label_gaps, name_problems
 
+
+def valid_gtin(s: str) -> bool:
+    """JAN・EAN・UPC の検査数字（右から2桁目を3倍、次を1倍…の合計が10の倍数）。長さは 8・12・13・14"""
+    if not s.isdigit() or len(s) not in (8, 12, 13, 14):
+        return False
+    return sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(reversed(s))) % 10 == 0
+
+
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
+
+
 def unit_label(u: str) -> str:
     """単位の記号を人向けの言葉に（$名前 は同じ入力・slot の通貨、@… は保存した1件の通貨の項目）"""
     return SHOW_JA.get(u, "別の通貨" if u[:1] in "$@" else u)
@@ -681,6 +691,31 @@ class Checker:
             if e.replies is not None and e.replies not in reps:
                 self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
 
+    def check_read(self, sc, where):
+        """拡張の画面の read：ページから値を読む取り決め。subject の読み方と value の読み方があり、正規表現が正しく、対応表の値が入力の検査を通ること"""
+        rd = sc.read
+        if rd is None:
+            self.d(ERROR, "画面", where, "page を持つ画面（ブラウザ拡張）には、ページから値を読む read が要ります")
+            return
+        if not (rd.urls or rd.elements):
+            self.d(ERROR, "画面", where, "read に subject（url か element）がありません")
+        if not (rd.value_rows or rd.lookup):
+            self.d(ERROR, "画面", where, "read に value（row か lookup）がありません")
+        pats = [(u, True) for u in rd.urls] + [(m, False) for _, m in rd.elements if m]
+        for pat, need_group in pats:
+            try:
+                rx = re.compile(pat)
+            except re.error as e:
+                self.d(ERROR, "画面", where, f"read の正規表現「{pat}」が正しくありません（{e}）")
+                continue
+            if need_group and rx.groups < 1:
+                self.d(ERROR, "画面", where, f"read の url の正規表現「{pat}」には、値を取り出す ( ) が要ります")
+        ty = self.queries[sc.shows[0]].inputs[0][1]
+        if ty.check == "gtin":
+            for k, v in rd.lookup.items():
+                if not valid_gtin(v):
+                    self.d(ERROR, "画面", where, f"read の lookup「{k}」の値「{v}」は、検査数字（gtin）が合っていません")
+
     def check_slot_rules(self):
         """slot の値の決め方（rule）。決める slot が処理にあり、条件の名前が使え、最後が default で、値の種類が合うこと"""
         seen = set()
@@ -948,6 +983,8 @@ class Checker:
                 one = len(sc.shows) == 1 and self.queries.get(sc.shows[0]) is not None and len(self.queries[sc.shows[0]].inputs) == 1
                 if not one or sc.actions or sc.opens or sc.params:
                     self.d(ERROR, "画面", where, "page を持つ画面（ブラウザ拡張）は、入力を1つだけ持つ問い合わせを1つ見せるだけにしてください（操作・open・受け取る値は持てません）")
+                if one:
+                    self.check_read(sc, where)
                 for pg in sc.pages:
                     if not re.match(r"^(\*|https?)://[^/]+/.*$", pg):
                         self.d(ERROR, "画面", where, f"page「{pg}」は URL のパターンではありません（例 \"*://www.example.com/*\"）")
