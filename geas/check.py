@@ -771,6 +771,11 @@ class Checker:
                 w = f"{where} / {a.kind} {a.target}"
                 is_q = a.kind in ("index", "show")
                 tgt = self.queries.get(a.target) if is_q else self.procs.get(a.target)
+                if tgt is None and a.kind == "create" and any(e.name == a.target for e in p.events):  # 出来事を起こす（結果の種類は持たない）
+                    used[a.target] = f"{res.name}.create"
+                    if a.statuses:
+                        self.d(ERROR, "リソース", w, "出来事を起こす create は、結果の種類を持たないので、状態の対応は書けません")
+                    continue
                 if tgt is None:
                     self.d(ERROR, "リソース", w, f"{'問い合わせ' if is_q else '処理'}「{a.target}」が未定義です（{a.kind} が呼べるのは{'問い合わせ' if is_q else '処理'}です）")
                     continue
@@ -815,6 +820,9 @@ class Checker:
         for q in p.queries:
             if q.name not in used:
                 self.d(WARN, "リソース", f"問い合わせ {q.name}", "どのリソースの動作にも割り当てていません（外から読めません）")
+        for e in p.events:
+            if e.name not in used:
+                self.d(WARN, "リソース", f"出来事 {e.name}", "どのリソースの create にも割り当てていません（外から起こせません）")
 
     def check_screens(self):
         """画面の検査。見せる問い合わせ・呼ぶ処理・行き先が実在し、処理の入力が入力欄か受け取る値で埋まり、

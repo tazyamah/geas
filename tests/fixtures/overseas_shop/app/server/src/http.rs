@@ -3,6 +3,8 @@
 //!   POST /api/deeds/{名前}  {input, slots}   処理    → {"result","body","trace"}
 //!   POST /api/events/{名前} {input}          出来事  → {"event","runs"}
 //!   GET/POST /api/test/…                     テスト用の操作（模擬の設定・時計・外部作用の記録）
+//! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
+//!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
 //! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
 //! --dev のフォルダ（開発用の模擬操作）は、pwa に無いファイルだけを配る。
 use crate::engine::Engine;
@@ -104,7 +106,9 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
     let method = req.method().clone();
     let mut body = String::new();
     let _ = req.as_reader().read_to_string(&mut body);
-    let resp = if let Some(rest) = path.strip_prefix("/api/") {
+    let resp = if let Some(r) = rest_route(engine, &method, path, &body) {
+        r
+    } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
         if parsed.is_null() {
             json_resp(400, json!({ "error": "本文が JSON ではありません" }))
@@ -125,6 +129,63 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
         json_resp(404, json!({ "error": "ありません" }))
     };
     let _ = req.respond(resp);
+}
+
+/// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None
+fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+    let verb = match method {
+        Method::Get => "GET",
+        Method::Post => "POST",
+        Method::Put => "PUT",
+        Method::Delete => "DELETE",
+        _ => return None,
+    };
+    let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let mut en = engine.lock().unwrap();
+    let routes = en.defs["routes"].as_array().cloned().unwrap_or_default();
+    for r in routes {
+        if r["method"] != verb {
+            continue;
+        }
+        let pat = r["path"].as_str().unwrap_or("").trim_matches('/').to_string();
+        let ps: Vec<&str> = pat.split('/').collect();
+        if ps.len() != segs.len() {
+            continue;
+        }
+        let mut caps: Vec<String> = Vec::new();
+        if !ps.iter().zip(&segs).all(|(p, s)| if p.starts_with(':') { caps.push(decode(s)); true } else { p == s }) {
+            continue;
+        }
+        let target = r["target"].as_str().unwrap_or("").to_string();
+        let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(body).unwrap_or(Value::Null) };
+        if parsed.is_null() {
+            return Some(json_resp(400, json!({ "error": "本文が JSON ではありません" })));
+        }
+        let out: Result<(u16, Value), (u16, String)> = match r["kind"].as_str().unwrap_or("") {
+            "index" | "show" => {
+                let mut args = Map::new();
+                if let (Some(c), Some(name)) = (caps.first(), en.defs["queries"][&target]["inputs"][0].as_str()) {
+                    args.insert(name.to_string(), Value::String(c.clone()));
+                }
+                en.query(&target, &Value::Object(args)).map(|v| (200, v)).map_err(|m| (400, m))
+            }
+            "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(|m| (400, m)),
+            "create" => {
+                let mut input = parsed.clone();
+                let slots = input.as_object_mut().and_then(|m| m.remove("slots")).unwrap_or(json!({}));
+                en.run(&target, &input, &slots).map(|v| {
+                    let code = v["result"].as_str().and_then(|k| r["statuses"][k].as_u64()).unwrap_or(200) as u16;
+                    (code, v)
+                }).map_err(|m| (400, m))
+            }
+            k => Err((501, format!("動作 {} はまだ実装していません", k))),
+        };
+        return Some(match out {
+            Ok((code, v)) => json_resp(code, v),
+            Err((code, m)) => json_resp(code, json!({ "error": m })),
+        });
+    }
+    None
 }
 
 fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value) -> Result<Value, (u16, String)> {

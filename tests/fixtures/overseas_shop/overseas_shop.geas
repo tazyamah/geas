@@ -659,3 +659,8 @@ resource AwaitingPaymentOrders {
 resource ProductPrices key jan {
   show price_by_jan
 }
+
+/// つながりが戻った
+resource Reconnections {
+  create Reconnected
+}

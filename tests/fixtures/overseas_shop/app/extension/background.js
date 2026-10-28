@@ -13,7 +13,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, send) => {
     (async () => {
       try {
         const b = await base();
-        const r = await fetch(`${b}/api/queries/price_by_jan?jan=${encodeURIComponent(msg.jan)}`);
+        const r = await fetch(`${b}/product_prices/${encodeURIComponent(msg.jan)}`);
         const j = await r.json();
         send(r.ok ? { ok: true, rows: j.rows || [], shop: b } : { ok: false, error: j.error || r.statusText });
       } catch (e) {
