@@ -194,6 +194,7 @@ class Screen:
     actions: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)  # (処理, [(結果の種類, 行き先)])。行き先は画面名か stay／back
     design: dict = field(default_factory=dict)
     entry: bool = False  # 別の入口（拡張など、ほかの画面から来ない画面）。最初に宣言した画面も入口
+    pages: list[str] = field(default_factory=list)  # ブラウザ拡張として出るページ（URL のパターン）。あれば、この画面は拡張の画面
     line: int = 0
 
 

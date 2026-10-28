@@ -4,7 +4,7 @@ const assert = require("assert");
 const path = require("path");
 const { chromium } = require("playwright");
 
-const EXT = path.resolve(__dirname, "../extension");
+const EXT = path.resolve(__dirname, "../server/generated/ext");
 const work = process.argv[2] || require("os").tmpdir();
 
 const html = (body) => `<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body><h1>商品</h1>${body}</body></html>`;
@@ -29,7 +29,7 @@ const PAGES = {
   const box = async (url) => {
     await page.goto(url);
     await page.waitForTimeout(1800);
-    const b = page.locator("#shop-price-box");
+    const b = page.locator("#geas-ext-box");
     return (await b.count()) ? (await b.innerText()).replace(/\s+/g, " ") : null;
   };
   let t = await box("https://www.amazon.co.jp/dp/B0SHOPTEA1");
@@ -37,9 +37,9 @@ const PAGES = {
   t = await box("https://www.amazon.co.jp/gp/product/B0PAGEJAN1");
   assert.ok(t.includes("￥8,800") && t.includes("$79.00") && t.includes("ページから"), t);
   t = await box("https://www.amazon.co.jp/dp/B0UNKNOWN1");
-  assert.ok(t.includes("JAN が分かりません"), t);
+  assert.ok(t.includes("JANコードが分かりません"), t);
   t = await box("https://www.amazon.co.jp/dp/B0BADJAN01");
-  assert.ok(t.includes("JAN が分かりません"), t); // 最後の1桁が合わない JAN は、拡張でも問い合わせない
+  assert.ok(t.includes("JANコードが分かりません"), t); // 最後の1桁が合わない JAN は、拡張でも問い合わせない
   t = await box("https://www.amazon.co.jp/dp/B0NOTSOLD1");
   assert.ok(t.includes("扱っていません"), t);
   assert.strictEqual(await box("https://www.amazon.co.jp/"), null, "商品ページでなければ出さない");

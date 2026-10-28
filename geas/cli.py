@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from .check import ERROR, check
+from .extgen import ext_screens, write_ext
 from .examples import ExampleError, compare_examples, run_crate, runner_source, write_crate
 from .modules import ModuleError
 from .parser import ParseError, parse
@@ -81,6 +82,8 @@ def main(argv=None) -> int:
     r.add_argument("-o", required=True)
     r.add_argument("--plan", help="具体例の実行用 bin も生成する")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
+    r.add_argument("--reader", help="page を持つ画面（ブラウザ拡張）の、ページから値を読む reader.js（手で書く部分）")
+    r.add_argument("--server", default="http://localhost:8787", help="拡張が問い合わせるサーバーの既定の URL")
     m = sub.add_parser("compare", help="plan の仕様書（①）とコードの突合。具体例も実行する")
     m.add_argument("code")
     m.add_argument("plan")
@@ -121,6 +124,11 @@ def main(argv=None) -> int:
         for p in problems:
             print(f"{p.kind}: {p.where}: {p.msg}")
         write_crate(ck, lib, src, Path(a.o), host=a.host)
+        if a.host and ext_screens(ck):
+            if not a.reader:
+                print("page を持つ画面（ブラウザ拡張）があるので、--reader（ページから値を読む reader.js）を渡してください。", file=sys.stderr)
+                return 1
+            write_ext(ck, a.o, Path(a.reader), a.server)
         print(f"生成しました: {a.o}")
         return 0
     plan = read_plan(Path(a.plan).read_text())

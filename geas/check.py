@@ -889,6 +889,13 @@ class Checker:
             where = f"画面 {sc.name}"
             if not (sc.shows or sc.actions or sc.opens):
                 self.d(WARN, "画面", where, "見せるものも、操作もありません")
+            if sc.pages:  # ブラウザ拡張の画面：ページで読んだ値で問い合わせて、結果を見せるだけ
+                one = len(sc.shows) == 1 and self.queries.get(sc.shows[0]) is not None and len(self.queries[sc.shows[0]].inputs) == 1
+                if not one or sc.actions or sc.opens or sc.params:
+                    self.d(ERROR, "画面", where, "page を持つ画面（ブラウザ拡張）は、入力を1つだけ持つ問い合わせを1つ見せるだけにしてください（操作・open・受け取る値は持てません）")
+                for pg in sc.pages:
+                    if not re.match(r"^(\*|https?)://[^/]+/.*$", pg):
+                        self.d(ERROR, "画面", where, f"page「{pg}」は URL のパターンではありません（例 \"*://www.example.com/*\"）")
             covered: set[str] = set()
             have = {n for n, _ in sc.params}
             for qn in sc.shows:
