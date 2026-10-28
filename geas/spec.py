@@ -130,7 +130,7 @@ def build_raw(ck: Checker) -> dict:
     reps = {r.name: r for r in p.replies}
     spec["模擬"] = [(e.name, e.replies, " ／ ".join(on + (f"（{', '.join(g)}）" if g else "") for on, g in (reps[e.replies].outcomes or [("平常", [n for n, _ in reps[e.replies].params])])))
                   for e in p.effects if e.replies and e.replies in reps]
-    spec["決め方"] = [(f.slot, " かつ ".join(f"{pa} = {v}" for pa, v in conds) or "上のどれでもない", str(val)) for f in p.fills for conds, val in f.rows]
+    spec["決め方"] = [(f.slot, " かつ ".join(f"{pa} = {v}" for pa, v in conds) or "上のどれでもない", str(val)) for f in p.rules for conds, val in f.rows]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
     spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]

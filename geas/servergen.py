@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """サーバーの実行部（geas/server）を、生成物と一緒に dest/server に置く。アプリを知らない汎用の crate で、
-生成した Geas の crate（dest）を path 依存で組む。外から埋める値（slot）の決め方は仕様の fill、最初のデータは seed.json（geas rust --seed）で、
+生成した Geas の crate（dest）を path 依存で組む。外から埋める値（slot）の決め方は仕様の rule、最初のデータは seed.json（geas rust --seed）で、
 手で書くコードは無い。"""
 import shutil
 from pathlib import Path

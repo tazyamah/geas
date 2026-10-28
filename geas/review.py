@@ -335,7 +335,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             + (("<h3>外から返ってくる内容</h3>" + table(["応答", "中身"], spec["応答"])) if spec["応答"] else "")
             + (("<h3>開発用の模擬（返事の結果の種類。先頭が平常）</h3>" + table(["外部作用", "返ってくる応答", "結果の種類（返事に入る中身）"], spec["模擬"])) if spec["模擬"] else ""))
     if spec["決め方"]:
-        add("fills", "slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値）", table(["slot", "条件", "値"], spec["決め方"]))
+        add("rules", "slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値）", table(["slot", "条件", "値"], spec["決め方"]))
     if spec["出来事"]:
         add("events", "外の出来事", table(["出来事", "起こし方", "処理"], spec["出来事"]))
     if spec["削除"]:

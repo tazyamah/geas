@@ -1,5 +1,5 @@
 //! 外から埋める値（slot）と新しい ID を、仕様の定義（defs）から埋める。アプリを知らない汎用のもの。
-//! 通貨のように利用者が選ぶ slot は呼び出し元（requested）から、税率・送料のようにサーバーが決める slot は、仕様の fill の表から。
+//! 通貨のように利用者が選ぶ slot は呼び出し元（requested）から、税率・送料のようにサーバーが決める slot は、仕様の ruleから。
 use crate::db::Db;
 use serde_json::{json, Value};
 
@@ -19,7 +19,7 @@ fn lookup(path: &str, input: &Value, ctx: &serde_json::Map<String, Value>) -> Op
     })
 }
 
-/// fill の表を上の行から見て、最初に当てはまった行の値
+/// rule を上の行から見て、最初に当てはまった行の値
 fn decide(rows: &[Value], input: &Value, ctx: &serde_json::Map<String, Value>) -> Option<Value> {
     rows.iter()
         .find(|row| {
@@ -34,15 +34,15 @@ fn decide(rows: &[Value], input: &Value, ctx: &serde_json::Map<String, Value>) -
 }
 
 /// 処理が外から受ける参照（slot と新しい ID）を、名前ごとに埋める。
-/// requested は呼び出し元（画面）が渡してよい値で、fill の無い slot（通貨など）だけがここから来る
+/// requested は呼び出し元（画面）が渡してよい値で、rule の無い slot（通貨など）だけがここから来る
 pub fn fill_ctx(db: &Db, defs: &Value, refs: &[String], new_ids: &[String], input: &Value, requested: &Value) -> R<Value> {
     let mut ctx = serde_json::Map::new();
-    for r in refs.iter().filter(|r| defs["fills"].get(r.as_str()).is_none()) {
+    for r in refs.iter().filter(|r| defs["rules"].get(r.as_str()).is_none()) {
         let v = requested.get(r).cloned().ok_or(format!("{}（{}）を指定してください", r, r))?;
         ctx.insert(r.clone(), v);
     }
-    for r in refs.iter().filter(|r| defs["fills"].get(r.as_str()).is_some()) {
-        let rows = defs["fills"][r.as_str()].as_array().cloned().unwrap_or_default();
+    for r in refs.iter().filter(|r| defs["rules"].get(r.as_str()).is_some()) {
+        let rows = defs["rules"][r.as_str()].as_array().cloned().unwrap_or_default();
         let v = decide(&rows, input, &ctx).ok_or(format!("{}を決められません", r))?;
         ctx.insert(r.clone(), v);
     }

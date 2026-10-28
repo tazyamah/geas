@@ -123,21 +123,21 @@ def test_内部URLごとの確認の網羅はユースケースと具体例か�
     assert got2 == got + 1 and [r for r in rows if r[1] == "/order_settlements" and r[2] == "承認"][0][4] == "EX1"
 
 
-def test_fillは仕様書と定義に出る():
+def test_ruleは仕様書と定義に出る():
     from geas.hostgen import definitions
     ck = chk(CODE)
-    assert definitions(ck)["fills"]["tax_rate"] == [{"when": [["currency", "JPY"]], "value": "10/100"}, {"when": [], "value": "0/1"}]
+    assert definitions(ck)["rules"]["tax_rate"] == [{"when": [["currency", "JPY"]], "value": "10/100"}, {"when": [], "value": "0/1"}]
     md = render(ck, build(ck))
     assert "slot の決め方" in md and "配送先.国 = JP" in md
 
 
-def test_fillの誤りは止まる():
+def test_ruleの誤りは止まる():
     bad = {
-        "最後が otherwise でない": ("  otherwise → 0/1\n", ""),
-        "決められない型": ("fill tax_rate {", "fill currency {\n  otherwise → 1\n}\nfill tax_rate {"),
-        "値の種類違い": ("currency = JPY → 10/100", "currency = JPY → 10"),
-        "条件の名前が未知": ("currency = JPY → 10/100", "nothing = JPY → 10/100"),
+        "最後が default でない": ("  default: 0/1\n", ""),
+        "決められない型": ("rule tax_rate {", "rule currency {\n  default: 1\n}\nrule tax_rate {"),
+        "値の種類違い": ("currency = JPY: 10/100", "currency = JPY: 10"),
+        "条件の名前が未知": ("currency = JPY: 10/100", "nothing = JPY: 10/100"),
     }
     for why, (old, new) in bad.items():
         ck = chk(mutate(CODE, old, new))
-        assert any("fill" in d.where for d in ck.diags if d.level == ERROR), why
+        assert any("rule" in d.where for d in ck.diags if d.level == ERROR), why
