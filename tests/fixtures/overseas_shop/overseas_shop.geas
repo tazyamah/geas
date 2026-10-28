@@ -528,3 +528,134 @@ screen PriceCheck entry {
     mode dark
   }
 }
+
+// URL（RESTful）。リソースごとに名前から URL が決まり、結果の種類ごとに HTTP の状態を決める。条件はパスで渡す
+/// 注文
+resource Orders {
+  create place_order {
+    Received → 201
+    OutOfStock → 422
+    NoSuchProduct → 404
+    OtherCurrency → 422
+    NoSuchCustomer → 404
+  }
+  index order_list
+}
+
+/// 決済要求
+resource PaymentRequests {
+  create request_payment {
+    Requested → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+    ZeroTotal → 422
+  }
+}
+
+/// 在庫確保
+resource StockHolds {
+  create request_stock_hold {
+    HoldRequested → 201
+    NoSuchOrder → 404
+  }
+}
+
+/// ポイント付与
+resource PointGrants {
+  create grant_points {
+    Granted → 201
+    NoSuchOrder → 404
+    NoSuchCustomer → 404
+  }
+}
+
+/// キャンペーンポイント付与
+resource CampaignPointGrants {
+  create grant_campaign_points {
+    Granted → 201
+    NoSuchOrder → 404
+    NoSuchCustomer → 404
+  }
+}
+
+/// 決済と在庫の見立て
+resource OrderSettlements {
+  create settle_order {
+    Approved → 201
+    PaymentFailed → 201
+    StockShort → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 注文の確定
+resource OrderCompletions {
+  create complete_order {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+    StockLacking → 422
+  }
+}
+
+/// 決済失敗の取り消し
+resource UnpaidCancellations {
+  create cancel_unpaid {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 返金つきの取り消し
+resource RefundCancellations {
+  create refund_and_cancel {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 期限切れの取り消し
+resource ExpiryCancellations {
+  create expire_order {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 決済状況の引き直し依頼
+resource OrderRecheckRequests {
+  create recheck_payment {
+    Rechecked → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 商品
+resource Products {
+  index product_list
+}
+
+/// 顧客
+resource Customers {
+  index customer_list
+}
+
+/// 顧客の注文
+resource CustomerOrders under Customers {
+  index orders_of
+}
+
+/// 決済待ちの注文
+resource AwaitingPaymentOrders {
+  index awaiting_payment
+}
+
+/// 商品の価格
+resource ProductPrices key jan {
+  show price_by_jan
+}

@@ -242,6 +242,28 @@ flowchart LR
 | 価格の確認の画面（Chrome 拡張） | accent | #e47911 |
 | 価格の確認の画面（Chrome 拡張） | mode | dark |
 
+## ルート（URL。結果の種類ごとの HTTP の状態つき。計画書との突合は未対応）
+
+| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |
+|---|---|---|---|---|
+| POST | /orders | create | 注文 | 受付→201, 在庫不足→422, 商品なし→404, 通貨が違う→422, 顧客なし→404 |
+| GET | /orders | index | 注文一覧 |  |
+| POST | /payment_requests | create | 決済要求 | 要求済→201, 注文なし→404, 状態違い→409, 合計ゼロ→422 |
+| POST | /stock_holds | create | 在庫の確保要求 | 要求済→201, 注文なし→404 |
+| POST | /point_grants | create | ポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404 |
+| POST | /campaign_point_grants | create | キャンペーンポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404 |
+| POST | /order_settlements | create | 決済と在庫の見立て | 承認→201, 決済失敗→201, 在庫を確保できず→201, 注文なし→404, 状態違い→409 |
+| POST | /order_completions | create | 注文の確定 | 反映済→201, 注文なし→404, 状態違い→409, 在庫が足りなかった→422 |
+| POST | /unpaid_cancellations | create | 決済失敗の取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
+| POST | /refund_cancellations | create | 在庫不足の返金と取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
+| POST | /expiry_cancellations | create | 期限切れの取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
+| POST | /order_recheck_requests | create | 決済状況の引き直し | 引き直し済→201, 注文なし→404, 状態違い→409 |
+| GET | /products | index | 商品一覧 |  |
+| GET | /customers | index | 顧客一覧 |  |
+| GET | /customers/:customer_id/orders | index | 顧客の注文一覧 |  |
+| GET | /awaiting_payment_orders | index | 決済の返事待ちの注文 |  |
+| GET | /product_prices/:jan | show | JANコードから価格を引く |  |
+
 ## 不変条件
 
 | ◆内容 | 検査の結果 |
@@ -364,6 +386,22 @@ flowchart LR
 | OrderForm | 既定: 注文の画面 |
 | MyOrders | 既定: 注文の履歴の画面 |
 | PriceCheck | 既定: 価格の確認の画面（Chrome 拡張） |
+| Orders | 既定: 注文 |
+| PaymentRequests | 既定: 決済要求 |
+| StockHolds | 既定: 在庫確保 |
+| PointGrants | 既定: ポイント付与 |
+| CampaignPointGrants | 既定: キャンペーンポイント付与 |
+| OrderSettlements | 既定: 決済と在庫の見立て |
+| OrderCompletions | 既定: 注文の確定 |
+| UnpaidCancellations | 既定: 決済失敗の取り消し |
+| RefundCancellations | 既定: 返金つきの取り消し |
+| ExpiryCancellations | 既定: 期限切れの取り消し |
+| OrderRecheckRequests | 既定: 決済状況の引き直し依頼 |
+| Products | 既定: 商品 |
+| Customers | 既定: 顧客 |
+| CustomerOrders | 既定: 顧客の注文 |
+| AwaitingPaymentOrders | 既定: 決済待ちの注文 |
+| ProductPrices | 既定: 商品の価格 |
 
 ## 実現の報告（振る舞いの仕様には含めない）
 

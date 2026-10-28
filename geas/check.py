@@ -195,6 +195,7 @@ class Checker:
         self.check_effect_waits()
         self.check_events()
         self.check_screens()
+        self.check_resources()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -751,6 +752,69 @@ class Checker:
                     self.d(ERROR, "出来事", where, f"「each {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
 
     DESIGN_KEYS = {"layout": {"stack", "list", "grid", "form"}, "mode": {"light", "dark"}, "accent": None}
+
+    def check_resources(self):
+        """リソースの検査。親と対象が実在し、動作の種類と対象（処理か問い合わせ）が合い、URL にクエリ文字列を使わず（問い合わせの入力はパスのキーか親のIDで埋まる）、
+        処理の結果の種類ごとに HTTP の状態が決まっていること。同じ URL・同じ処理や問い合わせを2度書けない。リソースがあるのに行き先の無い処理・問い合わせは警告。"""
+        from .rest import METHOD, routes
+        p = self.p
+        if not p.resources:
+            return
+        names = {r.name: r for r in p.resources}
+        used: dict[str, str] = {}
+        seen_routes: dict[tuple, str] = {}
+        for res in p.resources:
+            where = f"リソース {res.name}"
+            if res.under and res.under not in names:
+                self.d(ERROR, "リソース", where, f"親「{res.under}」が未定義です")
+            for a in res.actions:
+                w = f"{where} / {a.kind} {a.target}"
+                is_q = a.kind in ("index", "show")
+                tgt = self.queries.get(a.target) if is_q else self.procs.get(a.target)
+                if tgt is None:
+                    self.d(ERROR, "リソース", w, f"{'問い合わせ' if is_q else '処理'}「{a.target}」が未定義です（{a.kind} が呼べるのは{'問い合わせ' if is_q else '処理'}です）")
+                    continue
+                if a.target in used:
+                    self.d(ERROR, "リソース", w, f"「{a.target}」はすでに {used[a.target]} に割り当てています（1つの動作に呼ぶものは1つ。振り分けが要るなら別のリソースにします）")
+                used[a.target] = f"{res.name}.{a.kind}"
+                required = [n for n, t in tgt.inputs if not t.optional]
+                optional = [n for n, t in tgt.inputs if t.optional]
+                if is_q:
+                    path_inputs = ([res.key] if a.kind == "show" else []) + (["(親のID)"] if res.under in names else [])
+                    if a.kind == "show" and not res.key:
+                        self.d(ERROR, "リソース", w, "show にはパスのキー（key 名前）が要ります")
+                    if len(required) > len(path_inputs):
+                        self.d(ERROR, "リソース", w, f"問い合わせの入力 {', '.join(required)} は、クエリ文字列にしないので、パスで渡せる形にしてください（入れ子の親のID、または key）")
+                    elif a.kind == "show" and res.key and res.key not in required:
+                        self.d(ERROR, "リソース", w, f"key「{res.key}」が、問い合わせ {a.target} の入力にありません")
+                    if optional:
+                        self.d(ERROR, "リソース", w, f"問い合わせの任意の入力 {', '.join(optional)} は、クエリ文字列にしないので、検索リソース（POST で条件を渡す）にしてください")
+                else:
+                    if a.kind in ("update", "destroy") and not any(t.kind == "ID" for _, t in tgt.inputs):
+                        self.d(ERROR, "リソース", w, f"{a.kind} は /…/:id の ID で対象を決めるので、処理に ID の入力が要ります")
+                    rdef = self.results.get(tgt.result)
+                    variants = [v for v, _ in rdef.variants] if rdef else []
+                    given = [v for v, _ in a.statuses]
+                    for v in variants:
+                        if v not in given:
+                            self.d(ERROR, "リソース", w, f"結果「{v}」の HTTP の状態がありません")
+                    for v, code in a.statuses:
+                        if v not in variants:
+                            self.d(ERROR, "リソース", w, f"「{v}」は処理 {a.target} の結果の種類ではありません")
+                        if given.count(v) > 1:
+                            self.d(ERROR, "リソース", w, f"結果「{v}」の状態が複数あります")
+                        if not 200 <= code <= 599:
+                            self.d(ERROR, "リソース", w, f"状態 {code} は 200〜599 で書きます")
+        for m, path, kind, tgt, rn, _ in routes(p):
+            if (m, path) in seen_routes:
+                self.d(ERROR, "リソース", f"リソース {rn}", f"{m} {path} が {seen_routes[(m, path)]} と重なります")
+            seen_routes[(m, path)] = rn
+        for pr in p.processes:
+            if pr.name not in used:
+                self.d(WARN, "リソース", f"処理 {pr.name}", "どのリソースの動作にも割り当てていません（外から呼べません）")
+        for q in p.queries:
+            if q.name not in used:
+                self.d(WARN, "リソース", f"問い合わせ {q.name}", "どのリソースの動作にも割り当てていません（外から読めません）")
 
     def check_screens(self):
         """画面の検査。見せる問い合わせ・呼ぶ処理・行き先が実在し、処理の入力が入力欄か受け取る値で埋まり、

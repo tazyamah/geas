@@ -65,9 +65,11 @@ def show_all(p, x):
 
 
 def build(ck: Checker) -> dict:
+    from .rest import routes
     spec = build_raw(ck)
     names = spec["名前"]
     spec = show_all(ck.p, spec)
+    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st)) for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["名前"] = names
     return spec
 
@@ -131,6 +133,7 @@ def build_raw(ck: Checker) -> dict:
                   for i, sc in enumerate(p.screens)]
     spec["画面遷移"] = [(sc.name, "行を選ぶ", "", t) for sc in p.screens for t in sc.opens] + \
                      [(sc.name, dn, v, {"stay": "そのまま", "back": "戻る"}.get(dest, dest)) for sc in p.screens for dn, rs in sc.actions for v, dest in rs]
+    from .rest import routes
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee) if pt.body is None else "= " + show(pt.body))
@@ -220,6 +223,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
         out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["画面デザイン"]]
+    if spec["ルート"]:
+        out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。計画書との突合は未対応）", "", "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |", "|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["ルート"]]
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")

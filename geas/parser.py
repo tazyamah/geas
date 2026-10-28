@@ -162,6 +162,8 @@ class Parser:
                 p.events.append(self.event(line))
             elif kw == "screen":
                 p.screens.append(self.screen(line))
+            elif kw == "resource":
+                p.resources.append(self.resource(line))
             elif kw == "app":  # app "名前"：アプリの名前（画面の見出しとインストール名）
                 t = self.peek()
                 if t.kind != "STR" or not t.val:
@@ -1036,6 +1038,37 @@ class Parser:
             self.end_line()
         return sc
 
+    def resource(self, line) -> Resource:
+        """resource 名前 [under 親] [key 名前] { index 問い合わせ / show 問い合わせ / create 処理 { 結果 → 状態 } / update 処理 {…} / destroy 処理 {…} }"""
+        rs = Resource(self.name(), line=line)
+        while self.peek().val != "{" and self.peek().kind not in ("NL", "EOF"):
+            kw = self.name()
+            if kw == "under":
+                rs.under = self.name()
+            elif kw == "key":
+                rs.key = self.name()
+            else:
+                raise self.err("resource の見出しは「under 親」「key 名前」です")
+        self.block_open()
+        while not self.accept("}"):
+            l2 = self.peek().line
+            kw = self.name()
+            if kw in ("index", "show"):
+                rs.actions.append(ResAction(kw, self.name(), line=l2))
+            elif kw in ("create", "update", "destroy"):
+                act = ResAction(kw, self.name(), line=l2)
+                self.block_open()
+                while not self.accept("}"):
+                    v = self.name()
+                    self.expect("→")
+                    act.statuses.append((v, self.num()))
+                    self.end_line()
+                rs.actions.append(act)
+            else:
+                raise self.err("resource の中は「index」「show」「create」「update」「destroy」です")
+            self.end_line()
+        return rs
+
     # ---- トリガ ----
     def reply_def(self, line) -> ReplyDef:
         name = self.name()
@@ -1077,7 +1110,7 @@ class Parser:
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
 DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow",
-                 "trigger", "query", "event", "screen", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
+                 "trigger", "query", "event", "screen", "resource", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 
 def collect_labels(toks: list[Tok]) -> dict:
