@@ -1,5 +1,5 @@
-//! 海外にも売るお店のサーバー。localhost で動き、DB は SQLite。
-//! 使い方: shop_server [--port 8787] [--db shop.sqlite] [--pwa generated/ui] [--dev generated/dev] [--seed ../seed.json]
+//! Geas が生成したアプリのサーバー。localhost で動き、DB は SQLite。geas rust --host --runtime が、生成物と一緒に配る。
+//! 使い方: geas_server [--port 8787] [--db app.sqlite] [--pwa ../ui] [--dev ../dev] [--seed seed.json]
 mod app;
 mod db;
 mod engine;
@@ -16,10 +16,10 @@ fn arg(name: &str, default: &str) -> String {
 
 fn main() {
     let port = arg("--port", "8787");
-    let db_path = arg("--db", "shop.sqlite");
-    let pwa = PathBuf::from(arg("--pwa", "generated/ui"));
-    let dev = PathBuf::from(arg("--dev", "generated/dev"));
-    let seed = arg("--seed", "../seed.json");
+    let db_path = arg("--db", "app.sqlite");
+    let pwa = PathBuf::from(arg("--pwa", "../ui"));
+    let dev = PathBuf::from(arg("--dev", "../dev"));
+    let seed = arg("--seed", "");
 
     // 保存にある実体の名前は、生成物から取る（空の保存を書き出すと、全部の実体が並ぶ）
     let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).expect("保存の形");
@@ -40,7 +40,7 @@ fn main() {
 
     let addr = format!("127.0.0.1:{}", port);
     let server = Arc::new(tiny_http::Server::http(&addr).expect("ポートを開けません"));
-    println!("お店のサーバー: http://{}/  (DB: {})", addr, db_path);
+    println!("{}のサーバー: http://{}/  (DB: {})", geas_app::APP_TITLE, addr, db_path);
     let mut workers = Vec::new();
     for _ in 0..4 {
         let server = server.clone();

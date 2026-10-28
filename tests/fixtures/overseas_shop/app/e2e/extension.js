@@ -4,7 +4,7 @@ const assert = require("assert");
 const path = require("path");
 const { chromium } = require("playwright");
 
-const EXT = path.resolve(__dirname, "../server/generated/ext");
+const EXT = path.resolve(__dirname, "../generated/ext");
 const work = process.argv[2] || require("os").tmpdir();
 
 const html = (body) => `<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body><h1>商品</h1>${body}</body></html>`;

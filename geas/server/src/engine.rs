@@ -1,5 +1,5 @@
 //! 実行の層。Geas が生成した【処理】（host::call）を呼び、結果の行き先（フロー）・待ち（トリガ）・外部作用を動かす。
-//! 生成物の定義（DEFS_JSON）から動くので、この層は「お店」を知らない。お店に固有なのは app.rs と mock.rs だけ。
+//! 生成物の定義（DEFS_JSON）から動くので、この層は「お店」を知らない。アプリに固有なのは app.rs（外から埋める値と最初のデータ）だけ。
 use crate::app;
 use crate::db::Db;
 use crate::mock::Mock;
