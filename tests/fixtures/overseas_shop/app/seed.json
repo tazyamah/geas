@@ -1,0 +1,78 @@
+{
+ "Product": {
+  "tea-jp": {
+   "product_id": "tea-jp",
+   "name": "緑茶ティーバッグ 20包",
+   "jan": "4901234567894",
+   "stock": 120,
+   "currency": "JPY",
+   "price": 680
+  },
+  "tea-us": {
+   "product_id": "tea-us",
+   "name": "Green Tea Bags (20 pcs)",
+   "jan": "4901234567894",
+   "stock": 80,
+   "currency": "USD",
+   "price": 699
+  },
+  "knife-jp": {
+   "product_id": "knife-jp",
+   "name": "三徳包丁 165mm",
+   "jan": "4909876543214",
+   "stock": 15,
+   "currency": "JPY",
+   "price": 8800
+  },
+  "knife-us": {
+   "product_id": "knife-us",
+   "name": "Santoku Knife 165mm",
+   "jan": "4909876543214",
+   "stock": 6,
+   "currency": "USD",
+   "price": 7900
+  },
+  "bowl-jp": {
+   "product_id": "bowl-jp",
+   "name": "飯碗（有田焼）",
+   "jan": "4911112222333",
+   "stock": 30,
+   "currency": "JPY",
+   "price": 2400
+  },
+  "bowl-eu": {
+   "product_id": "bowl-eu",
+   "name": "Arita Rice Bowl",
+   "jan": "4911112222333",
+   "stock": 12,
+   "currency": "EUR",
+   "price": 1590
+  },
+  "vase-jp": {
+   "product_id": "vase-jp",
+   "name": "九谷焼の花瓶",
+   "jan": "4922223333443",
+   "stock": 2,
+   "currency": "JPY",
+   "price": 58000
+  },
+  "vase-us": {
+   "product_id": "vase-us",
+   "name": "Kutani Vase",
+   "jan": "4922223333443",
+   "stock": 2,
+   "currency": "USD",
+   "price": 52000
+  }
+ },
+ "Customer": {
+  "c-001": {
+   "customer_id": "c-001",
+   "points": 0
+  },
+  "c-002": {
+   "customer_id": "c-002",
+   "points": 120
+  }
+ }
+}

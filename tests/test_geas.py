@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import sys
@@ -2597,3 +2598,22 @@ def test_check_gtin_は正しい13桁だけ通す(tmp_path):
     write_crate(ck, generate(ck), main, tmp_path)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+
+# ---- アプリ（サーバー・画面）向けの生成物 ----
+def test_host_は列つきの問い合わせの行を列名つきの_JSON_で返し_定義に外部作用の合流先を出す():
+    ck = chk(OVERSEAS)
+    host = host_source(ck)
+    assert "product_list_row_json" in host and 'js_str("price")' in host and '\\"rows\\"' in host
+    defs = json.loads(host.split('DEFS_JSON: &str = r####"')[1].split('"####')[0])
+    assert defs["effects"]["Warehouse.hold"]["joins"] == "OrderPending"
+    assert defs["effects"]["Shipping.ship"]["no_wait"] is True
+    assert defs["effects"]["Payment.charge"]["args"] == ["order_id", "currency", "amount"]
+
+
+def test_問い合わせの_equals_は参照の項目をIDの入力で絞れる():
+    ck = chk(OVERSEAS)
+    assert ck.ready, ck.diags
+    assert "r.customer == *x" in generate(ck)
+    bad = OVERSEAS.replace("filter customer equals customer", "filter total equals customer")
+    assert any("equals" in m for m in msgs(chk(bad), ERROR))
