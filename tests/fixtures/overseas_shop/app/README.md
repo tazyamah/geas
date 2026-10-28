@@ -14,13 +14,13 @@ Chrome 拡張 ────┘                  │
 
 ```sh
 ./build.sh                         # Geas から Rust・画面・拡張・サーバーの実行部を作り、サーバーをビルドする
-cd generated
-./server/target/release/geas_server --pwa ui --dev dev --seed ../seed.json   # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
+cd generated/server
+./target/release/geas_server   # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
 ```
 
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
 - 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `generated/ext/` を選ぶ（geas が screen の `page` から生成する）。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
-- 最初の商品と顧客は `seed.json`（DB が空のときだけ入る）。商品と顧客を作る処理は、この題材の Geas には無い。
+- 最初の商品と顧客は `seed.json`（`geas rust --seed` で生成物に埋め込む。DB が空のときだけ入る）。商品と顧客を作る処理は、この題材の Geas には無い。
 - 通しの確認：`python -m pytest tests/test_shop_app.py`（cargo が要る。画面と拡張の確認は node と Playwright があるときだけ）。
 
 ## 層の分け方
@@ -28,7 +28,6 @@ cd generated
 | 場所 | 役目 | お店を知っているか |
 |---|---|---|
 | `generated/server/`（`geas rust --host --runtime` が geas から置く） | サーバーの実行部：`engine.rs` は生成した処理を呼び、結果の行き先・待ち・外部作用・出来事を動かす。`db.rs` は保存（実体ごとの表）。`http.rs` は JSON の口と画面の配信。`mock.rs` は決済・倉庫などの模擬（宣言の `replies` と結果の種類で動く） | 知らない（生成物の定義 `DEFS_JSON` で動く） |
-| `app.rs`（`--app` で渡す） | 外から埋める枠（通貨以外の slot＝税率・送料）、新しい ID、最初のデータ | 知っている（手書き。次に宣言へ移す） |
 | `generated/ui/` | 画面（PWA）。geas の screen 宣言から置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
 | `generated/dev/` | 開発用の模擬操作パネル（応答の結果の種類と出来事の宣言から生成）。アプリの画面ではない | 知らない（定義で動く） |
 | `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `generated/ext/` に geas が生成する | 口の JSON だけを知っている |
@@ -46,7 +45,7 @@ URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customer
 | `POST /api/events/{出来事}` | 出来事が起こした処理の一覧（`Reconnected`＝つながりが戻った） |
 | `GET/POST /api/test/…` | テスト用：模擬の設定、時計を進める、返事待ちと外部作用の記録 |
 
-通貨（slot）はクライアントが渡し、税率と送料はサーバー（`app.rs`）が決める。外から来る値（入力・通貨）は、生成された境界の検査（範囲・文字種・JAN の検査数字）で確かめる。
+通貨（slot）はクライアントが渡し、税率と送料はサーバーが、仕様の `fill`（上の行から順に当てはまった値）で決める。外から来る値（入力・通貨）は、生成された境界の検査（範囲・文字種・JAN の検査数字）で確かめる。
 
 ## 題材の機能と、試していること
 

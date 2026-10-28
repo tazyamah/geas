@@ -1,5 +1,5 @@
 //! Geas が生成したアプリのサーバー。localhost で動き、DB は SQLite。geas rust --host --runtime が、生成物と一緒に配る。
-//! 使い方: geas_server [--port 8787] [--db app.sqlite] [--pwa ../ui] [--dev ../dev] [--seed seed.json]
+//! 使い方: geas_server [--port 8787] [--db app.sqlite] [--pwa ../ui] [--dev ../dev] [--seed 別の最初のデータ.json]
 mod app;
 mod db;
 mod engine;
@@ -19,7 +19,11 @@ fn main() {
     let db_path = arg("--db", "app.sqlite");
     let pwa = PathBuf::from(arg("--pwa", "../ui"));
     let dev = PathBuf::from(arg("--dev", "../dev"));
-    let seed = arg("--seed", "");
+    // 最初のデータは生成物に埋め込んである（geas rust --seed）。別のものを使うときだけ --seed
+    let seed = match arg("--seed", "").as_str() {
+        "" => include_str!("seed.json").to_string(),
+        path => std::fs::read_to_string(path).expect("最初のデータを読めません"),
+    };
 
     // 保存にある実体の名前は、生成物から取る（空の保存を書き出すと、全部の実体が並ぶ）
     let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).expect("保存の形");

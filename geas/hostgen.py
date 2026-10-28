@@ -217,6 +217,7 @@ def definitions(ck: Checker) -> dict:
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
+        "fills": {f.slot: [{"when": [list(c) for c in conds], "value": val} for conds, val in f.rows] for f in p.fills},
         "mock": mock_def(ck),
         "screens": screens_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),

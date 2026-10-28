@@ -154,6 +154,8 @@ class Parser:
                 p.flows.append(self.flow(line))
             elif kw == "reply":  # reply 名前(中身の名前: 型 [required], …)：応答が運ぶ中身の宣言
                 p.replies.append(self.reply_def(line))
+            elif kw == "fill":  # fill slot名 { 条件 → 値 … otherwise → 値 }：サーバーが決める slot の値の表
+                p.fills.append(self.fill(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
             elif kw == "query":
@@ -1125,6 +1127,35 @@ class Parser:
                 self.end_line()
         self.end_line()
         return ReplyDef(name, params, line, outcomes)
+
+    def fill(self, line) -> Fill:
+        slot = self.name()
+        self.block_open()
+        rows = []
+        while not self.accept("}"):
+            conds = []
+            if not self.accept("otherwise"):
+                def cond():
+                    path = [self.name()]
+                    while self.accept("."):
+                        path.append(self.name())
+                    self.expect("=")
+                    t = self.next()
+                    if t.kind not in ("NAME", "STR", "NUM"):
+                        raise ParseError("条件の右は、名前・文字列・数です", t.line)
+                    return ".".join(path), t.val
+                conds = self.comma_list(cond)
+            self.expect("→")
+            t = self.next()
+            if t.kind != "NUM":
+                raise ParseError("fill の値は、数か 分子/分母 です", t.line)
+            val = int(t.val)
+            if self.accept("/"):
+                val = f"{val}/{self.num()}"
+            rows.append((conds, val))
+            self.end_line()
+        self.end_line()
+        return Fill(slot, rows, line)
 
     def trigger(self, line) -> Trigger:
         name = self.name()

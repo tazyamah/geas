@@ -210,6 +210,17 @@ flowchart LR
 | 決済が済んだ（与信が取れたか、拒否か） | 与信 |
 | 倉庫の返事（足りない商品があれば入る） | 不足 |
 
+## slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値になる）
+
+| slot | 条件 | 値 |
+|---|---|---|
+| 税率 | 通貨 = JPY | 10/100 |
+| 税率 | 上のどれでもない | 0/1 |
+| 送料 | 通貨 = JPY かつ 配送先.国 = JP | 500 |
+| 送料 | 通貨 = JPY | 2500 |
+| 送料 | 配送先.国 = JP | 1500 |
+| 送料 | 上のどれでもない | 3000 |
+
 ## 開発用の模擬（外部作用の返事。先頭が平常。開発用の操作パネルで切り替える）
 
 | 外部作用 | 返ってくる応答 | 結果の種類（返事に入る中身） |
@@ -483,4 +494,58 @@ flowchart LR
 ## 検査の結果
 
 - 指摘なし
+
+## 内部 URL ごとの確認の網羅（確認できた 13 / 49、26%。具体例とユースケースが当たっているか）
+
+| メソッド | 経路 | 結果 | 状態 | 具体例 | ユースケース | 確認 |
+|---|---|---|---|---|---|---|
+| POST | /orders | 受付 | 201 |  | 商品を見つけて注文する、在庫が足りなかった注文をやり直す | ○ |
+| POST | /orders | 在庫不足 | 422 |  | 在庫が足りなかった注文をやり直す | ○ |
+| POST | /orders | 商品なし | 404 |  | 注文が受け付けられない理由を知る | ○ |
+| POST | /orders | 通貨が違う | 422 |  | 注文が受け付けられない理由を知る | ○ |
+| POST | /orders | 顧客なし | 404 |  | 注文が受け付けられない理由を知る | ○ |
+| GET | /orders |  | 200 |  |  | 未 |
+| POST | /payment_requests | 要求済 | 201 |  |  | 未 |
+| POST | /payment_requests | 注文なし | 404 |  |  | 未 |
+| POST | /payment_requests | 状態違い | 409 |  |  | 未 |
+| POST | /payment_requests | 合計ゼロ | 422 |  |  | 未 |
+| POST | /stock_holds | 要求済 | 201 |  |  | 未 |
+| POST | /stock_holds | 注文なし | 404 |  |  | 未 |
+| POST | /point_grants | 加算済 | 201 |  |  | 未 |
+| POST | /point_grants | 注文なし | 404 |  |  | 未 |
+| POST | /point_grants | 顧客なし | 404 |  |  | 未 |
+| POST | /campaign_point_grants | 加算済 | 201 |  |  | 未 |
+| POST | /campaign_point_grants | 注文なし | 404 |  |  | 未 |
+| POST | /campaign_point_grants | 顧客なし | 404 |  |  | 未 |
+| POST | /order_settlements | 承認 | 201 |  |  | 未 |
+| POST | /order_settlements | 決済失敗 | 201 |  |  | 未 |
+| POST | /order_settlements | 在庫を確保できず | 201 |  |  | 未 |
+| POST | /order_settlements | 注文なし | 404 |  |  | 未 |
+| POST | /order_settlements | 状態違い | 409 |  |  | 未 |
+| POST | /order_completions | 反映済 | 201 |  |  | 未 |
+| POST | /order_completions | 注文なし | 404 |  |  | 未 |
+| POST | /order_completions | 状態違い | 409 |  |  | 未 |
+| POST | /order_completions | 在庫が足りなかった | 422 |  |  | 未 |
+| POST | /unpaid_cancellations | 反映済 | 201 |  |  | 未 |
+| POST | /unpaid_cancellations | 注文なし | 404 |  |  | 未 |
+| POST | /unpaid_cancellations | 状態違い | 409 |  |  | 未 |
+| POST | /refund_cancellations | 反映済 | 201 |  |  | 未 |
+| POST | /refund_cancellations | 注文なし | 404 |  |  | 未 |
+| POST | /refund_cancellations | 状態違い | 409 |  |  | 未 |
+| POST | /expiry_cancellations | 反映済 | 201 |  |  | 未 |
+| POST | /expiry_cancellations | 注文なし | 404 |  |  | 未 |
+| POST | /expiry_cancellations | 状態違い | 409 |  |  | 未 |
+| POST | /order_recheck_requests | 引き直し済 | 201 |  |  | 未 |
+| POST | /order_recheck_requests | 注文なし | 404 |  |  | 未 |
+| POST | /order_recheck_requests | 状態違い | 409 |  |  | 未 |
+| GET | /products |  | 200 |  | 取り下げた商品を扱おうとして失敗する、商品を入荷する、商品を取り下げる、商品を見つけて注文する、在庫が足りなかった注文をやり直す、注文が受け付けられない理由を知る | ○ |
+| PUT | /products/:id | 入荷済 | 200 |  | 商品を入荷する | ○ |
+| PUT | /products/:id | 商品なし | 404 |  | 取り下げた商品を扱おうとして失敗する | ○ |
+| DELETE | /products/:id | 取り下げ済 | 200 |  | 商品を取り下げる | ○ |
+| DELETE | /products/:id | 商品なし | 404 |  | 取り下げた商品を扱おうとして失敗する | ○ |
+| GET | /customers |  | 200 |  | 商品を見つけて注文する、在庫が足りなかった注文をやり直す、注文が受け付けられない理由を知る | ○ |
+| GET | /customers/:customer_id/orders |  | 200 |  | 商品を見つけて注文する | ○ |
+| GET | /awaiting_payment_orders |  | 200 |  |  | 未 |
+| GET | /product_prices/:jan |  | 200 |  | Amazon の商品ページで、お店の価格を見る | ○ |
+| POST | /reconnections |  | － |  |  | 未 |
 

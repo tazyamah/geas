@@ -132,6 +132,15 @@ class ReplyDef:
 
 
 @dataclass
+class Fill:
+    """slot の値の取り決め（fill）。上から順に当てはまる最初の行の値になる。
+    行は (条件の列, 値)。条件は (入力や slot の名前の道すじ, 比べる値)、条件が空の行は otherwise。値は割合なら "n/d"、整数や金額なら数"""
+    slot: str
+    rows: list[tuple[list[tuple[str, str]], object]]
+    line: int = 0
+
+
+@dataclass
 class Process:
     name: str
     inputs: list[tuple[str, Type]] = field(default_factory=list)
@@ -233,6 +242,7 @@ class Program:
     flows: list[Flow] = field(default_factory=list)
     triggers: list[Trigger] = field(default_factory=list)
     replies: list[ReplyDef] = field(default_factory=list)
+    fills: list[Fill] = field(default_factory=list)
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     screens: list[Screen] = field(default_factory=list)

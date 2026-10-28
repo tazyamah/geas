@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """サーバーの実行部（geas/server）を、生成物と一緒に dest/server に置く。アプリを知らない汎用の crate で、
-生成した Geas の crate（dest）を path 依存で組む。アプリ固有の取り決め（外から埋める値・最初のデータ）は app.rs だけで、
-既定は何も持たず、geas rust --app で差し替える。"""
+生成した Geas の crate（dest）を path 依存で組む。外から埋める値（slot）の決め方は仕様の fill、最初のデータは seed.json（geas rust --seed）で、
+手で書くコードは無い。"""
 import shutil
 from pathlib import Path
 
@@ -19,7 +19,7 @@ tiny_http = "0.12"
 '''
 
 
-def write_server(dest, app: Path | None = None) -> None:
+def write_server(dest, seed: Path | None = None) -> None:
     src = Path(__file__).parent / "server"
     out = Path(dest) / "server"
     (out / "src").mkdir(parents=True, exist_ok=True)
@@ -28,5 +28,5 @@ def write_server(dest, app: Path | None = None) -> None:
     shutil.copy(src / "Cargo.lock", out / "Cargo.lock")
     (out / "Cargo.toml").write_text(CARGO)
     (out / ".gitignore").write_text("target/\n*.sqlite\n*.sqlite-*\n")
-    if app:
-        shutil.copy(app, out / "src" / "app.rs")
+    # 最初のデータ（DB が空のときだけ入る）。無ければ空
+    (out / "src" / "seed.json").write_text(Path(seed).read_text() if seed else "{}")
