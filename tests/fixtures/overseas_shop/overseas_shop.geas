@@ -212,15 +212,15 @@ reply StockSettled(/// 不足
 
 // 税率：国内向け（円）は10%、外貨は輸出免税として0%
 rule tax_rate {
-  currency = JPY: 10/100
+  currency == JPY: 10/100
   default: 0/1
 }
 
 // 送料（その通貨の最小単位）：円は国内500円・海外2500円、ドルとユーロは国内1500・海外3000（セント）
 rule shipping {
-  currency = JPY, ship_to.country = "JP": 500
-  currency = JPY: 2500
-  ship_to.country = "JP": 1500
+  currency == JPY and ship_to.country == "JP": 500
+  currency == JPY: 2500
+  ship_to.country == "JP": 1500
   default: 3000
 }
 

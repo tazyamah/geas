@@ -135,8 +135,8 @@ def test_ruleの誤りは止まる():
     bad = {
         "最後が default でない": ("  default: 0/1\n", ""),
         "決められない型": ("rule tax_rate {", "rule currency {\n  default: 1\n}\nrule tax_rate {"),
-        "値の種類違い": ("currency = JPY: 10/100", "currency = JPY: 10"),
-        "条件の名前が未知": ("currency = JPY: 10/100", "nothing = JPY: 10/100"),
+        "値の種類違い": ("currency == JPY: 10/100", "currency == JPY: 10"),
+        "条件の名前が未知": ("currency == JPY: 10/100", "nothing == JPY: 10/100"),
     }
     for why, (old, new) in bad.items():
         ck = chk(mutate(CODE, old, new))
