@@ -99,3 +99,25 @@ def test_計画書のルートの表と突合する():
 def test_計画書の画面のURLが違えば食い違う():
     f = _compare(PLAN.replace("| /orders/new |", "| /orders/add |"))
     assert any("画面 注文の画面 のURL" in x.where for x in f)
+
+
+def test_ユースケースの手順のURLは画面のURLと突合する():
+    assert _compare(PLAN) == []
+    f = _compare(PLAN.replace("| 注文の画面 | 注文 | 受付 | /orders/new |", "| 注文の画面 | 注文 | 受付 | /orders |", 1))
+    assert any("ユースケース" in x.where and "URL" in x.msg for x in f)
+
+
+def test_内部URLごとの確認の網羅はユースケースと具体例から数える():
+    from geas.plan import coverage, read_plan
+    spec, plan = build(chk(CODE)), read_plan(PLAN)
+    rows, got, total = coverage(spec, plan)
+    by = {(r[0], r[1], r[2]): r for r in rows}
+    assert by[("POST", "/orders", "受付")][6] == "○" and by[("POST", "/orders", "受付")][3] == "201"
+    assert by[("POST", "/orders", "在庫不足")][5].startswith("在庫が足りなかった注文をやり直す")
+    assert by[("POST", "/order_settlements", "承認")][6] == "未"
+    assert by[("GET", "/products", "")][6] == "○"  # 画面を通る手順がある問い合わせ
+    assert 0 < got < total
+    # 具体例が当たれば、その行も確認済みになる
+    plan["具体例"] = [{"ID": "EX1", "処理": "決済と在庫の見立て", "期待する結果": "承認(N1)"}]
+    rows, got2, _ = coverage(spec, plan)
+    assert got2 == got + 1 and [r for r in rows if r[1] == "/order_settlements" and r[2] == "承認"][0][4] == "EX1"

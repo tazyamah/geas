@@ -7,7 +7,7 @@ from html import escape
 
 from .ast import *  # noqa: F401,F403
 from .check import QUESTION, WARN
-from .plan import Finding, UNSPEC, read_plan, usecases
+from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, usecases
 from .spec import build, flow_diagram
 
 MERMAID = "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
@@ -224,7 +224,7 @@ function draw(){
  mock.append(body);
  const last=k>=nsteps();
  $('bNext').hidden=last;$('bOk').hidden=!last;$('bPrev').hidden=(op===0&&k===0);
- $('line').textContent=u.id+' '+u.name+'　'+(last?'手順は以上':(k+1)+'/'+nsteps()+' '+st.screen+'：'+st.op+(st.result?'（'+st.result+'）':''));
+ $('line').textContent=u.id+' '+u.name+'　'+(last?'手順は以上':(k+1)+'/'+nsteps()+' '+st.screen+(st.url?' '+st.url:'')+'：'+st.op+(st.result?'（'+st.result+'）':''));
  const done=res.filter(x=>x).length;$('prog').textContent=done===U.length?'すべて完了（'+done+'件）':'済 '+done+' / '+U.length;
  const ng=res[op]&&res[op].v==='NG';$('bNg').textContent=ng?'NG✎':'NG';$('bNg').title=ng?res[op].why:'';
  sel.innerHTML='';U.forEach((x,i)=>{const o=el('option','',(res[i]?(res[i].v==='OK'?'✓ ':'✗ '):'')+x.id+' '+x.name);o.value=i;if(i===op)o.selected=true;sel.append(o)});
@@ -294,14 +294,18 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             wfs.append(f'<div class="wf {"dark" if d["mode"] == "dark" else ""}"><header style="background:{escape(d["accent"])}">{escape(n)}</header><div class="body">{tiles}{btn}</div>'
                        f'<div class="sub" style="padding:0 10px 8px">配置 {d["layout"]}／色 {escape(d["accent"])}／{"ダーク" if d["mode"] == "dark" else "ライト"}</div></div>')
         add("design", "画面デザイン（①との突合には含めない）", f'<p class="sub">この指定は、実際の画面（geas が生成する汎用の画面）の配置・色・明暗にそのまま使われ、最初の画面の色はインストール時のアイコンとテーマ色にもなります。下の絵は、その配置の見取り図です。</p><div class="grid">{"".join(wfs)}</div>' + table(["画面", "指定", "値"], spec["画面デザイン"]))
+        if plan_md and spec["ルート"]:
+            cov, got, total = coverage(spec, read_plan(plan_md))
+            add("coverage", f"内部 URL ごとの確認の網羅（{got} / {total}）", '<p class="sub">具体例とユースケースが、どの URL のどの結果（HTTP の状態）に当たっているか。「未」は、どちらでも確認していません。</p>' + table(COVERAGE_HEAD, cov))
         dest_of = {(x[0], x[1], x[2]): x[3] for x in spec["画面遷移"]}
+        url_of = {x[0]: x[-1] for x in spec["画面"]}
         uj = []
         for i, (k, v) in enumerate(ucs.items(), 1):
             steps, here = [], None
             for r in v:
                 scr, o, rs = r["画面"], r["操作"], r.get("結果", "")
                 to = dest_of.get((scr, o, rs), "")
-                steps.append({"screen": scr, "op": o, "result": rs, "to": to})
+                steps.append({"screen": scr, "op": o, "result": rs, "to": to, "url": url_of.get(scr, "")})
                 here = scr if o == "見る" or to == "そのまま" else to
             uj.append({"id": f"UC{i}", "name": k, "steps": steps, "end": here or v[-1]["画面"]})
         add("walk", "ユースケースを画面でたどる", '<p class="sub">画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。</p>'

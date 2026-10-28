@@ -218,12 +218,15 @@ def check_usecases(spec: dict, rows: list[dict]) -> list[Finding]:
     out: list[Finding] = []
     trans = {(n(a), n(o), n(v)): n(d) for a, o, v, d in spec["画面遷移"]}
     entries = {n(x[0]) for x in spec["画面"] if x[4]}
+    urls = {n(x[0]): n(x[-1]) for x in spec["画面"]}
     used = set()
     for uc, steps in usecases(rows).items():
         here = None  # 直前の手順の後に見えている画面
         for st in steps:
             scr, op, res = n(st["画面"]), n(st["操作"]), n(st.get("結果", ""))
             where = f"ユースケース {uc} 手順 {st['手順']}"
+            if "URL" in st and scr in urls and n(st["URL"]) != urls[scr]:  # 手順の URL は、その画面の URL（計画書に URL の列があるときだけ突合する）
+                out.append(Finding(DIFF, where, f"URL は計画: {st['URL'].strip()} ／ コード: {urls[scr]}（画面「{st['画面']}」の URL）"))
             if here is not None and scr != here:
                 out.append(Finding(DIFF, where, f"前の手順のあとに見えている画面は「{here}」ですが、この手順は「{st['画面']}」です"))
             if op == n(VIEW_OP):
@@ -242,3 +245,47 @@ def check_usecases(spec: dict, rows: list[dict]) -> list[Finding]:
         if k not in used:
             out.append(Finding(B_ONLY, f"画面遷移 {k[0]}: {k[1]} {k[2]}".rstrip(), "どのユースケースの手順にも使われていません（ユースケースが足りないか、不要な遷移）"))
     return out
+
+
+COVERAGE_HEAD = ["メソッド", "経路", "結果", "状態", "具体例", "ユースケース", "確認"]
+
+
+def coverage(spec: dict, plan: dict) -> tuple[list[list[str]], int, int]:
+    """内部 URL（ルート）ごと、結果の種類（HTTP の状態）ごとに、計画書の具体例とユースケースが当たっているかを数える。
+    具体例：処理の名前と期待する結果が合うもの。ユースケース：画面の操作（処理の名前と結果）が合う手順。
+    GET の問い合わせ：その問い合わせを見せる（入力欄の選ぶ元にする）画面を通る手順。戻り値は（行, 確認できた数, 全体の数）"""
+    ex: dict[tuple[str, str], list[str]] = {}
+    for r in plan.get("具体例", []):
+        res = n(re.split(r"[（(]", r["期待する結果"])[0])
+        if "未規定" not in r["期待する結果"]:
+            ex.setdefault((n(r["処理"]), res), []).append(r["ID"].strip())
+    shows: dict[str, set[str]] = {}  # 画面 → 画面を開くと読む問い合わせ
+    for x, q, fields, *_ in spec["画面"]:
+        shows[n(x)] = set(items(q)) | {n(f.split("←")[1]) for f in split_top(fields, ",") if "←" in f}
+    uc_act: dict[tuple[str, str], set[str]] = {}
+    uc_get: dict[str, set[str]] = {}
+    for uc, steps in usecases(plan.get("ユースケース", [])).items():
+        for st in steps:
+            scr, op, res = n(st["画面"]), n(st["操作"]), n(st.get("結果", ""))
+            for q in shows.get(scr, ()):
+                uc_get.setdefault(q, set()).add(uc)
+            if op != n(VIEW_OP):
+                uc_act.setdefault((op, res), set()).add(uc)
+    rows, got = [], 0
+    for m, path, _kind, tgt, st in spec["ルート"]:
+        t = n(tgt)
+        variants = [tuple(x.split("→")) for x in st.split(", ") if "→" in x] or [("", "200" if m == "GET" else "－")]
+        for v, code in variants:
+            e = ex.get((t, n(v)), []) if v else []
+            u = sorted(uc_act.get((t, n(v)), set()) if v else uc_get.get(t, set()))
+            ok = bool(e or u)
+            got += ok
+            rows.append([m, path, v, code, ", ".join(e), "、".join(u), "○" if ok else "未"])
+    return rows, got, len(rows)
+
+
+def coverage_markdown(spec: dict, plan: dict) -> list[str]:
+    rows, got, total = coverage(spec, plan)
+    out = ["", f"## 内部 URL ごとの確認の網羅（確認できた {got} / {total}、{got * 100 // max(total, 1)}%。具体例とユースケースが当たっているか）", "",
+           "| " + " | ".join(COVERAGE_HEAD) + " |", "|" + "---|" * len(COVERAGE_HEAD)]
+    return out + ["| " + " | ".join(c for c in r) + " |" for r in rows]
