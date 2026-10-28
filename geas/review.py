@@ -180,46 +180,69 @@ code{background:var(--card);border:1px solid var(--line);border-radius:4px;paddi
 .wf{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}.wf header{padding:6px 10px;color:#fff;font-size:.9rem}.wf .body{padding:10px;display:grid;gap:6px;min-height:90px}
 .wf .bar{background:var(--line);border-radius:4px;height:14px}.wf .tile{background:var(--line);border-radius:6px;height:46px}.wf .g{display:grid;grid-template-columns:1fr 1fr;gap:6px}.wf .btn{border-radius:6px;height:22px}
 .wf.dark{background:#1b1b1b}.wf.dark .bar,.wf.dark .tile{background:#3a3a3a}
-#mock{border:2px solid var(--line);border-radius:14px;max-width:420px;margin:.6em auto;background:#fff;color:#1c1c1a;overflow:hidden}#mock.dark{background:#1b1b1b;color:#eee}
+#mock{position:relative;border:2px solid var(--line);border-radius:18px;max-width:400px;margin:.6em auto;background:#fff;color:#1c1c1a;overflow:hidden}#mock.dark{background:#1b1b1b;color:#eee}
 #mock header{padding:10px 12px;color:#fff;display:flex;gap:8px;align-items:center}#mock header b{flex:1}#mock .in{padding:12px;display:grid;gap:10px}
-#mock button{font:inherit;border:0;border-radius:8px;padding:8px 12px;color:#fff;cursor:pointer}#mock button.ghost{background:transparent;color:inherit;border:1px solid #8886}
-#mock input{font:inherit;padding:7px;border:1px solid #8886;border-radius:6px;width:100%;background:transparent;color:inherit}#mock label{font-size:.8rem;opacity:.8;display:block}
-#mock table{min-width:0;width:100%}#mock th,#mock td{border-color:#8884}#mock tr.row{cursor:pointer}#mock tr.row:hover{background:#8882}
-#mock .res{display:grid;gap:6px;border:1px dashed #8888;border-radius:8px;padding:8px}#mock .lay-grid .shows{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-#uc button{font:inherit;font-size:.85rem;color:inherit;background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}#uc ol{margin:.6em 0 0;padding-left:1.4em}
+#mock .ucid{position:absolute;left:6px;top:2px;font-size:.62rem;opacity:.45;color:#fff;z-index:1}
+#mock button,#mock input{font:inherit}#mock button{border:0;border-radius:8px;padding:8px 12px;color:#fff}#mock input{padding:7px;border:1px solid #8886;border-radius:6px;width:100%;background:transparent;color:inherit}#mock label{font-size:.8rem;opacity:.8;display:block}
+#mock table{min-width:0;width:100%}#mock th,#mock td{border-color:#8884}#mock .lay-grid .shows{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#mock .banner{border-radius:8px;padding:6px 10px;font-size:.82rem;background:#fbf0d4;color:#6b4700}#mock.dark .banner{background:#3a2f12;color:#f0c36a}
+.hl{outline:5px solid #ffd400!important;outline-offset:2px;box-shadow:0 0 0 9px rgba(255,212,0,.45)!important;animation:hl 1.2s ease-in-out infinite}
+@keyframes hl{50%{box-shadow:0 0 0 14px rgba(255,212,0,.15)}}@media (prefers-reduced-motion:reduce){.hl{animation:none}}
+.sc{margin-bottom:240px}
+#pad{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:2px solid var(--line);box-shadow:0 -4px 14px rgba(0,0,0,.18);padding:8px max(12px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+#pad .l{display:flex;justify-content:space-between;gap:8px;font-size:.78rem;color:var(--mut);margin-bottom:4px}#pad .l span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pad .r{display:flex;gap:6px;align-items:center;flex-wrap:wrap}#pad select{flex:1 1 150px;min-width:0;font:inherit;font-size:.88rem;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+#pad button{font:inherit;font-size:.88rem;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+#pad .go,#pad .okb{background:var(--acc);color:#fff;border-color:var(--acc)}#pad .okb{background:var(--ok);border-color:var(--ok)}#pad .ngb{color:var(--bad);border-color:var(--bad)}
+#pad .ng{display:flex;gap:6px;margin-top:6px}#pad .ng input{flex:1;min-width:0;font:inherit;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+#ngs li{margin:.3em 0}[hidden]{display:none!important}
 .hint{font-size:.8rem;color:var(--mut);text-align:center}
 """
 
 JS = """
-const S=JSON.parse(document.getElementById('screens-data').textContent),mock=document.getElementById('mock'),start=document.getElementById('mock-start').dataset.s.split(',');
-const U=JSON.parse(document.getElementById('ucs').textContent),ucbox=document.getElementById('uc');
-let stack=[start[0]],cur=-1,step=0;
-function ev(scr,op,res){if(cur<0)return;const st=U[cur].steps[step];if(st&&st.screen===scr&&st.op===op&&st.result===res){step++;adv()}}
-function adv(){const t=U[cur].steps;while(step<t.length&&t[step].op==='見る'&&t[step].screen===stack[stack.length-1])step++;drawUc()}
-function pick(i){cur=i;step=0;stack=[U[i].steps[0].screen];draw();adv()}
-function drawUc(){ucbox.innerHTML='';const sel=el('div');U.forEach((u,i)=>{const b=el('button','ghost',u.name);b.style.margin='2px';if(i===cur)b.style.background='#8883';b.onclick=()=>pick(i);sel.append(b)});ucbox.append(sel);
- if(cur>=0){const ol=el('ol');U[cur].steps.forEach((t,i)=>{ol.append(el('li','',(i<step?'✓ ':i===step?'▶ ':'')+t.screen+'：'+t.op+(t.result?'（'+t.result+'）':'')))});ucbox.append(ol);if(step>=U[cur].steps.length)ucbox.append(el('div','ok','このユースケースは、画面でたどれました。'))}}
-function go(n){stack.push(n);draw();adv()}function back(){if(stack.length>1){stack.pop();draw();adv()}}
-function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!==undefined)e.innerHTML=h;return e}
+const S=JSON.parse(document.getElementById('screens-data').textContent),U=JSON.parse(document.getElementById('ucs').textContent);
+const mock=document.getElementById('mock'),pad=document.getElementById('pad'),sel=document.getElementById('opsel'),$=id=>document.getElementById(id);
+let op=0,k=0,res=U.map(()=>null),editing=false,moved=false;
+function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!==undefined)e.textContent=h;return e}
+function nsteps(){return U[op].steps.length}
+function curScreen(){const u=U[op];return k<u.steps.length?u.steps[k].screen:u.end}
+function banner(){const u=U[op];if(k>0){const p=u.steps[k-1];if(p.result&&p.to==='そのまま')return p.op+'の結果：'+p.result}return''}
 function draw(){
- const n=stack[stack.length-1],s=S[n],d=s.design;mock.className=d.mode==='dark'?'dark':'';mock.innerHTML='';
- const h=el('header');h.style.background=d.accent;
- if(stack.length>1){const b=el('button','ghost','‹');b.style.color='#fff';b.onclick=back;h.append(b)}
- h.append(el('b','',n));mock.append(h);
- const body=el('div','in lay-'+d.layout);
- s.fields.forEach(f=>{const w=el('div');w.append(el('label','',f));const i=document.createElement('input');i.placeholder=f+' を入力';w.append(i);body.append(w)});
+ const u=U[op],n=curScreen(),s=S[n],d=s.design;mock.className=d.mode==='dark'?'dark':'';mock.innerHTML='';
+ mock.append(el('span','ucid',u.id));
+ const h=el('header');h.style.background=d.accent;h.append(el('b','',n));mock.append(h);
+ const body=el('div','in lay-'+d.layout);const bn=banner();if(bn)body.append(el('div','banner',bn));
+ const st=k<u.steps.length?u.steps[k]:null;
+ s.fields.forEach(f=>{const w=el('div');w.append(el('label','',f));const i=document.createElement('input');i.placeholder=f;i.disabled=true;w.append(i);body.append(w)});
  const sh=el('div','shows');
- s.shows.forEach(q=>{const w=el('div');w.append(el('label','',q.title+'（見本）'));
-  const t=el('table');t.innerHTML='<tr>'+q.cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
-  q.rows.forEach(r=>{const tr=el('tr',s.opens.length?'row':'');tr.innerHTML=r.map(c=>'<td>'+c+'</td>').join('');if(s.opens.length)tr.onclick=()=>{ev(n,'行を選ぶ','');go(s.opens[0])};t.append(tr)});
-  w.append(t);if(s.opens.length)w.append(el('div','hint','行を押すと「'+s.opens[0]+'」へ'));sh.append(w)});
+ s.shows.forEach(q=>{const w=el('div');w.append(el('label','',q.title));const t=el('table');
+  const hr=document.createElement('tr');q.cols.forEach(c=>hr.append(el('th','',c)));t.append(hr);
+  q.rows.forEach((r,i)=>{const tr=document.createElement('tr');r.forEach(c=>tr.append(el('td','',c)));if(st&&st.op==='行を選ぶ'&&i===0)tr.className='hl';t.append(tr)});w.append(t);sh.append(w)});
  body.append(sh);
- s.actions.forEach(a=>{const w=el('div');const b=el('button','',a.title);b.style.background=d.accent;
-  const box=el('div','res');box.style.display='none';box.append(el('div','hint','この動作の結果はどうなりましたか（押して、画面の動きを確かめる）'));
-  a.routes.forEach(r=>{const x=el('button','ghost',r.result+' → '+r.to);x.onclick=()=>{ev(n,a.title,r.result);if(r.kind==='screen')go(r.to);else if(r.kind==='back')back();else{box.style.display='none';draw();adv()}};box.append(x)});
-  b.onclick=()=>{box.style.display=box.style.display==='none'?'grid':'none'};w.append(b);w.append(box);body.append(w)});
- mock.append(body)}
-draw();drawUc();
+ s.actions.forEach(a=>{const b=el('button','',a.title);b.style.background=d.accent;if(st&&st.op===a.title)b.className='hl';body.append(b)});
+ if(st&&st.op==='見る')h.className='hl';
+ mock.append(body);
+ const last=k>=nsteps();
+ $('bNext').hidden=last;$('bOk').hidden=!last;$('bPrev').hidden=(op===0&&k===0);
+ $('line').textContent=u.id+' '+u.name+'　'+(last?'手順は以上':(k+1)+'/'+nsteps()+' '+st.screen+'：'+st.op+(st.result?'（'+st.result+'）':''));
+ const done=res.filter(x=>x).length;$('prog').textContent=done===U.length?'すべて完了（'+done+'件）':'済 '+done+' / '+U.length;
+ const ng=res[op]&&res[op].v==='NG';$('bNg').textContent=ng?'NG✎':'NG';$('bNg').title=ng?res[op].why:'';
+ sel.innerHTML='';U.forEach((x,i)=>{const o=el('option','',(res[i]?(res[i].v==='OK'?'✓ ':'✗ '):'')+x.id+' '+x.name);o.value=i;if(i===op)o.selected=true;sel.append(o)});
+ $('ngrow').hidden=!editing;
+ list();if(moved){const h=mock.querySelector('.hl');if(h)h.scrollIntoView({block:'center',behavior:'smooth'})}}
+function list(){const ul=$('ngs');ul.innerHTML='';res.forEach((r,i)=>{if(r&&r.v==='NG'){const li=el('li','',U[i].id+' '+U[i].name+'：'+(r.why||'（理由なし）')+'　［'+r.at+'］');ul.append(li)}});$('ngwrap').hidden=!ul.children.length}
+function pick(i){op=i;k=0;editing=false;draw()}
+function next(){if(k<nsteps()){k++;moved=true;draw()}}
+function prev(){if(k>0){k--}else if(op>0){op--;k=nsteps()}editing=false;moved=true;draw()}
+function advance(){if(op<U.length-1){pick(op+1)}else draw()}
+$('bNext').onclick=next;$('bPrev').onclick=prev;$('bReset').onclick=()=>pick(op);sel.onchange=()=>pick(+sel.value);
+$('bOk').onclick=()=>{res[op]={v:'OK'};advance()};
+$('bNg').onclick=()=>{editing=true;$('why').value=res[op]&&res[op].v==='NG'?res[op].why:'';draw();$('why').focus()};
+$('ngsave').onclick=()=>{res[op]={v:'NG',why:$('why').value,at:curScreen()+'・手順'+Math.min(k+1,nsteps())};editing=false;advance()};
+$('copy').onclick=()=>{const t=Array.from($('ngs').children).map(x=>'- '+x.textContent).join('\\n');try{navigator.clipboard.writeText(t).catch(()=>{})}catch(e){}};
+const sec=$('walk');
+if('IntersectionObserver' in window){new IntersectionObserver(es=>{pad.hidden=!es[0].isIntersecting},{threshold:0.02}).observe(sec)}
+draw();
 """
 
 
@@ -271,11 +294,25 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             wfs.append(f'<div class="wf {"dark" if d["mode"] == "dark" else ""}"><header style="background:{escape(d["accent"])}">{escape(n)}</header><div class="body">{tiles}{btn}</div>'
                        f'<div class="sub" style="padding:0 10px 8px">配置 {d["layout"]}／色 {escape(d["accent"])}／{"ダーク" if d["mode"] == "dark" else "ライト"}</div></div>')
         add("design", "画面デザイン（①との突合には含めない）", f'<div class="grid">{"".join(wfs)}</div>' + table(["画面", "指定", "値"], spec["画面デザイン"]))
-        uj = [{"name": k, "steps": [{"screen": r["画面"], "op": r["操作"], "result": r.get("結果", "")} for r in v]} for k, v in ucs.items()]
-        add("walk", "ユースケースを画面でたどる", '<p class="sub">ユースケースを選び、手順どおりに押すと、画面でその動きが実現できることを確かめられます。表の中身は型から作った見本で、処理は動きません。結果は「どうなったか」を選びます。</p>'
-            f'<div id="mock-start" data-s="{escape(",".join(entries))}"></div><div class="card" id="uc"></div><div id="mock"></div>'
+        dest_of = {(x[0], x[1], x[2]): x[3] for x in spec["画面遷移"]}
+        uj = []
+        for i, (k, v) in enumerate(ucs.items(), 1):
+            steps, here = [], None
+            for r in v:
+                scr, o, rs = r["画面"], r["操作"], r.get("結果", "")
+                to = dest_of.get((scr, o, rs), "")
+                steps.append({"screen": scr, "op": o, "result": rs, "to": to})
+                here = scr if o == "見る" or to == "そのまま" else to
+            uj.append({"id": f"UC{i}", "name": k, "steps": steps, "end": here or v[-1]["画面"]})
+        add("walk", "ユースケースを画面でたどる", '<p class="sub">画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。</p>'
+            '<div class="sc"><div id="mock"></div></div>'
+            '<div id="ngwrap" hidden><h3>NG にしたもの</h3><ul id="ngs" class="plain"></ul><button id="copy" type="button">コピー</button></div>'
             f'<script type="application/json" id="ucs">{json.dumps(uj, ensure_ascii=False).replace("</", "<\\/")}</script>'
-            f'<script type="application/json" id="screens-data">{json.dumps(sj, ensure_ascii=False).replace("</", "<\\/")}</script>')
+            f'<script type="application/json" id="screens-data">{json.dumps(sj, ensure_ascii=False).replace("</", "<\\/")}</script>'
+            '<div id="pad" role="group" aria-label="レビュー操作パネル"><div class="l"><span id="line"></span><span id="prog"></span></div>'
+            '<div class="r"><select id="opsel" aria-label="確認するユースケース"></select><button id="bReset" type="button">最初から</button><button id="bPrev" type="button">前へ</button>'
+            '<button id="bNext" class="go" type="button">次へ</button><button id="bOk" class="okb" type="button">OK</button><button id="bNg" class="ngb" type="button">NG</button></div>'
+            '<div class="ng" id="ngrow" hidden><input id="why" placeholder="NGの理由（空でもよい）" aria-label="NGの理由"><button id="ngsave" type="button">保存して次へ</button></div></div>')
 
     # 仕様
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
