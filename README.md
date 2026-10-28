@@ -4,6 +4,10 @@
 
 名前の由来は、アイルランド伝承の geis（守らねばならない誓いと禁忌）です。制約を重くするほど、保証が強くなります。
 
+## AI の方へ
+
+AI（Claude Code など）が geas を入れて使うときは、[AGENTS.md](AGENTS.md) から [docs/ai-guide.md](docs/ai-guide.md)（入れ方・コマンド・作業の流れ）と [docs/language-reference.md](docs/language-reference.md)（言語リファレンス）へ進んでください。
+
 ## 用語
 
 | 日本語 | 名前 |
@@ -35,6 +39,8 @@ python -m pytest tests                            # テスト
 ひとり用つぶやきの例（会話から計画書を作り、コード、Rust/WASM、画面まで試したもの）は、[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
 
 ## 書き方（キーワードと名前は半角英数。日本語の表示名は `///` で付ける）
+
+一覧は [docs/language-reference.md](docs/language-reference.md) にあります。以下は、考え方の説明です。
 
 名前の規則は [docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) の「名前の書き方」。以下の例は、書き方の説明のため日本語の名前を使っている（実際の検査は通らない）。お店の例は `tests/fixtures/shop/shop.geas`。
 

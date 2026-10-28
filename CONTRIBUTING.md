@@ -1,6 +1,6 @@
 # 貢献のしかた
 
-小さなプルリクエストを歓迎します。ライセンスの考え方は [docs/license.md](docs/license.md) にあります。
+小さなプルリクエストを歓迎します。AI で作業する場合は、先に [docs/ai-guide.md](docs/ai-guide.md) を読んでください。ライセンスの考え方は [docs/license.md](docs/license.md) にあります。
 
 ## 条件
 
