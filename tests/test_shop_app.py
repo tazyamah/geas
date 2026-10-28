@@ -276,3 +276,30 @@ def test_RESTのURLで読み_結果の種類ごとの状態が返る(server):
     assert rest(b, "POST", "/order_settlements", {"order_id": "nothing"})[0] == 404  # 注文なし
     assert rest(b, "POST", "/reconnections", {})[0] == 201
     assert rest(b, "GET", "/nothing")[0] == 404
+
+
+def test_RESTのupdateとdestroy_入荷と取り下げが状態つきで返り_取り下げた商品は注文の確定で商品なしになる(server, tmp_path):
+    b = f"http://127.0.0.1:{_fresh_server(tmp_path)}"  # 商品を消すので、ほかのテストと状態を分ける
+    stock = lambda: next(p["stock"] for p in rest(b, "GET", "/products")[1]["rows"] if p["product_id"] == "tea-jp")
+    before = stock()
+    # update（PUT /products/:id）：商品の入荷
+    code, j = rest(b, "PUT", "/products/tea-jp", {"quantity": 5})
+    assert (code, j["result"]) == (200, "Restocked") and stock() == before + 5
+    code, j = rest(b, "PUT", "/products/nothing", {"quantity": 5})
+    assert (code, j["result"]) == (404, "NoSuchProduct")
+    assert rest(b, "PUT", "/products/tea-jp", {"quantity": 0})[0] == 400  # 境界の検査（数量は1以上）はそのまま効く
+    # 取り下げる前に注文を受け付けておく（注文の明細には商品IDが残る）
+    body = {"customer_id": "c-001", "items": {"tea-jp": 1}, "ship_to": {"country": "JP", "postal_code": "100-0001", "line": "x"}, "slots": {"currency": "JPY"}}
+    code, j = rest(b, "POST", "/orders", body)
+    assert (code, j["result"]) == (201, "Received")
+    oid = j["body"]["order_id"]
+    # destroy（DELETE /products/:id）：商品の取り下げ
+    code, j = rest(b, "DELETE", "/products/tea-jp")
+    assert (code, j["result"]) == (200, "Withdrawn")
+    assert all(p["product_id"] != "tea-jp" for p in rest(b, "GET", "/products")[1]["rows"])
+    code, j = rest(b, "DELETE", "/products/tea-jp")
+    assert (code, j["result"]) == (404, "NoSuchProduct")  # 2回目は商品なし
+    assert rest(b, "PUT", "/products/tea-jp", {"quantity": 1})[0] == 404
+    # 参照は leave：注文は残り、確定のときに商品が無いので「在庫が足りなかった」
+    code, j = rest(b, "POST", "/order_completions", {"order_id": oid})
+    assert (code, j["result"]) == (422, "StockLacking")

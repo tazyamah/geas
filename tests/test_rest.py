@@ -65,7 +65,7 @@ def test_同じ処理を2か所に割り当てられない_URLの重なりもエ
 
 
 def test_割り当てのない処理は警告():
-    ck = chk(mutate(CODE, "/// 商品\nresource Products {\n  index product_list\n}\n", ""))
+    ck = chk(mutate(CODE, "/// 商品\nresource Products {\n  index product_list\n  update restock_product {\n    Restocked → 200\n    NoSuchProduct → 404\n  }\n  destroy withdraw_product {\n    Withdrawn → 200\n    NoSuchProduct → 404\n  }\n}\n", ""))
     assert any("product_list" in d.where or "商品一覧" in d.where for d in ck.diags if d.level == WARN)
 
 
