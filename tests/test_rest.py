@@ -141,3 +141,23 @@ def test_ruleの誤りは止まる():
     for why, (old, new) in bad.items():
         ck = chk(mutate(CODE, old, new))
         assert any("rule" in d.where for d in ck.diags if d.level == ERROR), why
+
+
+def test_URLの具体例はルートと突き合わされ_テストに変わる(tmp_path):
+    from geas.plan import coverage, compare_static, read_plan
+    from geas.testgen import url_rows, write_url_tests
+    plan_md = (Path(__file__).parent / "fixtures" / "overseas_shop" / "overseas_shop_plan.md").read_text()
+    ck = chk(CODE)
+    sp = build(ck)
+    plan = read_plan(plan_md)
+    assert len(plan["URL例"]) == 16 and not [f for f in compare_static(sp, plan) if "URL例" in f.where]
+    rows = {r[0]: r for r in url_rows(ck, plan)}
+    assert rows["UX6"][1:6] == ("POST", "/orders", rows["UX6"][3], "Received", 201) and rows["UX6"][7] == [("order_id", "body.order_id")]
+    assert rows["UX13"][4] == "Withdrawn" and rows["UX3"][4] == ""  # 表示名はコードの名前に、「－」は結果なしに
+    f = write_url_tests(ck, plan, tmp_path)
+    assert f == tmp_path / "tests" / "test_url_examples.py" and "def test_url_example" in f.read_text()
+    cov = {(r[0], r[1], r[2]): r for r in coverage(sp, plan)[0]}
+    assert "UX6" in cov[("POST", "/orders", "受付")][4] and cov[("PUT", "/products/:id", "商品なし")][6] == "○"  # 網羅の表に URL の具体例が数えられる
+    for old, new, what in (("| UX4 | POST | /orders |", "| UX4 | POST | /nothing |", "ルートがない"), ("| 通貨が違う | 422 |", "| 通貨が違う | 200 |", "状態が違う"), ("| 受付 | 201 |", "| 受付済 | 201 |", "結果がない")):
+        bad = read_plan(mutate(plan_md, old, new))
+        assert [f for f in compare_static(sp, bad) if "URL例" in f.where], what

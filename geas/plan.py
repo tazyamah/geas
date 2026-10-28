@@ -67,7 +67,7 @@ def classify(headers: list[str]) -> str | None:
     for kind, need in (
         ("データ", {"項目", "型・範囲"}), ("状態", {"状態", "区分"}), ("遷移", {"元", "先", "起こす処理"}),
         ("拒否", {"元", "先", "拒否の理由"}), ("問い合わせ", {"問い合わせ", "条件", "並び"}), ("処理", {"入力", "読む", "書く"}), ("不変条件", {"内容"}),
-        ("トリガ", {"トリガ", "要因", "行き先"}), ("外部作用", {"外部作用", "出す内容"}), ("合流", {"外部作用", "合流先のトリガ"}), ("出来事", {"出来事", "起こし方", "処理"}), ("ルート", {"メソッド", "経路", "動作", "呼ぶもの"}), ("画面", {"画面", "見せる", "入力欄", "入口"}), ("画面遷移", {"画面", "操作", "結果", "行き先"}), ("ユースケース", {"ユースケース", "手順", "画面", "操作"}), ("指定", {"項目", "指定"}), ("具体例", {"期待する結果"}),
+        ("トリガ", {"トリガ", "要因", "行き先"}), ("外部作用", {"外部作用", "出す内容"}), ("合流", {"外部作用", "合流先のトリガ"}), ("出来事", {"出来事", "起こし方", "処理"}), ("ルート", {"メソッド", "経路", "動作", "呼ぶもの"}), ("画面", {"画面", "見せる", "入力欄", "入口"}), ("画面遷移", {"画面", "操作", "結果", "行き先"}), ("ユースケース", {"ユースケース", "手順", "画面", "操作"}), ("指定", {"項目", "指定"}), ("URL例", {"メソッド", "経路", "期待する結果", "期待する状態"}), ("具体例", {"期待する結果"}),
     ):
         if need <= h:
             return kind
@@ -106,6 +106,22 @@ def fmt(v):
     if isinstance(v, (set, frozenset)):
         return "{" + ", ".join(sorted(v)) + "}" if v else "なし"
     return v if v != "" else "（空）"
+
+
+def route_match(routes, method: str, path: str):
+    """計画書の経路（実際の値や {名前} を含んでよい）に当たるルートを返す。決まった語の多い経路を優先する。無ければ None。
+    routes は (メソッド, 経路, …) の列で、経路の :名前 は何にでも当たる"""
+    segs = path.strip().strip("/").split("/")
+    best = None
+    for r in routes:
+        if r[0] != method.strip():
+            continue
+        rs = r[1].strip("/").split("/")
+        if len(rs) != len(segs) or any(not a.startswith(":") and a != b for a, b in zip(rs, segs)):
+            continue
+        if best is None or sum(not a.startswith(":") for a in rs) > sum(not a.startswith(":") for a in best[1].strip("/").split("/")):
+            best = r
+    return best
 
 
 def compare_static(spec: dict, plan: dict) -> list[Finding]:
@@ -177,6 +193,21 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
     a = {(r["画面"], n(r["操作"]), n(r["結果"])): {"行き先": n(r["行き先"])} for r in sect("画面遷移")}
     b = {(x, n(o), n(v)): {"行き先": n(d)} for x, o, v, d in spec["画面遷移"]}
     cmp_map("画面遷移", a, b, out, lambda k: f"{k[0]}: {k[1]} {k[2]}".rstrip())
+    # URL の具体例：ルートがあり、期待する結果と状態がそのルートの宣言どおりか
+    for r in sect("URL例"):
+        where = f"URL例 {r.get('ID', '').strip()}"
+        rt = route_match(spec["ルート"], r["メソッド"], r["経路"])
+        if rt is None:
+            out.append(Finding(A_ONLY, where, f"{r['メソッド'].strip()} {r['経路'].strip()} に当たるルートが、コードにありません"))
+            continue
+        want = dict(x.split("→") for x in rt[4].split(", ") if "→" in x)
+        res, code = n(r["期待する結果"]), r["期待する状態"].strip()
+        if res in ("－", "-"):  # 結果の種類が無い応答（境界の検査の 400 や、一覧の 200 など）
+            continue
+        if want and res not in {n(k) for k in want}:
+            out.append(Finding(DIFF, where, f"結果「{r['期待する結果'].strip()}」は、ルート {rt[0]} {rt[1]} の結果にありません（{', '.join(want)}）"))
+        elif want and code != next(v for k, v in want.items() if n(k) == res):
+            out.append(Finding(DIFF, where, f"計画: {res}→{code} ／ コード: {res}→{next(v for k, v in want.items() if n(k) == res)}"))
     # ルート（URL。経路ごとの動作・呼ぶもの・結果の種類ごとの HTTP の状態）
     a = {(r["メソッド"].strip(), r["経路"].strip()): {"動作": r["動作"].strip(), "呼ぶもの": n(r["呼ぶもの"]), "結果→状態": items(r.get("結果→状態", ""))} for r in sect("ルート")}
     b = {(m, path): {"動作": kind, "呼ぶもの": n(tgt), "結果→状態": items(st)} for m, path, kind, tgt, st in spec["ルート"]}
@@ -259,6 +290,11 @@ def coverage(spec: dict, plan: dict) -> tuple[list[list[str]], int, int]:
         res = n(re.split(r"[（(]", r["期待する結果"])[0])
         if "未規定" not in r["期待する結果"]:
             ex.setdefault((n(r["処理"]), res), []).append(r["ID"].strip())
+    url_ex: dict[tuple[str, str, str], list[str]] = {}  # (メソッド, 経路, 結果) → URL の具体例
+    for r in plan.get("URL例", []):
+        rt = route_match(spec["ルート"], r["メソッド"], r["経路"])
+        if rt:
+            url_ex.setdefault((rt[0], rt[1], n(r["期待する結果"])), []).append(r["ID"].strip())
     shows: dict[str, set[str]] = {}  # 画面 → 画面を開くと読む問い合わせ
     for x, q, fields, *_ in spec["画面"]:
         shows[n(x)] = set(items(q)) | {n(f.split("←")[1]) for f in split_top(fields, ",") if "←" in f}
@@ -276,7 +312,7 @@ def coverage(spec: dict, plan: dict) -> tuple[list[list[str]], int, int]:
         t = n(tgt)
         variants = [tuple(x.split("→")) for x in st.split(", ") if "→" in x] or [("", "200" if m == "GET" else "－")]
         for v, code in variants:
-            e = ex.get((t, n(v)), []) if v else []
+            e = (ex.get((t, n(v)), []) if v else []) + url_ex.get((m, path, n(v)), []) + (url_ex.get((m, path, ""), []) if not v else [])
             u = sorted(uc_act.get((t, n(v)), set()) if v else uc_get.get(t, set()))
             ok = bool(e or u)
             got += ok

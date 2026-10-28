@@ -495,15 +495,15 @@ flowchart LR
 
 - 指摘なし
 
-## 内部 URL ごとの確認の網羅（確認できた 13 / 49、26%。具体例とユースケースが当たっているか）
+## 内部 URL ごとの確認の網羅（確認できた 15 / 49、30%。具体例とユースケースが当たっているか）
 
 | メソッド | 経路 | 結果 | 状態 | 具体例 | ユースケース | 確認 |
 |---|---|---|---|---|---|---|
-| POST | /orders | 受付 | 201 |  | 商品を見つけて注文する、在庫が足りなかった注文をやり直す | ○ |
+| POST | /orders | 受付 | 201 | UX6 | 商品を見つけて注文する、在庫が足りなかった注文をやり直す | ○ |
 | POST | /orders | 在庫不足 | 422 |  | 在庫が足りなかった注文をやり直す | ○ |
 | POST | /orders | 商品なし | 404 |  | 注文が受け付けられない理由を知る | ○ |
-| POST | /orders | 通貨が違う | 422 |  | 注文が受け付けられない理由を知る | ○ |
-| POST | /orders | 顧客なし | 404 |  | 注文が受け付けられない理由を知る | ○ |
+| POST | /orders | 通貨が違う | 422 | UX4 | 注文が受け付けられない理由を知る | ○ |
+| POST | /orders | 顧客なし | 404 | UX5 | 注文が受け付けられない理由を知る | ○ |
 | GET | /orders |  | 200 |  |  | 未 |
 | POST | /payment_requests | 要求済 | 201 |  |  | 未 |
 | POST | /payment_requests | 注文なし | 404 |  |  | 未 |
@@ -520,12 +520,12 @@ flowchart LR
 | POST | /order_settlements | 承認 | 201 |  |  | 未 |
 | POST | /order_settlements | 決済失敗 | 201 |  |  | 未 |
 | POST | /order_settlements | 在庫を確保できず | 201 |  |  | 未 |
-| POST | /order_settlements | 注文なし | 404 |  |  | 未 |
+| POST | /order_settlements | 注文なし | 404 | UX8 |  | ○ |
 | POST | /order_settlements | 状態違い | 409 |  |  | 未 |
 | POST | /order_completions | 反映済 | 201 |  |  | 未 |
 | POST | /order_completions | 注文なし | 404 |  |  | 未 |
 | POST | /order_completions | 状態違い | 409 |  |  | 未 |
-| POST | /order_completions | 在庫が足りなかった | 422 |  |  | 未 |
+| POST | /order_completions | 在庫が足りなかった | 422 | UX16 |  | ○ |
 | POST | /unpaid_cancellations | 反映済 | 201 |  |  | 未 |
 | POST | /unpaid_cancellations | 注文なし | 404 |  |  | 未 |
 | POST | /unpaid_cancellations | 状態違い | 409 |  |  | 未 |
@@ -539,10 +539,10 @@ flowchart LR
 | POST | /order_recheck_requests | 注文なし | 404 |  |  | 未 |
 | POST | /order_recheck_requests | 状態違い | 409 |  |  | 未 |
 | GET | /products |  | 200 |  | 取り下げた商品を扱おうとして失敗する、商品を入荷する、商品を取り下げる、商品を見つけて注文する、在庫が足りなかった注文をやり直す、注文が受け付けられない理由を知る | ○ |
-| PUT | /products/:id | 入荷済 | 200 |  | 商品を入荷する | ○ |
-| PUT | /products/:id | 商品なし | 404 |  | 取り下げた商品を扱おうとして失敗する | ○ |
-| DELETE | /products/:id | 取り下げ済 | 200 |  | 商品を取り下げる | ○ |
-| DELETE | /products/:id | 商品なし | 404 |  | 取り下げた商品を扱おうとして失敗する | ○ |
+| PUT | /products/:id | 入荷済 | 200 | UX10 | 商品を入荷する | ○ |
+| PUT | /products/:id | 商品なし | 404 | UX11, UX15 | 取り下げた商品を扱おうとして失敗する | ○ |
+| DELETE | /products/:id | 取り下げ済 | 200 | UX13 | 商品を取り下げる | ○ |
+| DELETE | /products/:id | 商品なし | 404 | UX14 | 取り下げた商品を扱おうとして失敗する | ○ |
 | GET | /customers |  | 200 |  | 商品を見つけて注文する、在庫が足りなかった注文をやり直す、注文が受け付けられない理由を知る | ○ |
 | GET | /customers/:customer_id/orders |  | 200 |  | 商品を見つけて注文する | ○ |
 | GET | /awaiting_payment_orders |  | 200 |  |  | 未 |
