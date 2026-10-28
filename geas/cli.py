@@ -70,6 +70,7 @@ def main(argv=None) -> int:
     c.add_argument("code")
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
     s.add_argument("code")
+    s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")
     s.add_argument("-o")
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
     v.add_argument("code")
@@ -97,6 +98,9 @@ def main(argv=None) -> int:
         return 0 if ck.ok else 1
     if a.cmd == "spec":
         text = render(ck, build(ck), f"（{Path(a.code).name}）")
+        if a.plan:
+            from .plan import coverage_markdown
+            text += "\n".join(coverage_markdown(build(ck), read_plan(Path(a.plan).read_text()))) + "\n"
         Path(a.o).write_text(text) if a.o else print(text)
         return 0 if ck.ok else 1
     if a.cmd == "review":

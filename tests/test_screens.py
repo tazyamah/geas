@@ -86,7 +86,7 @@ def test_ユースケースの手順が画面遷移として実在しつなが�
     bad = PLAN.replace("| 商品を見つけて注文する | 4 | 注文の履歴の画面 | 見る |  |", "| 商品を見つけて注文する | 4 | 商品一覧の画面 | 見る |  |")
     assert any("前の手順のあとに見えている画面" in f.msg for f in compare_static(build(ck), read_plan(bad)))
     # どのユースケースにも使われない遷移
-    bad = PLAN.replace("| 注文が受け付けられない理由を知る | 5 | 注文の画面 | 注文 | 顧客なし |\n", "")
+    bad = PLAN.replace("| 注文が受け付けられない理由を知る | 5 | 注文の画面 | 注文 | 顧客なし | /orders/new |\n", "")
     assert any("使われていません" in f.msg for f in compare_static(build(ck), read_plan(bad)))
 
 
