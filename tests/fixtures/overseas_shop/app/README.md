@@ -13,13 +13,13 @@ Chrome 拡張 ────┘                  │
 ## 動かす
 
 ```sh
-./build.sh                         # Geas から Rust を作り、サーバーをビルドする
-cd server
-./target/release/shop_server       # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
+./build.sh                         # Geas から Rust・画面・拡張・サーバーの実行部を作り、サーバーをビルドする
+cd generated
+./server/target/release/geas_server --pwa ui --dev dev --seed ../seed.json   # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
 ```
 
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
-- 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `server/generated/ext/` を選ぶ（geas が screen の `page` から生成する）。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
+- 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `generated/ext/` を選ぶ（geas が screen の `page` から生成する）。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
 - 最初の商品と顧客は `seed.json`（DB が空のときだけ入る）。商品と顧客を作る処理は、この題材の Geas には無い。
 - 通しの確認：`python -m pytest tests/test_shop_app.py`（cargo が要る。画面と拡張の確認は node と Playwright があるときだけ）。
 
@@ -27,16 +27,13 @@ cd server
 
 | 場所 | 役目 | お店を知っているか |
 |---|---|---|
-| `server/src/engine.rs` | 生成した処理を呼び、結果の行き先（フロー）・待ち（トリガ）・外部作用・出来事を動かす | 知らない（生成物の定義 `DEFS_JSON` で動く） |
-| `server/src/db.rs` | 保存（store）の読み書き。実体ごとの表（キーと JSON）。待ちと外部作用の記録も持つ | 知らない |
-| `server/src/http.rs` | JSON の口と、画面のファイルの配信 | 知らない |
-| `server/src/app.rs` | 外から埋める枠（通貨以外の slot＝税率・送料）、新しい ID、最初のデータ | 知っている |
-| `server/src/mock.rs` | 決済・倉庫・配送の模擬（返事を返す、冪等キーが同じ請求には同じ答え） | 知っている |
-| `server/generated/ui/` | 画面（PWA）。geas の screen 宣言から `geas rust --host` が置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
-| `server/generated/dev/` | 開発用の模擬操作パネル（geas が応答の結果の種類と出来事の宣言から生成。返事の結果の種類を選ぶ・返事を落とす・時計を進める）。アプリの画面ではない | 知っている |
-| `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `server/generated/ext/` に geas が生成する | 口の JSON だけを知っている |
+| `generated/server/`（`geas rust --host --runtime` が geas から置く） | サーバーの実行部：`engine.rs` は生成した処理を呼び、結果の行き先・待ち・外部作用・出来事を動かす。`db.rs` は保存（実体ごとの表）。`http.rs` は JSON の口と画面の配信。`mock.rs` は決済・倉庫などの模擬（宣言の `replies` と結果の種類で動く） | 知らない（生成物の定義 `DEFS_JSON` で動く） |
+| `app.rs`（`--app` で渡す） | 外から埋める枠（通貨以外の slot＝税率・送料）、新しい ID、最初のデータ | 知っている（手書き。次に宣言へ移す） |
+| `generated/ui/` | 画面（PWA）。geas の screen 宣言から置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
+| `generated/dev/` | 開発用の模擬操作パネル（応答の結果の種類と出来事の宣言から生成）。アプリの画面ではない | 知らない（定義で動く） |
+| `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `generated/ext/` に geas が生成する | 口の JSON だけを知っている |
 
-SQLite に決めているのは `db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
+SQLite に決めているのは `generated/server/src/db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
 
 ## 口
 
