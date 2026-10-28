@@ -21,7 +21,7 @@ cd generated/server
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
 - 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `generated/ext/` を選ぶ（geas が screen の `page` から生成する）。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
 - 最初の商品と顧客は `seed.json`（`geas rust --seed` で生成物に埋め込む。DB が空のときだけ入る）。商品と顧客を作る処理は、この題材の Geas には無い。
-- 通しの確認：`python -m pytest tests/test_shop_app.py`（cargo が要る。画面と拡張の確認は node と Playwright があるときだけ）。
+- 通しの確認：`python -m pytest tests/test_shop_app.py`（cargo が要る。画面と拡張の確認は node と Playwright があるときだけ。どちらも計画書の「URL の具体例」「画面の具体例」から生成したテスト `generated/tests/` を回す）。
 
 ## 層の分け方
 

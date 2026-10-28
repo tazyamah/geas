@@ -137,6 +137,14 @@ def main(argv=None) -> int:
                     return 1
                 if f:
                     print(f"URL の具体例のテストを生成しました: {f}")
+                from .testgen import write_screen_tests
+                try:
+                    f = write_screen_tests(ck, read_plan(Path(a.plan).read_text()), a.o)
+                except ValueError as e:
+                    print(f"画面の具体例: {e}", file=sys.stderr)
+                    return 1
+                if f:
+                    print(f"画面の具体例のテストを生成しました: {f}")
         if a.host and ext_screens(ck):
             write_ext(ck, a.o, a.server)
         print(f"生成しました: {a.o}")

@@ -546,6 +546,6 @@ flowchart LR
 | GET | /customers |  | 200 |  | 商品を見つけて注文する、在庫が足りなかった注文をやり直す、注文が受け付けられない理由を知る | ○ |
 | GET | /customers/:customer_id/orders |  | 200 |  | 商品を見つけて注文する | ○ |
 | GET | /awaiting_payment_orders |  | 200 |  |  | 未 |
-| GET | /product_prices/:jan |  | 200 |  | Amazon の商品ページで、お店の価格を見る | ○ |
+| GET | /product_prices/:jan |  | 200 |  | Amazon の商品ページで、お店の価格を見る、JAN が分からない商品では、分からないと知る、お店で扱っていない商品では、扱っていないと知る、商品ページでなければ、何も出さない、商品ページに JAN があれば、それで価格を見る | ○ |
 | POST | /reconnections |  | － |  |  | 未 |
 
