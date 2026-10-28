@@ -156,7 +156,7 @@ def flow_diagram(fl) -> list[str]:
         src = node("処理:" + proc, proc)
         rm = route_map(routes)
         if len(rm) > 1:
-            gw = node("×:" + proc, "×", "{{{}}}")
+            gw = node("×:" + proc, "×", "(({}))")
             out.append(f"    {src} --> {gw}")
             src_of = lambda v: (gw, v)
         else:
@@ -164,7 +164,7 @@ def flow_diagram(fl) -> list[str]:
         for v, ds in rm.items():
             a, label = src_of(v)
             if len(ds) > 1:
-                par = node(f"＋:{proc}:{v}", "＋", "{{{}}}")
+                par = node(f"＋:{proc}:{v}", "＋", "(({}))")
                 out.append(f'    {a} -- "{label}" --> {par}')
                 out += [f"    {par} --> {dest(d)}" for d in ds]
             else:
