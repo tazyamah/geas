@@ -52,6 +52,20 @@ const base = process.argv[2] || "http://localhost:8787";
   // 注文のあとのポイントは、選んだ顧客の下に出る
   assert.ok((await p.locator('[data-picked="customer"]').innerText()).includes("15"));
 
+  // 商品の管理の画面（update／destroy の URL を呼ぶ）。URL を直接開く
+  await p.goto(base + "/products/:id/edit");
+  await p.waitForSelector('[data-screen="ProductAdmin"] [data-row]');
+  const stockOf = async (id) => Number(await p.locator(`[data-row="${id}"] [data-col="stock"] b`).innerText());
+  const before = await stockOf("tea-jp");
+  await p.selectOption('[data-field="product_id"]', "tea-jp");
+  await p.fill('[data-field="quantity"]', "7");
+  await p.click('[data-action="restock_product"]');
+  await p.waitForFunction((n) => document.querySelector('[data-row="tea-jp"] [data-col="stock"] b')?.textContent.trim() === String(n), before + 7, { timeout: 5000 });
+  await p.selectOption('[data-field="product_id"]', "knife-jp");
+  await p.click('[data-action="withdraw_product"]');
+  await p.waitForFunction(() => !document.querySelector('[data-row="knife-jp"]'), null, { timeout: 5000 });
+  assert.strictEqual(await p.locator('[data-field="product_id"] option[value="knife-jp"]').count(), 0, "取り下げた商品は選ぶ元からも消える");
+
   // サービスワーカーが殻を覚え、オフラインでも画面が開く
   await p.evaluate(() => navigator.serviceWorker.ready);
   await ctx.setOffline(true);

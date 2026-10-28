@@ -28,8 +28,8 @@ def test_海外店の画面は検査を通り_仕様書に画面と遷移とデ�
     ck = chk(CODE)
     assert ck.ok, ck.diags
     spec = build(ck)
-    assert [x[0] for x in spec["画面"]] == ["商品一覧の画面", "注文の画面", "注文の履歴の画面", "価格の確認の画面（Chrome 拡張）"]
-    assert [x[4] for x in spec["画面"]] == ["○", "", "", "○"]
+    assert [x[0] for x in spec["画面"]] == ["商品一覧の画面", "注文の画面", "注文の履歴の画面", "価格の確認の画面（Chrome 拡張）", "商品の管理の画面"]
+    assert [x[4] for x in spec["画面"]] == ["○", "", "", "○", "○"]
     assert ("商品一覧の画面", "行を選ぶ", "", "注文の画面") in spec["画面遷移"]
     assert ("注文の画面", "注文", "受付", "注文の履歴の画面") in spec["画面遷移"]
     md = render(ck, spec)

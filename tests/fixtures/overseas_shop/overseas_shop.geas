@@ -50,6 +50,8 @@ entity Product {
   currency: currency required
   /// 価格
   price: money(currency) required
+  // 取り下げても、注文の明細には商品IDが残る（確定のときに「商品なし」として扱う）
+  on delete Order.items → leave
 }
 
 /// 顧客
@@ -389,6 +391,49 @@ deed expire_order {
   return Applied
 }
 
+/// 入荷の結果
+result RestockResult {
+  /// 入荷済
+  Restocked
+  /// 商品なし
+  NoSuchProduct
+}
+
+/// 取り下げの結果
+result WithdrawResult {
+  /// 取り下げ済
+  Withdrawn
+  /// 商品なし
+  NoSuchProduct
+}
+
+/// 商品の入荷
+deed restock_product {
+  input product_id: id required, /// 入荷数
+    quantity: Quantity required
+  reads Product.stock
+  writes Product.stock
+  result RestockResult
+  effects none
+
+  let product = Product[product_id] else { return NoSuchProduct }
+  product.stock = product.stock + quantity
+  return Restocked
+}
+
+/// 商品の取り下げ
+deed withdraw_product {
+  input product_id: id required
+  reads Product
+  writes Product
+  result WithdrawResult
+  effects none
+
+  let product = Product[product_id] else { return NoSuchProduct }
+  delete product
+  return Withdrawn
+}
+
 /// 注文一覧
 query order_list {
   from Order
@@ -464,6 +509,16 @@ nexus Settlement {
   expire_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
 }
 
+/// 商品の入荷の流れ
+nexus Restock {
+  restock_product: Restocked → reply, NoSuchProduct → reply
+}
+
+/// 商品の取り下げの流れ
+nexus Withdrawal {
+  withdraw_product: Withdrawn → reply, NoSuchProduct → reply
+}
+
 /// 決済状況の引き直しの流れ
 nexus Recheck {
   recheck_payment: Rechecked → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply
@@ -530,6 +585,25 @@ screen PriceCheck entry {
 }
 
 // URL（RESTful）。リソースごとに名前から URL が決まり、結果の種類ごとに HTTP の状態を決める。条件はパスで渡す
+/// 商品の管理の画面
+screen ProductAdmin entry {
+  show product_list
+  field product_id from product_list
+  field quantity
+  action restock_product {
+    Restocked → stay
+    NoSuchProduct → stay
+  }
+  action withdraw_product {
+    Withdrawn → stay
+    NoSuchProduct → stay
+  }
+  design {
+    layout form
+    accent "#8a5a00"
+  }
+}
+
 /// 注文
 resource Orders {
   create place_order {
@@ -638,6 +712,14 @@ resource OrderRecheckRequests {
 /// 商品
 resource Products {
   index product_list
+  update restock_product {
+    Restocked → 200
+    NoSuchProduct → 404
+  }
+  destroy withdraw_product {
+    Withdrawn → 200
+    NoSuchProduct → 404
+  }
 }
 
 /// 顧客

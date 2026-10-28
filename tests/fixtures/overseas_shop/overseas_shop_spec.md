@@ -59,6 +59,8 @@
 | 在庫不足の返金と取り消し | 注文ID（必須）, 与信（必須） | 注文.状態 | 注文.状態 | 反映済→応答 / 注文なし→応答 / 状態違い→応答 | 決済.与信の取り消し(冪等キー=注文ID) |
 | 決済状況の引き直し | 注文ID（必須） | 注文.通貨, 注文.状態, 注文.合計 |  | 引き直し済→待つ 注文待ち / 注文なし→応答 / 状態違い→応答 | 決済.請求(冪等キー=注文ID) |
 | 期限切れの取り消し | 注文ID（必須） | 注文.状態 | 注文.状態 | 反映済→応答 / 注文なし→応答 / 状態違い→応答 | なし |
+| 商品の入荷 | 商品ID（必須）, 入荷数（必須） | 商品.在庫 | 商品.在庫 | 入荷済→応答 / 商品なし→応答 | なし |
+| 商品の取り下げ | 商品ID（必須） | 商品 | 商品 | 取り下げ済→応答 / 商品なし→応答 | なし |
 
 ## フロー図 Intake（×＝結果で行き先が分かれる、＋＝並列に起こす）
 
@@ -145,6 +147,30 @@ flowchart LR
     n10 -- "状態違い" --> n5
 ```
 
+## フロー図 Restock（×＝結果で行き先が分かれる、＋＝並列に起こす）
+
+```mermaid
+flowchart LR
+    n0["商品の入荷"]
+    n1(("×"))
+    n0 --> n1
+    n2(["応答（reply）"])
+    n1 -- "入荷済" --> n2
+    n1 -- "商品なし" --> n2
+```
+
+## フロー図 Withdrawal（×＝結果で行き先が分かれる、＋＝並列に起こす）
+
+```mermaid
+flowchart LR
+    n0["商品の取り下げ"]
+    n1(("×"))
+    n0 --> n1
+    n2(["応答（reply）"])
+    n1 -- "取り下げ済" --> n2
+    n1 -- "商品なし" --> n2
+```
+
 ## フロー図 Recheck（×＝結果で行き先が分かれる、＋＝並列に起こす）
 
 ```mermaid
@@ -213,6 +239,7 @@ flowchart LR
 | 注文の画面 |  | 顧客ID←顧客一覧, 明細←商品一覧, 配送先 | 商品ID |  | 通貨 | /orders/new |
 | 注文の履歴の画面 | 顧客の注文一覧 | 顧客←顧客一覧 |  |  |  | /customers/:customer_id/orders |
 | 価格の確認の画面（Chrome 拡張） | JANコードから価格を引く | JANコード |  | ○ |  | /product_prices/:jan |
+| 商品の管理の画面 | 商品一覧 | 商品ID←商品一覧, 入荷数 |  | ○ |  | /products/:id/edit |
 
 ## 画面遷移
 
@@ -224,6 +251,10 @@ flowchart LR
 | 注文の画面 | 注文 | 商品なし | そのまま |
 | 注文の画面 | 注文 | 通貨が違う | そのまま |
 | 注文の画面 | 注文 | 顧客なし | そのまま |
+| 商品の管理の画面 | 商品の入荷 | 入荷済 | そのまま |
+| 商品の管理の画面 | 商品の入荷 | 商品なし | そのまま |
+| 商品の管理の画面 | 商品の取り下げ | 取り下げ済 | そのまま |
+| 商品の管理の画面 | 商品の取り下げ | 商品なし | そのまま |
 
 ## 画面デザイン（突合しない。配置と色）
 
@@ -241,6 +272,14 @@ flowchart LR
 | 価格の確認の画面（Chrome 拡張） | layout | stack |
 | 価格の確認の画面（Chrome 拡張） | accent | #e47911 |
 | 価格の確認の画面（Chrome 拡張） | mode | dark |
+| 商品の管理の画面 | layout | form |
+| 商品の管理の画面 | accent | #8a5a00 |
+
+## 削除（消してよい状態と、消したときの参照元の扱い）
+
+| データ | 消してよい状態 | 参照元の扱い |
+|---|---|---|
+| 商品 | 消せる | 注文.明細→そのまま残す |
 
 ## ルート（URL。結果の種類ごとの HTTP の状態つき）
 
@@ -259,6 +298,8 @@ flowchart LR
 | POST | /expiry_cancellations | create | 期限切れの取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
 | POST | /order_recheck_requests | create | 決済状況の引き直し | 引き直し済→201, 注文なし→404, 状態違い→409 |
 | GET | /products | index | 商品一覧 |  |
+| PUT | /products/:id | update | 商品の入荷 | 入荷済→200, 商品なし→404 |
+| DELETE | /products/:id | destroy | 商品の取り下げ | 取り下げ済→200, 商品なし→404 |
 | GET | /customers | index | 顧客一覧 |  |
 | GET | /customers/:customer_id/orders | index | 顧客の注文一覧 |  |
 | GET | /awaiting_payment_orders | index | 決済の返事待ちの注文 |  |
@@ -269,8 +310,8 @@ flowchart LR
 
 | ◆内容 | 検査の結果 |
 |---|---|
-| Product: stock >= 0 | place_order: 対象外／request_payment: 対象外／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（減算の前に不足を確認している）／cancel_unpaid: 対象外／refund_and_cancel: 対象外／recheck_payment: 対象外／expire_order: 対象外 |
-| Order: status == PaymentRequested なら total > 0 | place_order: 証明済み（新規作成はPaymentRequested以外）／request_payment: 証明済み（PaymentRequestedにする前に total > 0 を確認している）／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（PaymentRequested以外にする）／cancel_unpaid: 証明済み（PaymentRequested以外にする）／refund_and_cancel: 証明済み（PaymentRequested以外にする）／recheck_payment: 対象外／expire_order: 証明済み（PaymentRequested以外にする） |
+| Product: stock >= 0 | place_order: 対象外／request_payment: 対象外／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（減算の前に不足を確認している）／cancel_unpaid: 対象外／refund_and_cancel: 対象外／recheck_payment: 対象外／expire_order: 対象外／restock_product: 証明済み（書く値は 0 以上）／withdraw_product: 対象外 |
+| Order: status == PaymentRequested なら total > 0 | place_order: 証明済み（新規作成はPaymentRequested以外）／request_payment: 証明済み（PaymentRequestedにする前に total > 0 を確認している）／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（PaymentRequested以外にする）／cancel_unpaid: 証明済み（PaymentRequested以外にする）／refund_and_cancel: 証明済み（PaymentRequested以外にする）／recheck_payment: 対象外／expire_order: 証明済み（PaymentRequested以外にする）／restock_product: 対象外／withdraw_product: 対象外 |
 
 ## 指定事項（コードに書かれた、既定でない指定）
 
@@ -371,6 +412,13 @@ flowchart LR
 | Rechecked | 既定: 引き直し済 |
 | recheck_payment | 既定: 決済状況の引き直し |
 | expire_order | 既定: 期限切れの取り消し |
+| RestockResult | 既定: 入荷の結果 |
+| Restocked | 既定: 入荷済 |
+| WithdrawResult | 既定: 取り下げの結果 |
+| Withdrawn | 既定: 取り下げ済 |
+| restock_product | 既定: 商品の入荷 |
+| quantity | 既定: 入荷数 |
+| withdraw_product | 既定: 商品の取り下げ |
 | order_list | 既定: 注文一覧 |
 | item_count | 既定: 点数 |
 | product_list | 既定: 商品一覧 |
@@ -381,12 +429,15 @@ flowchart LR
 | Intake | 既定: 注文受付 |
 | OrderPending | 既定: 注文待ち |
 | Settlement | 既定: 確定の流れ |
+| Restock | 既定: 商品の入荷の流れ |
+| Withdrawal | 既定: 商品の取り下げの流れ |
 | Recheck | 既定: 決済状況の引き直しの流れ |
 | Reconnected | 既定: つながりが戻った |
 | ProductList | 既定: 商品一覧の画面 |
 | OrderForm | 既定: 注文の画面 |
 | MyOrders | 既定: 注文の履歴の画面 |
 | PriceCheck | 既定: 価格の確認の画面（Chrome 拡張） |
+| ProductAdmin | 既定: 商品の管理の画面 |
 | Orders | 既定: 注文 |
 | PaymentRequests | 既定: 決済要求 |
 | StockHolds | 既定: 在庫確保 |

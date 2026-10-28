@@ -181,12 +181,14 @@ async function act(sc, a) {
       const rows = visible(rowsOf[f.from] || [], sc.slots), idc = idCol(Q[f.from]).name, ok = new Set(rows.map((r) => r[idc]));
       input[i.name] = Object.fromEntries(Object.entries(v).filter(([k]) => ok.has(k)));
       if (!Object.keys(input[i.name]).length) return notice(`「${f.label}」を1つ以上選んでください。`, "warn");
-    } else input[i.name] = v;
+    } else input[i.name] = i.kind === "int" ? Number(v) : v;  // 数の欄は数で送る
   }
   const slots = Object.fromEntries(sc.slots.map((s) => [s.name, slotVal[s.name]]));
   const btn = $(`[data-action="${a.deed}"]`); btn.disabled = true;
   try {
-    const r = await api("POST", ROUTE[a.deed].path, { ...input, slots }, true);
+    const rt0 = ROUTE[a.deed], idv = rt0.id_input ? input[rt0.id_input] : undefined;  // update／destroy は /…/:id の ID を URL に載せる
+    if (rt0.id_input) delete input[rt0.id_input];
+    const r = await api(rt0.method, rt0.path.replace(/:[A-Za-z0-9_]+/, encodeURIComponent(idv ?? "")), { ...input, slots }, true);
     const rt = a.routes.find((x) => x.result === r.result);
     const b = r.body || {};
     const detail = (rt?.body || []).filter((p) => b[p.name] !== undefined && !(Array.isArray(b[p.name]) && !b[p.name].length)).map((p) => `${p.label} ${bodyText(b[p.name])}`).join("　");
@@ -194,7 +196,7 @@ async function act(sc, a) {
     notice((rt ? rt.label : r.result) + (detail ? "：" + detail : ""), to === "stay" ? "warn" : "info");
     if (to === "back") history.back();
     else if (to !== "stay") { qty = {}; go(to, {}); }
-    else await Promise.all(sc.shows.map((q) => loadShow(sc, q)));
+    else await Promise.all([...sc.shows.map((q) => loadShow(sc, q)), ...sc.fields.filter((f) => f.from && f.type.kind !== "map").map((f) => fillField(sc, f))]);  // 選ぶ元が変わる（取り下げなど）ので引き直す
   } catch (e) { notice("できませんでした: " + e.message, "warn"); }
   finally { btn.disabled = false; }
 }
