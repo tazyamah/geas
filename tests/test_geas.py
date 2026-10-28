@@ -1957,10 +1957,10 @@ def test_仕様書にフロー図が出る_並列は_プラスのゲートウェ
     ck = fanout(*FANOUT)
     md = render(ck, build(ck))
     assert "```mermaid" in md and "flowchart LR" in md
-    assert md.count('{"＋"}') == 1
+    assert md.count('(("＋"))') == 1
     assert '-- "受付" -->' in md and "応答（reply）" in md
     plain = render(chk(CODE), build(chk(CODE)))
-    assert '{"＋"}' not in plain and '{"×"}' in plain and "待つ 決済待ち" in plain
+    assert '(("＋"))' not in plain and '(("×"))' in plain and "待つ 決済待ち" in plain
 
 
 def test_説明コメントは意味を変えず_仕様書の名前と表示名の表になる():

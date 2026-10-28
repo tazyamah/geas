@@ -1,6 +1,6 @@
 // 画面の殻（HTML・JS・CSS・アイコン）だけを覚えておく。API は覚えない（古い在庫や注文を見せないため）。
-const SHELL = "shop-shell-v1";
-const FILES = ["./", "index.html", "app.js", "style.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
+const SHELL = "geas-shell-v1";
+const FILES = ["./", "index.html", "ui.js", "ui.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

@@ -3,7 +3,8 @@
 //!   POST /api/deeds/{名前}  {input, slots}   処理    → {"result","body","trace"}
 //!   POST /api/events/{名前} {input}          出来事  → {"event","runs"}
 //!   GET/POST /api/test/…                     テスト用の操作（模擬の設定・時計・外部作用の記録）
-//! 画面のファイルは --pwa のフォルダから配る。
+//! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
+//! --dev のフォルダ（開発用の模擬操作）は、pwa に無いファイルだけを配る。
 use crate::engine::Engine;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -61,6 +62,25 @@ fn mime(p: &Path) -> &'static str {
     }
 }
 
+/// インストール用の manifest。名前とテーマ色は、Geas の screen 宣言（design）から来る
+fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
+    let first = geas_app::screens.first();
+    let accent = first.map(|s| s.accent).unwrap_or("#0b5cad");
+    let bg = if first.map(|s| s.mode) == Some("dark") { "#151918" } else { "#f6f7f5" };
+    let v = json!({
+        "name": geas_app::APP_TITLE, "short_name": geas_app::APP_TITLE.chars().take(8).collect::<String>(), "lang": "ja",
+        "start_url": "./", "scope": "./", "display": "standalone", "background_color": bg, "theme_color": accent,
+        "icons": [
+            { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+            { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+            { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+        ]
+    });
+    Response::from_string(v.to_string())
+        .with_header(Header::from_bytes("Content-Type", "application/manifest+json; charset=utf-8").unwrap())
+        .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap())
+}
+
 fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let rel = if url_path == "/" { "index.html" } else { url_path.trim_start_matches('/') };
     let mut p = PathBuf::from(root);
@@ -78,7 +98,7 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
     }
 }
 
-pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path) {
+pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) {
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
@@ -96,8 +116,11 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path) {
                 Err((code, m)) => json_resp(code, json!({ "error": m })),
             }
         }
+    } else if method == Method::Get && path == "/manifest.webmanifest" {
+        manifest()
     } else if method == Method::Get {
-        serve_static(pwa, path)
+        let r = serve_static(pwa, path);
+        if r.status_code().0 == 404 { serve_static(dev, path) } else { r }
     } else {
         json_resp(404, json!({ "error": "ありません" }))
     };
@@ -109,6 +132,7 @@ fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value
     let parts: Vec<&str> = rest.split('/').collect();
     match (method, parts.as_slice()) {
         (Method::Get, ["health"]) => Ok(json!({ "ok": true })),
+        (Method::Get, ["defs"]) => Ok(en.defs.clone()),
         (Method::Get, ["queries", name]) => en.query(name, &params(query)).map_err(bad),
         (Method::Post, ["deeds", name]) => {
             let input = body.get("input").cloned().unwrap_or(json!({}));

@@ -11,6 +11,7 @@ from .parser import ParseError, parse
 from .plan import EXAMPLE, UNSPEC, Finding, compare_static, read_plan
 from .lexer import LexError
 from .rustgen import generate
+from .review import review
 from .spec import build, render
 from . import interview
 
@@ -70,6 +71,10 @@ def main(argv=None) -> int:
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
     s.add_argument("code")
     s.add_argument("-o")
+    v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
+    v.add_argument("code")
+    v.add_argument("--plan", help="計画書（①）")
+    v.add_argument("-o", required=True)
     r = sub.add_parser("rust", help="Rust の crate を生成する")
     r.add_argument("code")
     r.add_argument("-o", required=True)
@@ -93,6 +98,12 @@ def main(argv=None) -> int:
     if a.cmd == "spec":
         text = render(ck, build(ck), f"（{Path(a.code).name}）")
         Path(a.o).write_text(text) if a.o else print(text)
+        return 0 if ck.ok else 1
+    if a.cmd == "review":
+        plan_md = Path(a.plan).read_text() if a.plan else None
+        findings = compare_static(build(ck), read_plan(plan_md)) if plan_md else []
+        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
+        print(f"生成しました: {a.o}")
         return 0 if ck.ok else 1
     if not ck.ready:
         for d in ck.diags:

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b5cad">
+  <title>…</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <!-- 汎用の画面。中身は /api/defs の screens（Geas の screen 宣言）から作る。アプリごとに書き換えない -->
+  <header><h1 id="app-title"></h1><span id="screen-title" class="hint"></span></header>
+  <div id="offline" class="banner" hidden>オフラインです。つながるまで、操作は反映されません。</div>
+  <div id="notice" class="banner info" hidden></div>
+  <nav id="tabs"></nav>
+  <main id="screen"></main>
+  <script src="ui.js"></script>
+</body>
+</html>

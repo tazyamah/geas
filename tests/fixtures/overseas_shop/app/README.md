@@ -15,7 +15,7 @@ Chrome 拡張 ────┘                  │
 ```sh
 ./build.sh                         # Geas から Rust を作り、サーバーをビルドする
 cd server
-./target/release/shop_server       # http://localhost:8787/ （--port --db --pwa --seed で変えられる）
+./target/release/shop_server       # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
 ```
 
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
@@ -32,7 +32,9 @@ cd server
 | `server/src/http.rs` | JSON の口と、画面のファイルの配信 | 知らない |
 | `server/src/app.rs` | 外から埋める枠（通貨以外の slot＝税率・送料）、新しい ID、最初のデータ | 知っている |
 | `server/src/mock.rs` | 決済・倉庫・配送の模擬（返事を返す、冪等キーが同じ請求には同じ答え） | 知っている |
-| `pwa/`、`extension/` | クライアント | 口の JSON だけを知っている |
+| `server/generated/ui/` | 画面（PWA）。geas の screen 宣言から `geas rust --host` が置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
+| `dev/` | 開発用の模擬操作（決済の返事を落とす・時計を進める）。アプリの画面ではない | 知っている |
+| `extension/` | Chrome 拡張（Amazon の ASIN→JAN を読む部分は手書き） | 口の JSON だけを知っている |
 
 SQLite に決めているのは `db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
 

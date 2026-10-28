@@ -8,6 +8,7 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
 from .rustgen import column_type, opt
+from .screengen import screens_def
 from .spec import fmt_cause
 
 JSON_PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -201,6 +202,7 @@ def definitions(ck: Checker) -> dict:
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
+        "screens": screens_def(ck),
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
                   "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "replies": key.split(",") if k == "all" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
     }

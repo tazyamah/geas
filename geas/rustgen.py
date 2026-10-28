@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, ProcInfo, column_type, phys, tok_of
+from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない（コードから geas が毎回生成する）。
@@ -208,6 +209,7 @@ def opt(v):
     return "None" if v is None else f"Some({v})"
 
 
+
 class Gen:
     def __init__(self, ck: Checker):
         assert ck.ready, "検査にエラーか問いが残っているので生成しません"
@@ -233,6 +235,8 @@ class Gen:
             self.query(q)
         self.flows()
         self.triggers()
+        if self.p.screens:
+            self.w(rust_screens(self.ck))
         return "\n".join(self.out) + "\n"
 
     def query(self, q):

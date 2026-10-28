@@ -160,6 +160,15 @@ class Parser:
                 p.queries.append(self.query(line))
             elif kw == "event":
                 p.events.append(self.event(line))
+            elif kw == "screen":
+                p.screens.append(self.screen(line))
+            elif kw == "app":  # app "名前"：アプリの名前（画面の見出しとインストール名）
+                t = self.peek()
+                if t.kind != "STR" or not t.val:
+                    raise ParseError('app は `app "アプリの名前"` と書きます', line)
+                self.i += 1
+                p.title = t.val
+                self.end_line()
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
@@ -960,6 +969,10 @@ class Parser:
     # ---- 出来事（外の出来事をきっかけに処理を起こす） ----
     def event(self, line) -> Event:
         ev = Event(self.name(), line=line)
+        if self.accept("on"):
+            ev.on = self.name()
+            if ev.on not in ("online", "opened"):
+                raise self.err("event の「on」は、online（つながりが戻った）か opened（アプリを開いた）です")
         self.block_open()
         while not self.accept("}"):
             kw = self.name()
@@ -974,6 +987,54 @@ class Parser:
                 raise self.err("event の中は「each 問い合わせ → 処理」か「external → 処理」です")
             self.end_line()
         return ev
+
+    # ---- 画面 ----
+    def screen(self, line) -> Screen:
+        """screen 名前(受け取る値) [entry] { show 問い合わせ / open 画面 / field 入力 / action 処理 { 結果 → 行き先 } / design { 指定 } }"""
+        sc = Screen(self.name(), line=line)
+        if self.accept("("):
+            sc.params = self.comma_list(self.input_item)
+            self.expect(")")
+        sc.entry = self.accept("entry")
+        self.block_open()
+        while not self.accept("}"):
+            kw = self.name()
+            if kw == "show":
+                sc.shows.append(self.name())
+            elif kw == "open":
+                sc.opens.append(self.name())
+            elif kw == "field":
+                def item():
+                    f = self.name()
+                    sc.fields.append(f)
+                    if self.accept("from"):
+                        sc.field_from[f] = self.name()
+                self.comma_list(item)
+            elif kw == "slot":
+                sc.slots += self.comma_list(self.name)
+            elif kw == "action":
+                deed = self.name()
+                self.block_open()
+                routes = []
+                while not self.accept("}"):
+                    v = self.name()
+                    self.expect("→")
+                    routes.append((v, self.name()))
+                    self.end_line()
+                sc.actions.append((deed, routes))
+            elif kw == "design":
+                self.block_open()
+                while not self.accept("}"):
+                    k = self.name()
+                    t = self.next()
+                    if t.kind not in ("NAME", "STR", "NUM"):
+                        raise ParseError(f"design の「{k}」の値が必要です", t.line)
+                    sc.design[k] = t.val
+                    self.end_line()
+            else:
+                raise self.err("screen の中は「show」「open」「field」「slot」「action」「design」です")
+            self.end_line()
+        return sc
 
     # ---- トリガ ----
     def reply_def(self, line) -> ReplyDef:
@@ -1016,7 +1077,7 @@ class Parser:
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
 DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow",
-                 "trigger", "query", "event", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
+                 "trigger", "query", "event", "screen", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 
 def collect_labels(toks: list[Tok]) -> dict:

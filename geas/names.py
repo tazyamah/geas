@@ -16,7 +16,7 @@ RESERVED = {
     "id", "set", "text", "time", "bytes", "int", "ratio", "money", "ref", "vtime", "round", "floor", "ceil", "half_up", "sum", "now",
     "null", "absent", "nonempty", "empty", "true", "false",
     "let", "return", "if", "else", "for", "in", "create", "update", "request", "reply", "wait", "par",
-    "entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger", "query", "event",
+    "entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger", "query", "event", "screen",
     "tz_offset", "timezone", "all", "input", "slot", "reads", "writes", "transition", "effects", "initial", "middle", "final", "reject", "required", "unique", "optional",
 }
 
@@ -68,6 +68,10 @@ def each_name(p: Program, ltype_names, upper, lower, local):
         upper(f.name, f"フロー {f.name}")
     for ev in p.events:
         upper(ev.name, f"出来事 {ev.name}")
+    for sc in p.screens:
+        upper(sc.name, f"画面 {sc.name}")
+        for n, _ in sc.params:
+            lower(n, f"画面 {sc.name}")
     for q in p.queries:
         lower(q.name, f"問い合わせ {q.name}")
         for n, _ in [*q.inputs, *q.refs]:

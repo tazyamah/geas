@@ -67,7 +67,7 @@ def classify(headers: list[str]) -> str | None:
     for kind, need in (
         ("データ", {"項目", "型・範囲"}), ("状態", {"状態", "区分"}), ("遷移", {"元", "先", "起こす処理"}),
         ("拒否", {"元", "先", "拒否の理由"}), ("問い合わせ", {"問い合わせ", "条件", "並び"}), ("処理", {"入力", "読む", "書く"}), ("不変条件", {"内容"}),
-        ("トリガ", {"トリガ", "要因", "行き先"}), ("外部作用", {"外部作用", "出す内容"}), ("合流", {"外部作用", "合流先のトリガ"}), ("出来事", {"出来事", "起こし方", "処理"}), ("指定", {"項目", "指定"}), ("具体例", {"期待する結果"}),
+        ("トリガ", {"トリガ", "要因", "行き先"}), ("外部作用", {"外部作用", "出す内容"}), ("合流", {"外部作用", "合流先のトリガ"}), ("出来事", {"出来事", "起こし方", "処理"}), ("画面", {"画面", "見せる", "入力欄", "入口"}), ("画面遷移", {"画面", "操作", "結果", "行き先"}), ("ユースケース", {"ユースケース", "手順", "画面", "操作"}), ("指定", {"項目", "指定"}), ("具体例", {"期待する結果"}),
     ):
         if need <= h:
             return kind
@@ -164,6 +164,15 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
     a = {(r["出来事"], n(r["起こし方"]), n(r["処理"])): {} for r in sect("出来事")}
     b = {(e, n(h), n(d)): {} for e, h, d in spec["出来事"]}
     cmp_map("出来事", a, b, out, lambda k: f"{k[0]}: {k[1]} → {k[2]}")
+    # 画面と遷移（画面デザインは突合に含めない）
+    a = {r["画面"]: {"見せる": items(r["見せる"]), "入力欄": items(r["入力欄"]), "受け取る値": items(r.get("受け取る値", "")), "入口": r["入口"].strip(),
+                     "選ばせる slot": items(r.get("選ばせる slot", ""))} for r in sect("画面")}
+    b = {x: {"見せる": items(q), "入力欄": items(f), "受け取る値": items(pr), "入口": e, "選ばせる slot": items(sl)} for x, q, f, pr, e, sl in spec["画面"]}
+    cmp_map("画面", a, b, out, str)
+    a = {(r["画面"], n(r["操作"]), n(r["結果"])): {"行き先": n(r["行き先"])} for r in sect("画面遷移")}
+    b = {(x, n(o), n(v)): {"行き先": n(d)} for x, o, v, d in spec["画面遷移"]}
+    cmp_map("画面遷移", a, b, out, lambda k: f"{k[0]}: {k[1]} {k[2]}".rstrip())
+    out += check_usecases(spec, sect("ユースケース"))
     # 不変条件（内容の文字列で突合）
     a = {n(r["内容"]): {} for r in sect("不変条件")}
     b = {n(t): {} for t in spec["不変条件"]}
@@ -177,4 +186,49 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
             a[r["項目"]] = {"指定": n(r["指定"])}
     b = {k: {"指定": n(v)} for k, v in spec["指定"]}
     cmp_map("指定", a, b, out, str)
+    return out
+
+
+VIEW_OP = "見る"  # 操作のない手順：その画面が入口として見えている
+
+
+def usecases(rows: list[dict]) -> dict[str, list[dict]]:
+    """計画書のユースケースの表を、ユースケースごとの手順の列（手順の番号順）にする"""
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["ユースケース"], []).append(r)
+    return {k: sorted(v, key=lambda r: int(r["手順"]) if r["手順"].strip().isdigit() else 0) for k, v in out.items()}
+
+
+def check_usecases(spec: dict, rows: list[dict]) -> list[Finding]:
+    """ユースケースが画面で実現できているか：各手順が画面遷移として実在し、前の手順の行き先が次の手順の画面になっていること。
+    どのユースケースにも使われない遷移は、会話で決めていない動きの可能性があるので知らせる"""
+    if not rows:
+        return []
+    out: list[Finding] = []
+    trans = {(n(a), n(o), n(v)): n(d) for a, o, v, d in spec["画面遷移"]}
+    entries = {n(a) for a, _, _, _, e, _ in spec["画面"] if e}
+    used = set()
+    for uc, steps in usecases(rows).items():
+        here = None  # 直前の手順の後に見えている画面
+        for st in steps:
+            scr, op, res = n(st["画面"]), n(st["操作"]), n(st.get("結果", ""))
+            where = f"ユースケース {uc} 手順 {st['手順']}"
+            if here is not None and scr != here:
+                out.append(Finding(DIFF, where, f"前の手順のあとに見えている画面は「{here}」ですが、この手順は「{st['画面']}」です"))
+            if op == n(VIEW_OP):
+                if here is None and scr not in entries:
+                    out.append(Finding(DIFF, where, f"「{st['画面']}」は画面の入口ではありません"))
+                here = scr
+                continue
+            dest = trans.get((scr, op, res))
+            if dest is None:
+                out.append(Finding(A_ONLY, where, f"画面「{st['画面']}」の操作「{st['操作']}」（結果「{st.get('結果', '')}」）は、コードの画面遷移にありません"))
+                here = None
+                continue
+            used.add((scr, op, res))
+            here = scr if dest == "そのまま" else None if dest == "戻る" else dest
+    for k in trans:
+        if k not in used:
+            out.append(Finding(B_ONLY, f"画面遷移 {k[0]}: {k[1]} {k[2]}".rstrip(), "どのユースケースの手順にも使われていません（ユースケースが足りないか、不要な遷移）"))
     return out
