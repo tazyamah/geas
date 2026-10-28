@@ -195,6 +195,26 @@ class Screen:
 
 
 @dataclass
+class ResAction:
+    """リソースの動作1つ。kind は index／show／create／update／destroy。target は呼ぶ処理（create・update・destroy）か問い合わせ（index・show）。
+    statuses は、処理の結果の種類ごとの HTTP の状態（create・update・destroy では全部の種類に必須）"""
+    kind: str
+    target: str
+    statuses: list[tuple[str, int]] = field(default_factory=list)
+    line: int = 0
+
+
+@dataclass
+class Resource:
+    """RESTful なリソース。URL は名前から決まる（Orders → /orders）。under で親の入れ子（/customers/:customer_id/orders）、key でパスのキー（/…/:jan）"""
+    name: str
+    under: str = ""
+    key: str = ""
+    actions: list[ResAction] = field(default_factory=list)
+    line: int = 0
+
+
+@dataclass
 class Program:
     data: list[Data] = field(default_factory=list)
     states: list[State] = field(default_factory=list)
@@ -209,6 +229,7 @@ class Program:
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     screens: list[Screen] = field(default_factory=list)
+    resources: list[Resource] = field(default_factory=list)
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）

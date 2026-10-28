@@ -331,6 +331,9 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             + (("<h3>外から返ってくる内容</h3>" + table(["応答", "中身"], spec["応答"])) if spec["応答"] else ""))
     if spec["出来事"]:
         add("events", "外の出来事", table(["出来事", "起こし方", "処理"], spec["出来事"]))
+    if spec["ルート"]:
+        add("routes", "URL（ルート）", '<p class="sub">外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。クエリ文字列は使わず、条件はパスで渡します。結果の種類ごとの HTTP の状態も決まっています。</p>'
+            + table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"]))
     add("invariants", "いつでも成り立つこと（不変条件）", table(["内容", "検査の結果"], [(t, "／".join(f"{a}: {b}" for a, b in rows)) for t, rows in ck.invariant_status]))
 
     nav = "".join(f'<a href="#{a}">{escape(t)}</a>' for a, t, _ in sec)
