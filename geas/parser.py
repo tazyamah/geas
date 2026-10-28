@@ -1065,6 +1065,8 @@ class Parser:
                         raise ParseError("page には、ページの URL のパターン（\"*://www.example.com/*\" のような文字列）を書いてください", t.line)
                     sc.pages.append(t.val)
                 self.comma_list(pat)
+            elif kw == "read":
+                sc.read = self.read_spec()
             elif kw == "design":
                 self.block_open()
                 while not self.accept("}"):
@@ -1075,7 +1077,7 @@ class Parser:
                     sc.design[k] = t.val
                     self.end_line()
             else:
-                raise self.err("screen の中は「show」「open」「field」「slot」「action」「page」「design」です")
+                raise self.err("screen の中は「show」「open」「field」「slot」「action」「page」「read」「design」です")
             self.end_line()
         return sc
 
@@ -1158,6 +1160,45 @@ class Parser:
             self.end_line()
         self.end_line()
         return SlotRule(slot, rows, line)
+
+    def read_spec(self) -> ReadSpec:
+        """read { subject 名前 url "正規表現" / subject 名前 element "CSSセレクタ" [matches "正規表現"] / value row "見出し", … / value lookup "キー": "値" }"""
+        rd = ReadSpec(line=self.peek().line)
+        def text(what):
+            t = self.next()
+            if t.kind != "STR":
+                raise ParseError(f"{what}は、\"…\" の文字列で書いてください", t.line)
+            return t.val
+        self.block_open()
+        while not self.accept("}"):
+            kw = self.name()
+            if kw == "subject":
+                name = self.name()
+                if rd.subject and rd.subject != name:
+                    raise self.err(f"subject の名前は1つにしてください（「{rd.subject}」と「{name}」）")
+                rd.subject = name
+                how = self.name()
+                if how == "url":
+                    rd.urls.append(text("URL の正規表現"))
+                elif how == "element":
+                    sel = text("CSS セレクタ")
+                    rd.elements.append((sel, text("matches の正規表現") if self.accept("matches") else ""))
+                else:
+                    raise self.err("subject の読み方は「url」か「element」です")
+            elif kw == "value":
+                how = self.name()
+                if how == "row":
+                    rd.value_rows += self.comma_list(lambda: text("見出し"))
+                elif how == "lookup":
+                    k = text("lookup のキー")
+                    self.expect(":")
+                    rd.lookup[k] = text("lookup の値")
+                else:
+                    raise self.err("value の読み方は「row」か「lookup」です")
+            else:
+                raise self.err("read の中は「subject」「value」です")
+            self.end_line()
+        return rd
 
     def trigger(self, line) -> Trigger:
         name = self.name()

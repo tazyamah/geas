@@ -30,7 +30,6 @@ cd generated/server
 | `generated/server/`（`geas rust --host --runtime` が geas から置く） | サーバーの実行部：`engine.rs` は生成した処理を呼び、結果の行き先・待ち・外部作用・出来事を動かす。`db.rs` は保存（実体ごとの表）。`http.rs` は JSON の口と画面の配信。`mock.rs` は決済・倉庫などの模擬（宣言の `replies` と結果の種類で動く） | 知らない（生成物の定義 `DEFS_JSON` で動く） |
 | `generated/ui/` | 画面（PWA）。geas の screen 宣言から置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
 | `generated/dev/` | 開発用の模擬操作パネル（応答の結果の種類と出来事の宣言から生成）。アプリの画面ではない | 知らない（定義で動く） |
-| `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `generated/ext/` に geas が生成する | 口の JSON だけを知っている |
 
 SQLite に決めているのは `generated/server/src/db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
 
@@ -62,7 +61,7 @@ URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customer
 
 - 認証は無い（デモ。画面で顧客を選ぶだけ）。本物にするときは、顧客をログインで決め、拡張が呼べる問い合わせは `price_by_jan` だけにする。
 - 拡張が問い合わせてよい先は、生成した `manifest.json` の `host_permissions`（既定は localhost:8787）で決まる。別のサーバーに向けるなら、`geas rust --server <URL>` で作り直す。サーバーは CORS を開けていない。
-- ASIN→JAN の変換は拡張の仕事：ページの商品情報の JAN/EAN を読み、無ければ対応表（ポップアップの「読み取りの設定」に `{"asinTable": {"ASIN": "JAN"}}` と書いて直せる）で引く。本物の変換（商品データの API など）に替えるなら、`extension/reader.js` の `asinToJan` だけを替える。
+- ASIN→JAN の変換は拡張の仕事：ページの商品情報の JAN/EAN を読み、無ければ対応表（ポップアップの「読み取りの設定」に `{"lookup": {"ASIN": "JAN"}}` と書いて直せる）で引く。読み方（URL・要素・見出し・対応表）は screen の `read` に宣言してあり、本物の変換（商品データの API など）が要るなら、それを宣言に足す。
 - 決済・倉庫・配送は模擬（メモリ上。再起動で、返事を待っている模擬の仕事は消えるが、待ちは DB に残り、期限で取り消される）。
 - 保存は、実体ごとに JSON を入れた表。項目ごとの列には分けていない（Geas の `store` 宣言と、列への対応づけは未実装）。
 - オフラインで注文を貯めて、つながったときに送る仕組みは無い（注文には冪等キーが無いため、二重注文になりうる）。

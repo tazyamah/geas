@@ -65,6 +65,18 @@ def show_all(p, x):
     return x
 
 
+def read_text(rd) -> str:
+    """ページからの読み方を、人向けの一文に"""
+    if rd is None:
+        return ""
+    parts = [f"{rd.subject}を、" + "・".join([f"URL（{u}）" for u in rd.urls] + [f"要素 {sel}" for sel, _ in rd.elements]) + "から読む"]
+    if rd.value_rows:
+        parts.append("値は、" + "・".join(rd.value_rows) + " の行から読む")
+    if rd.lookup:
+        parts.append(f"読めなければ対応表（{len(rd.lookup)}件）から引く")
+    return "。".join(parts)
+
+
 def build(ck: Checker) -> dict:
     from .rest import routes
     spec = build_raw(ck)
@@ -144,7 +156,7 @@ def build_raw(ck: Checker) -> dict:
     spec["削除"] = [(d.name, "削除させない" if d.keep else (", ".join(d.removable) or ("消せる" if d.name in deleted else "")),
                    ", ".join(f"{s}.{f}→{ {'detach': '参照を空に', 'cascade': '参照元も消す', 'leave': 'そのまま残す'}[pol] }" for s, f, pol in d.on_delete))
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
-    spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
+    spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs), read_text(sc.read)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret), show(pt.guarantee) if pt.body is None else "= " + show(pt.body))
@@ -239,8 +251,8 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## 画面遷移", "", "| 画面 | ◆操作 | ◆結果 | ◆行き先 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["画面遷移"]]
         if spec["拡張"]:
-            out += ["", "## ブラウザ拡張（ページに出す画面。ページから値を読む reader.js だけが手書き）", "", "| 画面 | ページ | 見せる問い合わせ | ページから読む値 |", "|---|---|---|---|"]
-            out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["拡張"]]
+            out += ["", "## ブラウザ拡張（ページに出す画面。ページからの読み方も宣言から生成）", "", "| 画面 | ページ | 見せる問い合わせ | ページから読む値 | 読み方 |", "|---|---|---|---|---|"]
+            out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["拡張"]]
         out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["画面デザイン"]]
     if spec["削除"]:

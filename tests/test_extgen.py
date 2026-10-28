@@ -11,7 +11,6 @@ from geas.parser import parse
 
 DIR = Path(__file__).parent / "fixtures" / "overseas_shop"
 CODE = (DIR / "overseas_shop.geas").read_text()
-READER = DIR / "app" / "extension" / "reader.js"
 
 
 def chk(src):
@@ -21,7 +20,7 @@ def chk(src):
 def test_pageを持つ画面は拡張として生成される(tmp_path):
     ck = chk(CODE)
     assert [s.name for s in ext_screens(ck)] == ["PriceCheck"]
-    write_ext(ck, tmp_path, READER, "http://localhost:9999")
+    write_ext(ck, tmp_path, "http://localhost:9999")
     ext = tmp_path / "ext"
     assert {f.name for f in ext.iterdir()} == {"background.js", "content.js", "content.css", "defs.js", "manifest.json", "popup.html", "popup.js", "reader.js"}
     m = json.loads((ext / "manifest.json").read_text())
@@ -38,9 +37,25 @@ def test_拡張の画面は問い合わせを1つ見せるだけ():
     assert any("URL のパターンではありません" in d.msg for d in chk(bad).diags if d.level == ERROR)
 
 
-def test_readerが無ければ生成を止める(tmp_path):
-    r = subprocess.run([sys.executable, "-m", "geas", "rust", str(DIR / "overseas_shop.geas"), "-o", str(tmp_path / "o"), "--host"], capture_output=True, text=True)
-    assert r.returncode == 1 and "--reader" in r.stderr
+def test_readは必須で_読み方の誤りは止まる():
+    import re
+    block = re.search(r"  read \{.*?\n  \}\n", CODE, re.S).group(0)
+    assert any("read が要ります" in d.msg for d in chk(CODE.replace(block, "")).diags if d.level == ERROR)
+    bad = CODE.replace('url "/(?:dp', 'url "/(?:dp(').replace("(?:[/?]|$)", "")
+    assert any("正規表現" in d.msg for d in chk(bad).diags if d.level == ERROR)
+    bad = CODE.replace('"4901234567894"', '"4901234567895"')
+    assert any("検査数字" in d.msg for d in chk(bad).diags if d.level == ERROR)
+    bad = CODE.replace("([A-Z0-9]{10})", "[A-Z0-9]{10}")
+    assert any("( ) が要ります" in d.msg for d in chk(bad).diags if d.level == ERROR)
+
+
+def test_汎用の_reader_が生成物に入り_読み方は_defs_に出る(tmp_path):
+    ck = chk(CODE)
+    write_ext(ck, tmp_path)
+    assert (tmp_path / "ext" / "reader.js").read_text().startswith("// ページから値を読む（汎用）")
+    d = json.loads((tmp_path / "ext" / "defs.js").read_text().split("=", 1)[1].rstrip().rstrip(";"))
+    assert d["read"]["subject"] == "ASIN" and d["read"]["rows"] == ["JAN", "EAN", "GTIN"] and d["input"]["check"] == "gtin"
+    assert d["read"]["lookup"]["B0SHOPTEA1"] == "4901234567894"
 
 
 def test_応答の結果の種類は検査され_模擬の定義になる():

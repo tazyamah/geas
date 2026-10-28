@@ -141,6 +141,19 @@ class SlotRule:
 
 
 @dataclass
+class ReadSpec:
+    """ブラウザ拡張の画面が、ページから値を読む取り決め。subject は「いまのページの何か」（商品の ASIN など）の名前と、その読み方：
+    url（URL の正規表現。1つ目の()が値）か element（CSS セレクタの要素の value。matches の形のときだけ）。
+    value_rows は、表の行や一覧の項目のうち、この見出しの語を含むものから数字を読む。lookup は subject の値 → 問い合わせる値の対応表"""
+    subject: str = ""
+    urls: list[str] = field(default_factory=list)
+    elements: list[tuple[str, str]] = field(default_factory=list)  # (CSS セレクタ, matches の正規表現。無ければ "")
+    value_rows: list[str] = field(default_factory=list)
+    lookup: dict = field(default_factory=dict)
+    line: int = 0
+
+
+@dataclass
 class Process:
     name: str
     inputs: list[tuple[str, Type]] = field(default_factory=list)
@@ -206,6 +219,7 @@ class Screen:
     actions: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)  # (処理, [(結果の種類, 行き先)])。行き先は画面名か stay／back
     design: dict = field(default_factory=dict)
     entry: bool = False  # 別の入口（拡張など、ほかの画面から来ない画面）。最初に宣言した画面も入口
+    read: Optional[ReadSpec] = None  # page を持つ画面が、ページから値を読む取り決め
     pages: list[str] = field(default_factory=list)  # ブラウザ拡張として出るページ（URL のパターン）。あれば、この画面は拡張の画面
     line: int = 0
 
