@@ -224,18 +224,25 @@ fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value
             let waits: Vec<Value> = en.db.all_waits().map_err(bad)?.into_iter().map(|w| json!({ "trigger": w.trigger, "args": w.args, "collected": w.collected, "deadline": w.deadline })).collect();
             let jobs: Vec<Value> = en.mock.jobs.iter().map(|j| json!({ "due": j.due, "effect": j.effect, "reply": j.reply, "trigger": j.trigger, "args": j.trigger_args })).collect();
             let s = &en.mock.settings;
+            let replies: Map<String, Value> = en.defs["mock"]["replies"].as_object().into_iter().flatten().map(|(name, r)| {
+                let first = r["outcomes"][0]["name"].as_str().unwrap_or("");
+                (name.clone(), json!({ "outcome": s.outcome.get(name).map(|x| x.as_str()).unwrap_or(first), "drop": s.drop.get(name).copied().unwrap_or(false) }))
+            }).collect();
             Ok(json!({
                 "now": en.now(), "clock_offset": en.clock_offset,
-                "settings": { "drop_payment_reply": s.drop_payment_reply, "warehouse_short": s.warehouse_short, "delay_secs": s.delay_secs, "decline_from": s.decline_from },
+                "settings": { "delay_secs": s.delay_secs, "replies": replies },
                 "dropped": en.mock.dropped, "waits": waits, "jobs": jobs, "effects": en.db.recent_effects(30).map_err(bad)?
             }))
         }
         (Method::Post, ["test", "settings"]) => {
+            let known: Vec<String> = en.defs["mock"]["replies"].as_object().into_iter().flatten().map(|(k, _)| k.clone()).collect();
             let s = &mut en.mock.settings;
-            if let Some(x) = body.get("drop_payment_reply").and_then(|x| x.as_bool()) { s.drop_payment_reply = x; }
-            if let Some(x) = body.get("warehouse_short").and_then(|x| x.as_bool()) { s.warehouse_short = x; }
             if let Some(x) = body.get("delay_secs").and_then(|x| x.as_i64()) { s.delay_secs = x.clamp(0, 600); }
-            if let Some(x) = body.get("decline_from").and_then(|x| x.as_i64()) { s.decline_from = x.max(1); }
+            for (name, v) in body.get("replies").and_then(|x| x.as_object()).into_iter().flatten() {
+                if !known.contains(name) { return Err((400, format!("応答「{}」の模擬はありません", name))); }
+                if let Some(x) = v.get("outcome").and_then(|x| x.as_str()) { s.outcome.insert(name.clone(), x.to_string()); }
+                if let Some(x) = v.get("drop").and_then(|x| x.as_bool()) { s.drop.insert(name.clone(), x); }
+            }
             Ok(json!({ "ok": true }))
         }
         (Method::Post, ["test", "advance"]) => {

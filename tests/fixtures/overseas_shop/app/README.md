@@ -33,7 +33,7 @@ cd server
 | `server/src/app.rs` | 外から埋める枠（通貨以外の slot＝税率・送料）、新しい ID、最初のデータ | 知っている |
 | `server/src/mock.rs` | 決済・倉庫・配送の模擬（返事を返す、冪等キーが同じ請求には同じ答え） | 知っている |
 | `server/generated/ui/` | 画面（PWA）。geas の screen 宣言から `geas rust --host` が置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
-| `dev/` | 開発用の模擬操作（決済の返事を落とす・時計を進める）。アプリの画面ではない | 知っている |
+| `server/generated/dev/` | 開発用の模擬操作パネル（geas が応答の結果の種類と出来事の宣言から生成。返事の結果の種類を選ぶ・返事を落とす・時計を進める）。アプリの画面ではない | 知っている |
 | `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `server/generated/ext/` に geas が生成する | 口の JSON だけを知っている |
 
 SQLite に決めているのは `db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。

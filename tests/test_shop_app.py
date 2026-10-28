@@ -31,7 +31,7 @@ def server(tmp_path_factory):
     work = tmp_path_factory.mktemp("shop")
     proc = subprocess.Popen(
         [str(APP / "server" / "target" / "release" / "shop_server"), "--port", str(port), "--db", str(work / "shop.sqlite"),
-         "--pwa", str(APP / "server" / "generated" / "ui"), "--dev", str(APP / "dev"), "--seed", str(APP / "seed.json")],
+         "--pwa", str(APP / "server" / "generated" / "ui"), "--dev", str(APP / "server" / "generated" / "dev"), "--seed", str(APP / "seed.json")],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     for _ in range(50):
@@ -77,7 +77,7 @@ def settle(base, secs=3.0):
 
 
 def reset_mock(base):
-    call(base, "POST", "test/settings", {"drop_payment_reply": False, "warehouse_short": False, "decline_from": 500000, "delay_secs": 1})
+    call(base, "POST", "test/settings", {"delay_secs": 1, "replies": {"PaymentSettled": {"outcome": "Approved", "drop": False}, "StockSettled": {"outcome": "Held", "drop": False}}})
 
 
 def test_注文は決済と倉庫の返事がそろって確定し_在庫とポイントが動く(server):
@@ -113,11 +113,11 @@ def test_ドルの注文は税なしで_通貨の違う商品を混ぜると止�
 def test_決済の返事が落ちても_つながりが戻ると同じ冪等キーで引き直して確定する(server):
     b = server["base"]
     reset_mock(b)
-    call(b, "POST", "test/settings", {"drop_payment_reply": True})
+    call(b, "POST", "test/settings", {"replies": {"PaymentSettled": {"drop": True}}})
     oid = order(b, "c-002", {"bowl-jp": 1})["body"]["order_id"]
     settle(b)
     assert status_of(b, oid, "c-002") == "PaymentRequested"  # 倉庫の返事だけが届いて、待ち続ける
-    call(b, "POST", "test/settings", {"drop_payment_reply": False})
+    call(b, "POST", "test/settings", {"replies": {"PaymentSettled": {"drop": False}}})
     ev = call(b, "POST", "events/Reconnected", {})[1]
     assert [t["deed"] for run in ev["runs"] for t in run["trace"]] == ["recheck_payment"]
     settle(b)
@@ -130,7 +130,7 @@ def test_決済の返事が落ちても_つながりが戻ると同じ冪等キ�
 def test_返事がそろわないまま30分たつと取り消す(server):
     b = server["base"]
     reset_mock(b)
-    call(b, "POST", "test/settings", {"drop_payment_reply": True})
+    call(b, "POST", "test/settings", {"replies": {"PaymentSettled": {"drop": True}}})
     oid = order(b, "c-002", {"bowl-jp": 1})["body"]["order_id"]
     settle(b, 1.5)
     fired = call(b, "POST", "test/advance", {"secs": 1801})[1]["fired"]
@@ -142,13 +142,13 @@ def test_返事がそろわないまま30分たつと取り消す(server):
 def test_倉庫が在庫不足を返すと返金して取り消し_決済が拒否されると取り消す(server):
     b = server["base"]
     reset_mock(b)
-    call(b, "POST", "test/settings", {"warehouse_short": True})
+    call(b, "POST", "test/settings", {"replies": {"StockSettled": {"outcome": "Short"}}})
     oid = order(b, "c-002", {"bowl-jp": 1})["body"]["order_id"]
     settle(b)
     assert status_of(b, oid, "c-002") == "Canceled"
     assert any(e["name"] == "Payment.refund" and e["args"]["order_id"] == oid for e in call(b, "GET", "test/state")[1]["effects"])
     reset_mock(b)
-    call(b, "POST", "test/settings", {"decline_from": 100})
+    call(b, "POST", "test/settings", {"replies": {"PaymentSettled": {"outcome": "Declined"}}})
     oid2 = order(b, "c-002", {"bowl-jp": 1})["body"]["order_id"]
     settle(b)
     assert status_of(b, oid2, "c-002") == "Canceled"
@@ -175,7 +175,7 @@ def test_再起動しても注文と返事待ちは残る(server):
     """SQLite に保存してあるので、サーバーを落として起こしても、状態が続く"""
     b = server["base"]
     reset_mock(b)
-    call(b, "POST", "test/settings", {"drop_payment_reply": True})
+    call(b, "POST", "test/settings", {"replies": {"PaymentSettled": {"drop": True}}})
     oid = order(b, "c-002", {"bowl-jp": 1})["body"]["order_id"]
     settle(b, 1.5)
     waits = call(b, "GET", "test/state")[1]["waits"]
@@ -199,7 +199,7 @@ def _fresh_server(tmp_path, port=0):
     port = s.getsockname()[1]
     s.close()
     proc = subprocess.Popen([str(APP / "server" / "target" / "release" / "shop_server"), "--port", str(port), "--db", str(tmp_path / "ui.sqlite"),
-                             "--pwa", str(APP / "server" / "generated" / "ui"), "--dev", str(APP / "dev"), "--seed", str(APP / "seed.json")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             "--pwa", str(APP / "server" / "generated" / "ui"), "--dev", str(APP / "server" / "generated" / "dev"), "--seed", str(APP / "seed.json")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _fresh.append(proc)
     for _ in range(50):
         try:

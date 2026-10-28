@@ -1,5 +1,5 @@
 //! 海外にも売るお店のサーバー。localhost で動き、DB は SQLite。
-//! 使い方: shop_server [--port 8787] [--db shop.sqlite] [--pwa generated/ui] [--dev ../dev] [--seed ../seed.json]
+//! 使い方: shop_server [--port 8787] [--db shop.sqlite] [--pwa generated/ui] [--dev generated/dev] [--seed ../seed.json]
 mod app;
 mod db;
 mod engine;
@@ -18,7 +18,7 @@ fn main() {
     let port = arg("--port", "8787");
     let db_path = arg("--db", "shop.sqlite");
     let pwa = PathBuf::from(arg("--pwa", "generated/ui"));
-    let dev = PathBuf::from(arg("--dev", "../dev"));
+    let dev = PathBuf::from(arg("--dev", "generated/dev"));
     let seed = arg("--seed", "../seed.json");
 
     // 保存にある実体の名前は、生成物から取る（空の保存を書き出すと、全部の実体が並ぶ）

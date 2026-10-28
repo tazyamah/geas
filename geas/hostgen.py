@@ -190,6 +190,20 @@ pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
 '''
 
 
+def mock_def(ck: Checker) -> dict:
+    """開発用の模擬：外部作用ごとに返る応答と、応答の結果の種類（outcome）。模擬と操作パネルが、これだけで動く"""
+    p, show = ck.p, ck.p.show_names
+    reps = {r.name: r for r in p.replies}
+    kinds = {"ID": "id", "参照": "id", "文字列": "text", "整数": "int", "集合": "set"}
+    return {
+        "effects": {e.name: {"label": show(e.name), "reply": e.replies} for e in p.effects if e.replies in reps},
+        "replies": {r.name: {"label": show(r.name), "fields": [{"name": n, "kind": kinds.get(t.kind, "text")} for n, t in r.params],
+                             "outcomes": [{"name": on, "label": show(on), "gives": g} for on, g in (r.outcomes or [("Normal", [n for n, _ in r.params])])]}
+                    for r in p.replies if any(e.replies == r.name for e in p.effects)},
+        "events": [{"name": ev.name, "label": show(ev.name)} for ev in p.events if ev.on],
+    }
+
+
 def definitions(ck: Checker) -> dict:
     p = ck.p
     flows: dict[str, dict] = {}
@@ -203,6 +217,7 @@ def definitions(ck: Checker) -> dict:
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
+        "mock": mock_def(ck),
         "screens": screens_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {})}

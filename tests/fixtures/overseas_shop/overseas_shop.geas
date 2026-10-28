@@ -180,14 +180,14 @@ result FinishResult {
 effect Payment. /// 請求
   charge(order_id: id, /// 通貨
     currency: currency, /// 金額
-    amount: money(currency))
+    amount: money(currency)) replies PaymentSettled
 effect Payment. /// 与信の取り消し
   refund(order_id: id, /// 与信
     auth_id: id) no_wait "返金の失敗は人が見る"
 /// 倉庫
 effect Warehouse. /// 在庫の確保
   hold(order_id: id, /// 届け先
-    to: Address) joins OrderPending
+    to: Address) joins OrderPending replies StockSettled
 /// 配送
 effect Shipping. /// 出荷
   ship(order_id: id, /// 届け先
@@ -195,10 +195,20 @@ effect Shipping. /// 出荷
 
 /// 決済が済んだ（与信が取れたか、拒否か）
 reply PaymentSettled(/// 与信
-  auth_id: id)
+  auth_id: id) {
+  /// 承認
+  Approved gives auth_id
+  /// 拒否
+  Declined
+}
 /// 倉庫の返事（足りない商品があれば入る）
 reply StockSettled(/// 不足
-  short: IdSet)
+  short: IdSet) {
+  /// 確保できた
+  Held
+  /// 在庫不足
+  Short gives short
+}
 
 /// 注文
 deed place_order {

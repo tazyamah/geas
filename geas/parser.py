@@ -498,20 +498,22 @@ class Parser:
         self.expect("(")
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
-        failures = []
-        if self.accept("failures"):
-            failures = self.comma_list(self.name)
-        joins = None
-        if self.accept("joins"):  # joins トリガ名：この外部作用の返事は、そのトリガに合流する（トリガの引数は、要求する処理の入力から決まる）
-            joins = self.name()
-        no_wait = None
-        if self.accept("no_wait"):
-            t = self.next()
-            if t.kind != "STR":
-                raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
-            no_wait = t.val
+        failures, joins, replies, no_wait = [], None, None, None
+        while self.peek().kind == "NAME" and self.peek().val in ("failures", "joins", "replies", "no_wait"):  # 後ろの指定は、順不同
+            kw = self.name()
+            if kw == "failures":
+                failures = self.comma_list(self.name)
+            elif kw == "joins":  # joins トリガ名：この外部作用の返事は、そのトリガに合流する（トリガの引数は、要求する処理の入力から決まる）
+                joins = self.name()
+            elif kw == "replies":  # replies 応答名：この外部作用に返ってくる応答（開発用の模擬が返事を作る）
+                replies = self.name()
+            else:
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
+                no_wait = t.val
         self.end_line()
-        return EffectDecl(name, params, line, failures, no_wait, joins)
+        return EffectDecl(name, params, line, failures, no_wait, joins, replies)
 
     def part(self, line) -> Part:
         name = self.name()
@@ -1114,8 +1116,15 @@ class Parser:
         if self.accept("("):
             params = self.comma_list(self.input_item)
             self.expect(")")
+        outcomes = []
+        if self.peek().val == "{":  # { 結果の種類 [gives 中身, …] … }：先頭が平常。gives に無い中身は、その返事に入らない
+            self.block_open()
+            while not self.accept("}"):
+                on = self.name()
+                outcomes.append((on, self.comma_list(self.name) if self.accept("gives") else []))
+                self.end_line()
         self.end_line()
-        return ReplyDef(name, params, line)
+        return ReplyDef(name, params, line, outcomes)
 
     def trigger(self, line) -> Trigger:
         name = self.name()

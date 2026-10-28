@@ -163,7 +163,7 @@ impl Engine {
         };
         let now = self.now();
         self.db.log_effect(now, &name, &args, &idem, target.as_deref())?;
-        self.mock.handle(now, &name, &args, &idem, routed);
+        self.mock.handle(&self.defs, now, &name, &args, &idem, routed);
         Ok(())
     }
 

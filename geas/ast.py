@@ -78,6 +78,7 @@ class EffectDecl:
     failures: list[str] = field(default_factory=list)  # 論理的な失敗の理由（相手の拒否など）。待つ先のトリガに、理由ごとの応答が要る
     no_wait: Optional[str] = None  # 待たない理由（人が決めた根拠）。None なら、結果を待つ経路が必須
     joins: Optional[str] = None  # 返事が合流するトリガの名前。要求する処理が待たなくても、同じ並列の枝がそのトリガを待つ
+    replies: Optional[str] = None  # この外部作用に返ってくる応答（reply）の名前。開発用の模擬が、その結果の種類（outcome）から返事を作る
 
 
 @dataclass
@@ -122,10 +123,12 @@ class Trigger:
 
 @dataclass
 class ReplyDef:
-    """応答の宣言。外の部品から返ってくる応答が運ぶ中身（名前と型）。宣言のない応答は中身を持たない。"""
+    """応答の宣言。外の部品から返ってくる応答が運ぶ中身（名前と型）。宣言のない応答は中身を持たない。
+    outcomes は、応答の結果の種類（承認・拒否 など）と、それぞれが中身のどれを持つか。先頭が平常。開発用の模擬が、これで返事を作る。"""
     name: str
     params: list[tuple[str, Type]]
     line: int = 0
+    outcomes: list[tuple[str, list[str]]] = field(default_factory=list)
 
 
 @dataclass

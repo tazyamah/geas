@@ -127,6 +127,9 @@ def build_raw(ck: Checker) -> dict:
     spec["トリガ"] = [(tg.name, f"{ja_kind(k)} {fmt_cause(k, key)}", d) for tg in p.triggers for k, key, d in tg.causes]
     spec["応答"] = [(rp.name, ", ".join(input_names(rp.params))) for rp in p.replies]
     spec["合流"] = [(e.name, e.joins) for e in p.effects if e.joins]
+    reps = {r.name: r for r in p.replies}
+    spec["模擬"] = [(e.name, e.replies, " ／ ".join(on + (f"（{', '.join(g)}）" if g else "") for on, g in (reps[e.replies].outcomes or [("平常", [n for n, _ in reps[e.replies].params])])))
+                  for e in p.effects if e.replies and e.replies in reps]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
     spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
@@ -214,6 +217,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["応答"]:
         out += ["", "## 応答の中身（外から返ってくる内容。入出力型）", "", "| 応答 | ◆中身 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["応答"]]
+    if spec["模擬"]:
+        out += ["", "## 開発用の模擬（外部作用の返事。先頭が平常。開発用の操作パネルで切り替える）", "", "| 外部作用 | 返ってくる応答 | 結果の種類（返事に入る中身） |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["模擬"]]
     if spec["合流"]:
         out += ["", "## 返事の合流先（外部作用の返事が入るトリガ）", "", "| 外部作用 | ◆合流先のトリガ |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["合流"]]
