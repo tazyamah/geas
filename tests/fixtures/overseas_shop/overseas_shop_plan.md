@@ -244,3 +244,26 @@
 | 項目 | ◆指定 |
 |---|---|
 | 注文.丸め | 切り捨て(通貨) |
+
+### URL の具体例（上から順に、最初のデータ入りの新しいサーバーに対して実行する。入力は実際に送る JSON、{名前} は「控える」で取った値）
+
+| ID | ◆メソッド | ◆経路 | ◆入力 | ◆期待する結果 | ◆期待する状態 | 控える |
+|---|---|---|---|---|---|---|
+| UX1 | GET | /products |  | － | 200 |  |
+| UX2 | GET | /product_prices/4901234567894 |  | － | 200 |  |
+| UX3 | GET | /product_prices/12345 |  | － | 400 |  |
+| UX4 | POST | /orders | `{"customer_id":"c-001","items":{"tea-jp":1},"ship_to":{"country":"JP","postal_code":"100-0001","line":"x"},"slots":{"currency":"USD"}}` | 通貨が違う | 422 |  |
+| UX5 | POST | /orders | `{"customer_id":"c-999","items":{"tea-jp":1},"ship_to":{"country":"JP","postal_code":"100-0001","line":"x"},"slots":{"currency":"JPY"}}` | 顧客なし | 404 |  |
+| UX6 | POST | /orders | `{"customer_id":"c-001","items":{"tea-jp":1},"ship_to":{"country":"JP","postal_code":"100-0001","line":"x"},"slots":{"currency":"JPY"}}` | 受付 | 201 | order_id = body.order_id |
+| UX7 | GET | /customers/c-001/orders |  | － | 200 |  |
+| UX8 | POST | /order_settlements | `{"order_id":"nothing"}` | 注文なし | 404 |  |
+| UX9 | POST | /reconnections | `{}` | － | 201 |  |
+| UX10 | PUT | /products/tea-jp | `{"quantity":5}` | 入荷済 | 200 |  |
+| UX11 | PUT | /products/nothing | `{"quantity":5}` | 商品なし | 404 |  |
+| UX12 | PUT | /products/tea-jp | `{"quantity":0}` | － | 400 |  |
+| UX13 | DELETE | /products/tea-jp |  | 取り下げ済 | 200 |  |
+| UX14 | DELETE | /products/tea-jp |  | 商品なし | 404 |  |
+| UX15 | PUT | /products/tea-jp | `{"quantity":1}` | 商品なし | 404 |  |
+| UX16 | POST | /order_completions | `{"order_id":"{order_id}"}` | 在庫が足りなかった | 422 |  |
+
+UX12 は境界の検査（数量は 1 以上）で、結果の種類を持たない 400 を返す。UX13 で取り下げた商品は、UX6 の注文の明細に残り、UX16 の確定のときに「商品なし」として扱われる。

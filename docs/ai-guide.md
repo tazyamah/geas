@@ -56,7 +56,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 - 何も付けない：Rust の crate（検査済みの処理の本体）だけ。
 - `--host`：画面（PWA）・開発用の模擬パネル・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。
 - `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
-- `--plan`：計画書の具体例を実行する bin も作る。
+- `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `tests/test_url_examples.py` も作る（サーバーをビルドしてから `python -m pytest 出力先/tests`）。
 
 検査にエラーか「問い」が残っていると、`rust` と `compare` は先へ進みません。
 
@@ -67,6 +67,20 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 3. **検査する**（`check`）。エラーは直す。**問い（QUESTION）は、人に聞くべきことなので、勝手に決めずに質問する**（検査器が「決めていない」と見つけたもの）。警告も読む（表示名の抜けなど）。
 4. **仕様書を作り、計画書と突き合わせる**（`spec`／`review`／`compare`）。ずれがあれば、計画書とコードのどちらが正しいかを人に確かめる。
 5. **アプリにする**（`rust --host --runtime`）。手で書くコードを増やさないのが原則：計画書・`.geas` に現れない手書きコードは、無くす方向で考える。
+
+## 計画書の「URL の具体例」
+
+テストは手で書かず、計画書の表に書きます。見出しの列が `メソッド`・`経路`・`期待する結果`・`期待する状態` を含む表が、URL の具体例です（`入力`・`期待する本文`・`控える` は任意）。
+
+| ID | ◆メソッド | ◆経路 | ◆入力 | ◆期待する結果 | ◆期待する状態 | 控える |
+|---|---|---|---|---|---|---|
+| UX6 | POST | /orders | `{"customer_id":"c-001",…,"slots":{"currency":"JPY"}}` | 受付 | 201 | order_id = body.order_id |
+| UX16 | POST | /order_completions | `{"order_id":"{order_id}"}` | 在庫が足りなかった | 422 | |
+
+- 行は上から順に、最初のデータ（`--seed`）入りの新しいサーバーへ実行します。入力は実際に送る JSON、`期待する本文` は応答に含まれるべき JSON（一部でよい）です。
+- 期待する結果は、表示名でもコードの名前でもよく、結果の種類を持たない応答（一覧の 200、境界の検査の 400）は `－` にします。
+- `控える` は `名前 = 応答の道すじ`（`body.order_id`、`rows.0.order_id`）で、後の行の経路と入力に `{名前}` で差し込めます。
+- `compare`／`review` は、メソッドと経路がルートにあるか、結果と状態が `resource` の宣言どおりかを突き合わせ、「内部 URL ごとの確認の網羅」にも数えます。
 
 ## 守ること
 
@@ -94,6 +108,7 @@ python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $
 | `rustgen.py`・`hostgen.py` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
 | `rest.py`・`screengen.py` | REST の URL と状態、画面の定義 |
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
+| `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を生成 |
 | `modules.py` | `use`／`module` |
 | `names.py` | 名前の規則と表示名の検査 |
 | `cli.py` | コマンド |

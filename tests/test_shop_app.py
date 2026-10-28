@@ -246,60 +246,10 @@ def test_Chrome拡張がAmazonの商品ページにお店の価格を出す(serv
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def rest(base, method, path, body=None):
-    """resource 宣言の URL（/api は付かない）"""
-    req = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
-
-
-def test_RESTのURLで読み_結果の種類ごとの状態が返る(server):
-    b = server["base"]
-    reset_mock(b)
-    code, j = rest(b, "GET", "/products")
-    assert code == 200 and any(p["product_id"] == "tea-jp" for p in j["rows"])
-    assert rest(b, "GET", "/product_prices/4901234567894")[1]["rows"][0]["price"] in (680, 699)
-    assert rest(b, "GET", "/product_prices/12345")[0] == 400  # 境界の検査はそのまま効く
-    body = {"customer_id": "c-001", "items": {"tea-jp": 1}, "ship_to": {"country": "JP", "postal_code": "100-0001", "line": "x"}}
-    code, j = rest(b, "POST", "/orders", {**body, "slots": {"currency": "USD"}})
-    assert (code, j["result"]) == (422, "OtherCurrency")  # 通貨が違う
-    code, j = rest(b, "POST", "/orders", {**body, "customer_id": "c-999", "slots": {"currency": "JPY"}})
-    assert (code, j["result"]) == (404, "NoSuchCustomer")
-    code, j = rest(b, "POST", "/orders", {**body, "slots": {"currency": "JPY"}})
-    assert (code, j["result"]) == (201, "Received")
-    code, j = rest(b, "GET", "/customers/c-001/orders")
-    assert code == 200 and any(r["order_id"] == j2 for j2 in [rest(b, "GET", "/customers/c-001/orders")[1]["rows"][-1]["order_id"]] for r in j["rows"])
-    assert rest(b, "POST", "/order_settlements", {"order_id": "nothing"})[0] == 404  # 注文なし
-    assert rest(b, "POST", "/reconnections", {})[0] == 201
-    assert rest(b, "GET", "/nothing")[0] == 404
-
-
-def test_RESTのupdateとdestroy_入荷と取り下げが状態つきで返り_取り下げた商品は注文の確定で商品なしになる(server, tmp_path):
-    b = f"http://127.0.0.1:{_fresh_server(tmp_path)}"  # 商品を消すので、ほかのテストと状態を分ける
-    stock = lambda: next(p["stock"] for p in rest(b, "GET", "/products")[1]["rows"] if p["product_id"] == "tea-jp")
-    before = stock()
-    # update（PUT /products/:id）：商品の入荷
-    code, j = rest(b, "PUT", "/products/tea-jp", {"quantity": 5})
-    assert (code, j["result"]) == (200, "Restocked") and stock() == before + 5
-    code, j = rest(b, "PUT", "/products/nothing", {"quantity": 5})
-    assert (code, j["result"]) == (404, "NoSuchProduct")
-    assert rest(b, "PUT", "/products/tea-jp", {"quantity": 0})[0] == 400  # 境界の検査（数量は1以上）はそのまま効く
-    # 取り下げる前に注文を受け付けておく（注文の明細には商品IDが残る）
-    body = {"customer_id": "c-001", "items": {"tea-jp": 1}, "ship_to": {"country": "JP", "postal_code": "100-0001", "line": "x"}, "slots": {"currency": "JPY"}}
-    code, j = rest(b, "POST", "/orders", body)
-    assert (code, j["result"]) == (201, "Received")
-    oid = j["body"]["order_id"]
-    # destroy（DELETE /products/:id）：商品の取り下げ
-    code, j = rest(b, "DELETE", "/products/tea-jp")
-    assert (code, j["result"]) == (200, "Withdrawn")
-    assert all(p["product_id"] != "tea-jp" for p in rest(b, "GET", "/products")[1]["rows"])
-    code, j = rest(b, "DELETE", "/products/tea-jp")
-    assert (code, j["result"]) == (404, "NoSuchProduct")  # 2回目は商品なし
-    assert rest(b, "PUT", "/products/tea-jp", {"quantity": 1})[0] == 404
-    # 参照は leave：注文は残り、確定のときに商品が無いので「在庫が足りなかった」
-    code, j = rest(b, "POST", "/order_completions", {"order_id": oid})
-    assert (code, j["result"]) == (422, "StockLacking")
+def test_計画書のURLの具体例から生成したテストが通る(server):
+    # build.sh（geas rust --plan）が、計画書の「URL の具体例」から generated/tests/test_url_examples.py を作る。
+    # update／destroy を含め、HTTP の通し（結果の種類ごとの状態）は、手書きでなくこの表が持つ
+    f = APP / "generated" / "tests" / "test_url_examples.py"
+    assert f.exists()
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", str(f)], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0 and "16 passed" in r.stdout, r.stdout + r.stderr

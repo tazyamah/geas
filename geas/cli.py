@@ -81,7 +81,7 @@ def main(argv=None) -> int:
     r = sub.add_parser("rust", help="Rust の crate を生成する")
     r.add_argument("code")
     r.add_argument("-o", required=True)
-    r.add_argument("--plan", help="具体例の実行用 bin も生成する")
+    r.add_argument("--plan", help="具体例の実行用 bin も生成する（--host --runtime と一緒なら、URL の具体例の HTTP テストも）")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
     r.add_argument("--runtime", action="store_true", help="サーバーの実行部（geas_server の crate）も、生成物の server/ に置く（--host と一緒に）")
     r.add_argument("--seed", help="サーバーが、DB が空のときだけ入れる最初のデータ（実体名→キー→行の JSON）。無ければ何も入れない")
@@ -128,6 +128,15 @@ def main(argv=None) -> int:
         write_crate(ck, lib, src, Path(a.o), host=a.host)
         if a.host and a.runtime:
             write_server(Path(a.o), Path(a.seed) if a.seed else None)
+            if a.plan:
+                from .testgen import write_url_tests
+                try:
+                    f = write_url_tests(ck, read_plan(Path(a.plan).read_text()), a.o)
+                except ValueError as e:
+                    print(f"URL の具体例: {e}", file=sys.stderr)
+                    return 1
+                if f:
+                    print(f"URL の具体例のテストを生成しました: {f}")
         if a.host and ext_screens(ck):
             write_ext(ck, a.o, a.server)
         print(f"生成しました: {a.o}")
