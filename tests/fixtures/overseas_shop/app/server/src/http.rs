@@ -5,6 +5,7 @@
 //!   GET/POST /api/test/…                     テスト用の操作（模擬の設定・時計・外部作用の記録）
 //! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
 //!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
+//! 画面の URL（screen 宣言から導いた resource の URL）は、Accept: text/html の GET なら画面（殻）を、それ以外は JSON を返す（形式の違い）。
 //! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
 //! --dev のフォルダ（開発用の模擬操作）は、pwa に無いファイルだけを配る。
 use crate::engine::Engine;
@@ -71,7 +72,7 @@ fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
     let bg = if first.map(|s| s.mode) == Some("dark") { "#151918" } else { "#f6f7f5" };
     let v = json!({
         "name": geas_app::APP_TITLE, "short_name": geas_app::APP_TITLE.chars().take(8).collect::<String>(), "lang": "ja",
-        "start_url": "./", "scope": "./", "display": "standalone", "background_color": bg, "theme_color": accent,
+        "start_url": "/", "scope": "/", "display": "standalone", "background_color": bg, "theme_color": accent,
         "icons": [
             { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
             { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
@@ -106,7 +107,10 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
     let method = req.method().clone();
     let mut body = String::new();
     let _ = req.as_reader().read_to_string(&mut body);
-    let resp = if let Some(r) = rest_route(engine, &method, path, &body) {
+    let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
+    let resp = if method == Method::Get && wants_html && is_screen_url(path) {
+        serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
+    } else if let Some(r) = rest_route(engine, &method, path, &body) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -129,6 +133,15 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
         json_resp(404, json!({ "error": "ありません" }))
     };
     let _ = req.respond(resp);
+}
+
+/// 画面（screen）の URL（geas_app::screens の url。:名前 は任意の 1 区間）に当てはまるか
+fn is_screen_url(path: &str) -> bool {
+    let segs: Vec<&str> = path.trim_end_matches('/').split('/').collect();
+    geas_app::screens.iter().any(|s| {
+        let pat: Vec<&str> = s.url.trim_end_matches('/').split('/').collect();
+        !s.url.is_empty() && pat.len() == segs.len() && pat.iter().zip(&segs).all(|(p, a)| p.starts_with(':') || p == a)
+    })
 }
 
 /// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None

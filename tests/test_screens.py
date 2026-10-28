@@ -125,3 +125,10 @@ def test_画面の汎用UIとアイコンを生成物へ置く(tmp_path):
     assert {"index.html", "ui.js", "ui.css", "sw.js", "icon.svg", "icon-192.png", "icon-512.png"} <= {p.name for p in ui.iterdir()}
     assert "#0b5cad" in (ui / "icon.svg").read_text()
     assert (ui / "icon-192.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_画面の定義はリソースのURLを持つ():
+    from geas.hostgen import definitions
+    d = definitions(chk(CODE))["screens"]["screens"]
+    assert d["OrderForm"]["url"] == "/orders/new"
+    assert d["MyOrders"]["url"] == "/customers/:customer_id/orders"
