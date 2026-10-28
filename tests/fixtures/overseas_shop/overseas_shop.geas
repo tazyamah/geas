@@ -575,6 +575,7 @@ screen MyOrders {
 
 /// 価格の確認の画面（Chrome 拡張）
 screen PriceCheck entry {
+  page "*://www.amazon.co.jp/*", "*://www.amazon.com/*"
   field jan
   show price_by_jan
   design {

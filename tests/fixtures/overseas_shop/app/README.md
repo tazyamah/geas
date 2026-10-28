@@ -19,7 +19,7 @@ cd server
 ```
 
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
-- 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `extension/` を選ぶ。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
+- 拡張：`chrome://extensions` を開き、「デベロッパーモード」→「パッケージ化されていない拡張機能を読み込む」で `server/generated/ext/` を選ぶ（geas が screen の `page` から生成する）。`https://www.amazon.co.jp/dp/B0SHOPTEA1` のような商品ページに、お店の価格が出る。
 - 最初の商品と顧客は `seed.json`（DB が空のときだけ入る）。商品と顧客を作る処理は、この題材の Geas には無い。
 - 通しの確認：`python -m pytest tests/test_shop_app.py`（cargo が要る。画面と拡張の確認は node と Playwright があるときだけ）。
 
@@ -34,7 +34,7 @@ cd server
 | `server/src/mock.rs` | 決済・倉庫・配送の模擬（返事を返す、冪等キーが同じ請求には同じ答え） | 知っている |
 | `server/generated/ui/` | 画面（PWA）。geas の screen 宣言から `geas rust --host` が置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
 | `dev/` | 開発用の模擬操作（決済の返事を落とす・時計を進める）。アプリの画面ではない | 知っている |
-| `extension/` | Chrome 拡張（Amazon の ASIN→JAN を読む部分は手書き） | 口の JSON だけを知っている |
+| `extension/reader.js` | Chrome 拡張で手書きの唯一の部分（Amazon の ASIN→JAN を読む）。ほかの拡張のファイルは `server/generated/ext/` に geas が生成する | 口の JSON だけを知っている |
 
 SQLite に決めているのは `db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
 
@@ -65,8 +65,8 @@ URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customer
 ## 前提と、まだ無いもの
 
 - 認証は無い（デモ。画面で顧客を選ぶだけ）。本物にするときは、顧客をログインで決め、拡張が呼べる問い合わせは `price_by_jan` だけにする。
-- 拡張が問い合わせてよい先は、`extension/manifest.json` の `host_permissions`（localhost:8787）で決まる。別のサーバーに向けるなら、そこを書き換える。サーバーは CORS を開けていない。
-- ASIN→JAN の変換は拡張の仕事：ページの商品情報の JAN/EAN を読み、無ければ対応表（ポップアップで直せる）で引く。本物の変換（商品データの API など）に替えるなら、`extension/converter.js` の `asinToJan` だけを替える。
+- 拡張が問い合わせてよい先は、生成した `manifest.json` の `host_permissions`（既定は localhost:8787）で決まる。別のサーバーに向けるなら、`geas rust --server <URL>` で作り直す。サーバーは CORS を開けていない。
+- ASIN→JAN の変換は拡張の仕事：ページの商品情報の JAN/EAN を読み、無ければ対応表（ポップアップの「読み取りの設定」に `{"asinTable": {"ASIN": "JAN"}}` と書いて直せる）で引く。本物の変換（商品データの API など）に替えるなら、`extension/reader.js` の `asinToJan` だけを替える。
 - 決済・倉庫・配送は模擬（メモリ上。再起動で、返事を待っている模擬の仕事は消えるが、待ちは DB に残り、期限で取り消される）。
 - 保存は、実体ごとに JSON を入れた表。項目ごとの列には分けていない（Geas の `store` 宣言と、列への対応づけは未実装）。
 - オフラインで注文を貯めて、つながったときに送る仕組みは無い（注文には冪等キーが無いため、二重注文になりうる）。

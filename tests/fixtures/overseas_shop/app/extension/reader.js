@@ -1,3 +1,5 @@
+// このファイルが、拡張で手で書く唯一の部分（ページから値を読む）。ほかは geas が screen から生成する。
+// 契約：self.GeasReader.read(url, document, config) → { subject（いまのページの何か。無ければ null）, value（問い合わせる値。読めなければ null）, source（どこから読んだか） }
 // ASIN → JAN の変換は、この拡張（クライアント）の仕事。サーバーは JAN だけを受け取り、最後の1桁もサーバーが確かめる。
 // 順番：(1) ページに書いてある JAN/EAN を読む　(2) 読めなければ、下の対応表（ポップアップで直せる）で ASIN から引く。
 (function (root) {
@@ -51,4 +53,11 @@
   }
 
   root.ShopConverter = { SAMPLE_TABLE, validGtin, asinOf, janFromPage, asinToJan, resolve };
+  root.GeasReader = {
+    read(url, doc, config) {
+      const table = Object.assign({}, SAMPLE_TABLE, (config && config.asinTable) || {});
+      const { asin, jan, source } = resolve(url, doc, table);
+      return asin ? { subject: "ASIN " + asin, value: jan, source: jan ? (source === "page" ? "ページから" : "対応表から") : "" } : { subject: null, value: null };
+    },
+  };
 })(typeof self !== "undefined" ? self : this);

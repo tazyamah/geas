@@ -1022,7 +1022,7 @@ class Parser:
 
     # ---- 画面 ----
     def screen(self, line) -> Screen:
-        """screen 名前(受け取る値) [entry] { show 問い合わせ / open 画面 / field 入力 / action 処理 { 結果 → 行き先 } / design { 指定 } }"""
+        """screen 名前(受け取る値) [entry] { show 問い合わせ / open 画面 / field 入力 / action 処理 { 結果 → 行き先 } / page "URLのパターン", … / design { 指定 } }"""
         sc = Screen(self.name(), line=line)
         if self.accept("("):
             sc.params = self.comma_list(self.input_item)
@@ -1054,6 +1054,13 @@ class Parser:
                     routes.append((v, self.name()))
                     self.end_line()
                 sc.actions.append((deed, routes))
+            elif kw == "page":
+                def pat():
+                    t = self.next()
+                    if t.kind != "STR":
+                        raise ParseError("page には、ページの URL のパターン（\"*://www.example.com/*\" のような文字列）を書いてください", t.line)
+                    sc.pages.append(t.val)
+                self.comma_list(pat)
             elif kw == "design":
                 self.block_open()
                 while not self.accept("}"):
@@ -1064,7 +1071,7 @@ class Parser:
                     sc.design[k] = t.val
                     self.end_line()
             else:
-                raise self.err("screen の中は「show」「open」「field」「slot」「action」「design」です")
+                raise self.err("screen の中は「show」「open」「field」「slot」「action」「page」「design」です")
             self.end_line()
         return sc
 
