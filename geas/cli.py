@@ -13,7 +13,7 @@ from .parser import ParseError, parse
 from .plan import EXAMPLE, UNSPEC, Finding, compare_static, read_plan
 from .lexer import LexError
 from .rustgen import generate
-from .review import review
+from .review import review, review_changes
 from .spec import build, render
 from . import interview
 
@@ -77,7 +77,8 @@ def main(argv=None) -> int:
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
     v.add_argument("code")
     v.add_argument("--plan", help="計画書（①）")
-    v.add_argument("--base", help="比べる前の版のコード。渡すと「前の版からの変更」が載る")
+    v.add_argument("--diff-o", help="答えてほしいことと前の版からの変更だけの HTML の出力先（仕様書とは別のファイル）")
+    v.add_argument("--base", help="比べる前の版のコード。--diff-o の HTML に「前の版からの変更」が載る")
     v.add_argument("--base-git", metavar="REV", help="比べる前の版を、git の REV（例: HEAD~1）にある同じコードにする")
     v.add_argument("-o", required=True)
     r = sub.add_parser("rust", help="Rust の crate を生成する")
@@ -115,7 +116,7 @@ def main(argv=None) -> int:
         findings = compare_static(build(ck), read_plan(plan_md)) if plan_md else []
         base_ck, base_label = None, ""
         if a.base:
-            base_ck, base_label = load(a.base), a.base
+            base_ck, base_label = load(a.base), Path(a.base).name
         elif a.base_git:
             import subprocess, tempfile
             code = Path(a.code).resolve()
@@ -130,7 +131,12 @@ def main(argv=None) -> int:
                 tmp.write_text(old.stdout)
                 base_ck = load(tmp)
             base_label = f"git {a.base_git}"
-        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label))
+        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
+        if a.diff_o:
+            Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label))
+            print(f"生成しました: {a.diff_o}")
+        elif base_ck is not None:
+            print("前の版は、--diff-o で出力先を渡したときだけ使います（仕様書には載せません）。", file=sys.stderr)
         print(f"生成しました: {a.o}")
         return 0 if ck.ok else 1
     if not ck.ready:

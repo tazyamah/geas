@@ -486,7 +486,15 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 .view { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
 .view[hidden] { display: none; }
 .devs { display: flex; gap: 8px; }
-.pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.top { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.top h1 { font-size: 1rem; font-weight: 600; color: var(--muted); }
+.top nav { margin-top: 0; }
+.page { padding-block: 12px 40px; gap: 16px; }
+#view-act { padding-bottom: 130px; gap: 16px; }
+#mock { display: flex; flex-direction: column; height: clamp(300px, calc(100vh - 260px), 820px); }
+#mock .in { flex: 1; overflow-y: auto; align-content: start; }
+#mock.pc { max-width: none; }
+.pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: .85rem; }
 .pick label { font-size: .85rem; color: var(--muted); }
 .pick select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); max-width: 100%; }
 .sub-view { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
@@ -520,13 +528,14 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 #mock label { font-size: .8rem; opacity: .8; display: block; }
 #mock table { border-collapse: collapse; font-size: .85rem; width: 100%; }
 #mock th, #mock td { border: 1px solid #8884; padding: 4px 6px; text-align: left; vertical-align: top; }
-#mock .lay-grid .shows { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#mock .lay-grid .shows { display: grid; grid-template-columns: 1fr; gap: 8px; }
+#mock.pc .lay-grid .shows { grid-template-columns: 1fr 1fr; }
 #mock .banner { border-radius: 8px; padding: 6px 10px; font-size: .82rem; background: #fbf0d4; color: #6b4700; }
 #mock.dark .banner { background: #3a2f12; color: #f0c36a; }
 .hl { outline: 5px solid #ffd400 !important; outline-offset: 2px; box-shadow: 0 0 0 9px rgba(255, 212, 0, .45) !important; animation: hl 1.2s ease-in-out infinite; }
 @keyframes hl { 50% { box-shadow: 0 0 0 14px rgba(255, 212, 0, .15); } }
 @media (prefers-reduced-motion: reduce) { .hl { animation: none; } }
-.sc { margin-bottom: 240px; }
+.sc { margin: 0; }
 #pad { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 2px solid var(--line); box-shadow: 0 -4px 14px rgba(0, 0, 0, .18);
   padding: 8px max(12px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px)); }
 #pad .l { display: flex; justify-content: space-between; gap: 8px; font-size: .78rem; color: var(--muted); margin-bottom: 4px; }
@@ -537,6 +546,7 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 #pad .go, #pad .okb { background: var(--accent); color: #fff; border-color: var(--accent); }
 #pad .okb { background: var(--add); border-color: var(--add); }
 #pad .ngb { color: var(--remove); border-color: var(--remove); }
+#pad #bNet.off { background: var(--ask-soft); color: var(--ask); border-color: var(--ask); }
 #pad .ng { display: flex; gap: 6px; margin-top: 6px; }
 #pad .ng input { flex: 1; min-width: 0; font: inherit; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 #ngs li { margin: .3em 0; }
@@ -559,11 +569,12 @@ document.querySelectorAll('[data-dev]').forEach(function(b){b.addEventListener('
 JS = """
 const S=JSON.parse(document.getElementById('screens-data').textContent),U=JSON.parse(document.getElementById('ucs').textContent);
 const mock=document.getElementById('mock'),pad=document.getElementById('pad'),sel=document.getElementById('opsel'),$=id=>document.getElementById(id);
-let op=0,k=0,res=U.map(()=>null),editing=false,moved=false;
+let op=0,k=0,res=U.map(()=>null),editing=false,moved=false,net=true,netmsg='';
+const EV=document.getElementById('events')?JSON.parse(document.getElementById('events').textContent):[];
 function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!==undefined)e.textContent=h;return e}
 function nsteps(){return U[op].steps.length}
 function curScreen(){const u=U[op];return k<u.steps.length?u.steps[k].screen:u.end}
-function banner(){const u=U[op];if(k>0){const p=u.steps[k-1];if(p.result&&p.to==='そのまま')return p.op+'の結果：'+p.result}return''}
+function banner(){if(!net)return'オフライン：つながりが切れています';if(netmsg)return netmsg;const u=U[op];if(k>0){const p=u.steps[k-1];if(p.result&&p.to==='そのまま')return p.op+'の結果：'+p.result}return''}
 function draw(){
  const u=U[op],n=curScreen(),s=S[n],d=s.design;mock.className=(d.mode==='dark'?'dark':'')+(document.querySelector('[data-dev=pc]').getAttribute('aria-pressed')==='true'?' pc':'');mock.innerHTML='';
  mock.append(el('span','ucid',u.id));
@@ -585,13 +596,15 @@ function draw(){
  const done=res.filter(x=>x).length;$('prog').textContent=done===U.length?'すべて完了（'+done+'件）':'済 '+done+' / '+U.length;
  const ng=res[op]&&res[op].v==='NG';$('bNg').textContent=ng?'NG✎':'NG';$('bNg').title=ng?res[op].why:'';
  sel.innerHTML='';U.forEach((x,i)=>{const o=el('option','',(res[i]?(res[i].v==='OK'?'✓ ':'✗ '):'')+x.id+' '+x.name);o.value=i;if(i===op)o.selected=true;sel.append(o)});
+ if($('bNet')){$('bNet').textContent=net?'オンライン':'オフライン';$('bNet').className=net?'':'off'}
  $('ngrow').hidden=!editing;
  list();if(moved){const h=mock.querySelector('.hl');if(h)h.scrollIntoView({block:'center',behavior:'smooth'})}}
 function list(){const ul=$('ngs');ul.innerHTML='';res.forEach((r,i)=>{if(r&&r.v==='NG'){const li=el('li','',U[i].id+' '+U[i].name+'：'+(r.why||'（理由なし）')+'　［'+r.at+'］');ul.append(li)}});$('ngwrap').hidden=!ul.children.length}
-function pick(i){op=i;k=0;editing=false;draw()}
-function next(){if(k<nsteps()){k++;moved=true;draw()}}
-function prev(){if(k>0){k--}else if(op>0){op--;k=nsteps()}editing=false;moved=true;draw()}
+function pick(i){op=i;k=0;editing=false;netmsg='';draw()}
+function next(){if(k<nsteps()){k++;moved=true;netmsg='';draw()}}
+function prev(){if(k>0){k--}else if(op>0){op--;k=nsteps()}editing=false;moved=true;netmsg='';draw()}
 function advance(){if(op<U.length-1){pick(op+1)}else draw()}
+if($('bNet'))$('bNet').onclick=()=>{net=!net;netmsg=net&&EV.length?EV[0].name+'：'+EV[0].proc+'を行います':'';draw()};
 $('bNext').onclick=next;$('bPrev').onclick=prev;$('bReset').onclick=()=>pick(op);sel.onchange=()=>pick(+sel.value);
 $('bOk').onclick=()=>{res[op]={v:'OK'};advance()};
 $('bNg').onclick=()=>{editing=true;$('why').value=res[op]&&res[op].v==='NG'?res[op].why:'';draw();$('why').focus()};
@@ -631,19 +644,8 @@ def changes_section(new: dict, old: dict, label: str) -> str:
 
 
 
-def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None, name: str = "", fragment: bool = False,
-           base_ck=None, base_label: str = "") -> str:
-    """fragment=True は、<head> などの外枠を持たない本文だけ（Artifact として公開する用）。base_ck は、比べる前の版"""
-    p, show = ck.p, ck.p.show_names
-    ucs = usecases(read_plan(plan_md).get("ユースケース", [])) if plan_md else {}
-    plan = read_plan(plan_md) if plan_md else {}
-    spec = build(ck)
-    sec = []
-
-    def add(aid, title, body):
-        sec.append((aid, title, f'<section id="{aid}"><h2>{escape(title)}</h2>{body}</section>'))
-
-    # 答えてほしいこと：食い違い・検査のエラーは「拒否」、検査の問い・警告は「確認」、未規定は「記録」
+def collect_questions(ck, findings):
+    """食い違い・検査のエラーは「拒否」、検査の問い・警告は「確認」、未規定は「記録」"""
     rejects, asks, records = [], [], []
     for f in findings or []:
         (records if f.kind == UNSPEC else rejects).append(card("reject" if f.kind != UNSPEC else "ask", escape(f.kind), f.where, f.msg))
@@ -652,18 +654,66 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             rejects.append(card("reject", "拒否", dg.where, dg.msg))
         elif dg.level in (QUESTION, WARN):
             asks.append(card("ask", "確認", dg.where, dg.msg))
+    return rejects, asks, records
+
+
+def page(title: str, h1: str, head_extra: str, body: str, scripts: str, fragment: bool) -> str:
+    head = (f"<title>{escape(title)}</title>\n"
+            '<meta name="claude:viewport-fit-sides" content="cover">\n'
+            '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+            '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">\n'
+            f"<style>{CSS}</style>\n")
+    content = f'<div class="page"><header class="top"><h1>{escape(h1)}</h1>{head_extra}</header>{body}</div>{scripts}'
+    if fragment:
+        return head + content
+    return ('<!doctype html>\n<html lang="ja"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+            f"{head}</head><body>{content}</body></html>\n")
+
+
+def review_changes(ck, findings: list[Finding] | None = None, name: str = "", base_ck=None, base_label: str = "", fragment: bool = False) -> str:
+    """仕様書とは別の、答えてほしいことと前の版からの変更だけの HTML。更新のたびに人が見るもの"""
+    rejects, asks, records = collect_questions(ck, findings)
+    verdict, vcls = ("受け入れ可", "ok") if not rejects else ("拒否", "reject")
+    meta = [f'<span class="chip {vcls}">{verdict}</span>', f"<span>拒否 {len(rejects)} 件 ・ 確認 {len(asks)} 件 ・ 記録 {len(records)} 件</span>"]
+    if base_ck is not None:
+        meta.append(f"<span>比較元：{escape(base_label or '前の版')}</span>")
+    parts = []
     if rejects or asks:
-        add("questions", "答えてほしいこと", lead(f"拒否 {len(rejects)} 件、確認 {len(asks)} 件です。答えるとコードか計画書が直り、もう一度検査されます。")
-            + f'<div class="cards">{"".join(rejects + asks)}</div>')
+        parts.append('<section id="questions"><h2>答えてほしいこと</h2>'
+                     + lead(f"拒否 {len(rejects)} 件、確認 {len(asks)} 件です。答えるとコードか計画書が直り、もう一度検査されます。")
+                     + f'<div class="cards">{"".join(rejects + asks)}</div></section>')
+    if base_ck is not None:
+        parts.append(f'<section id="changes"><h2>前の版からの変更</h2>{changes_section(build(ck), build(base_ck), base_label)}</section>')
+    if records:
+        parts.append('<section id="open"><h2>意図的に決めていないこと</h2>'
+                     + lead("計画書で「未規定」としたところです。実装が自由に選んでよい箇所で、書き忘れとは区別して記録しています。")
+                     + f'<div class="cards">{"".join(records)}</div></section>')
+    if not parts:
+        parts.append(lead("答えてほしいことはありません。前の版も渡されていないので、変更点もありません。"))
+    return page(f"確認事項と変更点 {name}".strip(), f"確認事項と変更点 {name.strip('（）')}".strip(), f'<div class="meta">{"".join(meta)}</div>', "".join(parts), "", fragment)
+
+
+def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None, name: str = "", fragment: bool = False) -> str:
+    """人が読む仕様書。fragment=True は、<head> などの外枠を持たない本文だけ（Artifact として公開する用）。
+    答えてほしいことと前の版からの変更は、別の HTML（review_changes）に出す"""
+    p, show = ck.p, ck.p.show_names
+    ucs = usecases(read_plan(plan_md).get("ユースケース", [])) if plan_md else {}
+    plan = read_plan(plan_md) if plan_md else {}
+    spec = build(ck)
+    sec = []
+
+    def add(aid, title, body):
+        h2 = f"<h2>{escape(title)}</h2>" if title else ""
+        sec.append((aid, title or aid, f'<section id="{aid}">{h2}{body}</section>'))
+
+    _, _, records = collect_questions(ck, findings)
 
     overview, usage = plan_sections(plan_md) if plan_md else ("", "")
     if overview:
         add("overview", "概要", md_to_html(overview))
     if usage:
         add("usage", "利用の形態", md_to_html(usage))
-
-    if base_ck is not None:
-        add("changes", "前の版からの変更", changes_section(spec, build(base_ck), base_label))
 
     if ucs:
         add("usecases", "誰が何をするか", usecase_diagram(ck, ucs, spec))
@@ -700,6 +750,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
                 steps.append({"screen": scr, "op": o, "result": rs, "to": to, "url": url_of.get(scr, "")})
                 here = scr if o == "見る" or to == "そのまま" else to
             uj.append({"id": f"UC{i}", "name": k, "steps": steps, "end": here or v[-1]["画面"]})
+        net_events = [x for x in spec["出来事"] if "つながり" in x[0]]
         ex = {(r["ユースケース"], r["手順"]): r for r in plan.get("画面例", [])}
         per_uc = []
         for i, (k, v) in enumerate(ucs.items(), 1):
@@ -713,25 +764,24 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         timers = [(n_, w) for n_, w, _ in spec["トリガ"] if "期限" in w]
         if timers:
             env += '<fieldset><legend>時間（期限）</legend><div class="chips">' + "".join(f'<span class="envchip">{escape(n_)}：{escape(w[w.index("期限"):])}</span>' for n_, w in timers) + "</div></fieldset>"
-        env_html = ("<h3>この画面の外にある設定</h3>" + lead("画面の操作では動かせない、環境の側の設定です。このモックは処理を動かさず、見本の行を出すだけなので、切り替えはできません。確かめる手順は、下の動作の一覧にある「返事を落とす」「時計を進める」のように、画面例に書いてあります。")
+        env_html = ("<h3>この画面の外にある設定</h3>" + lead("画面の操作では動かせない、環境の側の設定です（オンライン／オフラインは、操作パネルで切り替えられます）。返事の種類と期限は、動作の一覧の「返事を落とす」「時計を進める」の手順で確かめます。")
                     + f'<div class="env">{env}</div>') if env else ""
-        add("walk", "動作：画面", lead("画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。")
-            + '<div class="devs" role="group" aria-label="端末"><button class="tab" data-dev="phone" aria-pressed="true">スマホ</button><button class="tab" data-dev="pc" aria-pressed="false">PC</button></div>'
-            + '<div class="sc"><div id="mock"></div></div>'
+        add("walk", None, '<div class="sc"><div id="mock"></div></div>'
             + env_html
             + "<h3>ユースケースの動作の一覧</h3>" + "".join(per_uc)
             + '<div id="ngwrap" hidden><h3>NG にしたもの</h3><ul id="ngs" class="plain"></ul><button id="copy" type="button">コピー</button></div>'
-            f'<script type="application/json" id="ucs">{json.dumps(uj, ensure_ascii=False).replace("</", "<\\/")}</script>'
+            + (f'<script type="application/json" id="events">{json.dumps([{"name": e, "proc": pr} for e, _, pr in net_events], ensure_ascii=False).replace("</", "<\\/")}</script>' if net_events else "")
+            + f'<script type="application/json" id="ucs">{json.dumps(uj, ensure_ascii=False).replace("</", "<\\/")}</script>'
             f'<script type="application/json" id="screens-data">{json.dumps(sj, ensure_ascii=False).replace("</", "<\\/")}</script>'
             '<div id="pad" role="group" aria-label="レビュー操作パネル"><div class="l"><span id="line"></span><span id="prog"></span></div>'
-            '<div class="r"><select id="opsel" aria-label="確認するユースケース"></select><button id="bReset" type="button">最初から</button><button id="bPrev" type="button">前へ</button>'
+            '<div class="r">' + ('<button id="bNet" type="button" aria-label="つながりの切り替え">オンライン</button>' if net_events else '') + '<select id="opsel" aria-label="確認するユースケース"></select><button id="bReset" type="button">最初から</button><button id="bPrev" type="button">前へ</button>'
             '<button id="bNext" class="go" type="button">次へ</button><button id="bOk" class="okb" type="button">OK</button><button id="bNg" class="ngb" type="button">NG</button></div>'
             '<div class="ng" id="ngrow" hidden><input id="why" placeholder="NGの理由（空でもよい）" aria-label="NGの理由"><button id="ngsave" type="button">保存して次へ</button></div></div>')
 
     # 動作：API
     if spec["ルート"]:
         url_ex = plan.get("URL例", [])
-        add("api", "動作：API", lead("API は、押して動かせません。計画書の URL の具体例を、リクエストと期待する応答の表にしています。具体例が無いときは、URL の一覧です。")
+        add("api", None, lead("API は押して動かせません。計画書の URL の具体例を、リクエストと期待する応答の表にしています。")
             + (table(["ID", "メソッド", "経路", "入力", "期待する結果", "期待する状態"], [(r["ID"], r["メソッド"], r["経路"], r["入力"], r["期待する結果"], r["期待する状態"]) for r in url_ex])
                if url_ex else table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"])))
 
@@ -767,15 +817,8 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if records:
         add("open", "意図的に決めていないこと", lead("計画書で「未規定」としたところです。実装が自由に選んでよい箇所で、書き忘れとは区別して記録しています。") + f'<div class="cards">{"".join(records)}</div>')
 
-    title = f"仕様レビュー {name}".strip()
-    verdict, vcls = ("受け入れ可", "ok") if not rejects else ("拒否", "reject")
-    meta = [f'<span class="chip {vcls}">{verdict}</span>', f"<span>拒否 {len(rejects)} 件 ・ 確認 {len(asks)} 件 ・ 記録 {len(records)} 件</span>"]
-    if base_ck is not None:
-        meta.append(f"<span>比較元：{escape(base_label or '前の版')}</span>")
     by_id = {a: h for a, _, h in sec}
     titles = {a: t for a, t, _ in sec}
-    # 問いと変更点は、見落とさないよう、タブの外（上）に出す
-    above = "".join(by_id[a] for a in ("questions", "changes") if a in by_id)
     views, tabs = [], []
 
     def add_view(gid, label, html):
@@ -789,9 +832,12 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     # [動作]：起点を選んで、動く画面とコントローラーで確かめる
     origins = [(a, l) for a, l in (("walk", "画面（スマホ・PC）"), ("api", "API")) if a in by_id]
     if origins:
-        pick = (f'<div class="pick"><label for="origin">動作の起点</label><select id="origin">'
-                + "".join(f'<option value="{a}">{escape(l)}</option>' for a, l in origins) + "</select></div>") if len(origins) > 1 else ""
-        add_view("act", "動作", pick + "".join(by_id[a] for a, _ in origins))
+        devs = ('<span id="devs" class="devs" role="group" aria-label="端末"><button class="tab" data-dev="phone" aria-pressed="true">スマホ</button>'
+                '<button class="tab" data-dev="pc" aria-pressed="false">PC</button></span>') if "walk" in by_id else ""
+        sel = ('<label for="origin">動作の起点</label><select id="origin">'
+               + "".join(f'<option value="{a}">{escape(l)}</option>' for a, l in origins) + "</select>") if len(origins) > 1 else ""
+        hint = '<span class="muted">画面下部の操作パネルで動作を確認できます</span>' if "walk" in by_id else ""
+        add_view("act", "動作", f'<div class="pick">{sel}{devs}{hint}</div>' + "".join(by_id[a] for a, _ in origins))
     # [仕様]：上の二つに入らなかったすべて。種類ごとに分けて、一つずつ見る
     spec_groups = [
         ("overview", "概要", ["overview", "usage"]),
@@ -811,19 +857,5 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             + "".join(f'<option value="{g}">{escape(l)}</option>' for g, l, _ in spec_groups) + "</select></div>")
     add_view("spec", "仕様", pick + sub)
     nav = f'<div class="tabs" role="tablist">{"".join(tabs)}</div>'
-    body = above + "".join(views)
-    footer = ("<footer><p>この画面は、コード（geas）から自動で生成しています。図・表・具体例・問いはすべてコードと検査器から導いたもので、AI による要約は含みません。"
-              "直さずに、会話で答えてコードを変えます。</p></footer>")
-    head = (f"<title>{escape(title)}</title>\n"
-            '<meta name="claude:viewport-fit-sides" content="cover">\n'
-            '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
-            '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">\n'
-            f"<style>{CSS}</style>\n")
-    content = (f'<div class="page"><header class="top"><p class="eyebrow">仕様レビュー</p><h1>{escape(name.strip("（）") or "仕様書")}</h1>'
-               f'<div class="meta">{"".join(meta)}</div><nav>{nav}</nav></header>{body}{footer}</div>'
-               + f"<script>{TAB_JS}</script>" + (f"<script>{JS}</script>" if p.screens else ""))
-    if fragment:
-        return head + content
-    return ('<!doctype html>\n<html lang="ja"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
-            f"{head}</head><body>{content}</body></html>\n")
+    body = "".join(views)
+    return page(f"仕様書 {name}".strip(), name.strip("（）") or "仕様書", nav, body, f"<script>{TAB_JS}</script>" + (f"<script>{JS}</script>" if p.screens else ""), fragment)
