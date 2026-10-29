@@ -114,6 +114,8 @@ python -m geas spec $F/overseas_shop.geas --plan $F/overseas_shop_plan.md > $F/o
 python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $F/overseas_shop_review.html
 ```
 
+仕様書は[ユースケース][動作][仕様]の3タブ。ユースケース図の「人」は、計画書のユースケースの表に任意の「アクター」列を足すと、その名前で描く（無いときは、ユースケースを始める画面で代用）。
+
 更新のレビューでは、前の版を渡すと仕様書に「前の版からの変更」が載る：`--base 前のコード.geas`、または git の版なら `--base-git HEAD~1`。
 
 ## ソースの地図（`geas/`）

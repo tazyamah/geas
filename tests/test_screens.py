@@ -94,11 +94,12 @@ def test_人向けの仕様書は画面の遷移とモックとデザインを�
     from geas.review import review
     ck = chk(CODE)
     html = review(ck, PLAN, compare_static(build(ck), read_plan(PLAN)), "（海外店）")
-    for s in ("画面の流れ", "画面デザイン", "ユースケースを画面でたどる", 'id="screens-data"', "商品を見つけて注文する", "誰が何をするか", "状態の移り変わり：注文", "処理の流れ：", 'class="diagram"'):
+    for s in ("画面の流れ", "画面デザイン", "動作：画面", 'id="screens-data"', "商品を見つけて注文する", "誰が何をするか", "状態の移り変わり：注文", "処理の流れ：", 'class="diagram"'):
         assert s in html, s
     assert "mermaid" not in html and "https://cdnjs" not in html  # 図は自前の SVG で、外部の読み込みに頼らない
     assert "受け入れ可" in html and "前の版からの変更" not in html
-    assert 'role="tab"' in html and "画面の動き（さわれます）" in html and 'data-dev="pc"' in html  # タブとコントローラー
+    assert [x for x in ("ユースケース", "動作", "仕様") if f'data-view="{ {"ユースケース": "uc", "動作": "act", "仕様": "spec"}[x] }"' in html] == ["ユースケース", "動作", "仕様"]  # タブは3種類
+    assert 'id="origin"' in html and 'id="specsel"' in html and 'data-dev="pc"' in html and 'id="pad"' in html  # 起点の選択・分類・端末の切り替え・コントローラー
 
 
 def test_前の版を渡すと_仕様書に変更点が出る():

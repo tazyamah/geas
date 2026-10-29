@@ -147,19 +147,65 @@ def effect_fields(content: str) -> str:
     return "・".join(x.split(":")[0].strip() for x in split_top(content, ","))
 
 
-def usecase_diagram(ucs: dict, spec: dict) -> str:
-    """計画書にアクターの欄は無いので、ユースケースを始める画面ごとに分けて描く"""
+def usecase_externals(ck, spec: dict, ucs: dict) -> dict[str, dict[str, list[str]]]:
+    """ユースケースの手順の処理から、フローと待ちをたどって、触れる外部システムと依頼の名前を集める"""
+    show = ck.p.show_names
+    procs = {x["処理"]: x for x in spec["処理"]}
+    nxt: dict[str, list[str]] = {}
+    for fl in ck.p.flows:
+        for proc, routes in fl.entries:
+            for ds in route_map(routes).values():
+                for d in ds:
+                    if d != "reply":
+                        nxt.setdefault(show(proc), []).append("待つ " + show(d[5:]) if d.startswith("wait ") else show(d))
+    for tname, _, to in spec["トリガ"]:
+        nxt.setdefault("待つ " + tname, []).append(to)
+
+    def reach(start: str) -> list[str]:
+        seen, todo = [], [start]
+        while todo:
+            cur = todo.pop()
+            if cur not in seen:
+                seen.append(cur)
+                todo += nxt.get(cur, [])
+        return seen
+
+    out: dict[str, dict[str, list[str]]] = {}
+    for uc, rows in ucs.items():
+        systems: dict[str, list[str]] = {}
+        for r in rows:
+            for q in reach(r["操作"]):
+                for ext in procs.get(q, {}).get("外部", []):
+                    system, _, op = ext.split("(")[0].partition(".")
+                    if op not in systems.setdefault(system, []):
+                        systems[system].append(op)
+        out[uc] = systems
+    return out
+
+
+def usecase_diagram(ck, ucs: dict, spec: dict) -> str:
+    """アクターは計画書の「アクター」列から。無いときは、ユースケースを始める画面ごとに分けて描く"""
     actors, cases = [], []
+    given = any(rows[0].get("アクター") for rows in ucs.values())
     for name, rows in ucs.items():
-        first = rows[0]["画面"]
-        actor = first + "から始める人"
+        actor = rows[0].get("アクター") or rows[0]["画面"] + "から始める人"
         if actor not in actors:
             actors.append(actor)
         cases.append((actor, name, svg.SAME))
-    rows = [(a, c, str(len(ucs[c])), "、".join(dict.fromkeys(r["画面"] for r in ucs[c]))) for a, c, _ in cases]
-    return (lead("人と、その人が行うユースケースです。計画書にアクターの欄は無いので、ユースケースを始める画面ごとに分けています。手順は「ユースケースを画面でたどる」で確かめます。")
-            + fig(svg.usecases(actors, cases, "ユースケース図"))
-            + table(["始める画面", "ユースケース", "手順数", "使う画面"], rows))
+    ext = usecase_externals(ck, spec, ucs)
+    sysmap: dict[str, tuple[list[str], list[str]]] = {}
+    for uc, systems in ext.items():
+        for system, ops in systems.items():
+            ops_all, ucs_all = sysmap.setdefault(system, ([], []))
+            ucs_all.append(uc)
+            ops_all += [o for o in ops if o not in ops_all]
+    externals = [(system, "・".join(ops), users) for system, (ops, users) in sysmap.items()]
+    rows = [(a, c, str(len(ucs[c])), "、".join(dict.fromkeys(r["画面"] for r in ucs[c])), "、".join(ext[c]) or "なし") for a, c, _ in cases]
+    return (lead("人と、その人が行うユースケースです。右の四角は、そのユースケースが処理を通じて触れる外部システムです。"
+                 + ("" if given else "計画書にアクターの欄が無いので、ユースケースを始める画面ごとに分けています（ユースケースの表に「アクター」列を足すと、その名前で描きます）。")
+                 + "実際の画面での動きは「動作」のタブで確かめます。")
+            + fig(svg.usecases(actors, cases, "ユースケース図", externals))
+            + table(["アクター" if given else "始める画面", "ユースケース", "手順数", "使う画面", "触れる外部システム"], rows))
 
 
 def screen_flow(spec: dict) -> str:
@@ -440,6 +486,15 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 .view { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
 .view[hidden] { display: none; }
 .devs { display: flex; gap: 8px; }
+.pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pick label { font-size: .85rem; color: var(--muted); }
+.pick select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); max-width: 100%; }
+.sub-view { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
+.env { display: grid; gap: 10px; }
+.env fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0; }
+.env legend { font-size: .85rem; color: var(--muted); padding: 0 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.envchip { font-size: .82rem; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--surface); }
 #mock.pc { max-width: none; border-radius: 8px; }
 /* geas 独自：画面のモック・レビュー操作パネル・画面デザインの見取り図 */
 .sub { color: var(--muted); font-size: .9rem; margin: 0; }
@@ -453,7 +508,7 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 .wf .btn { border-radius: 6px; height: 22px; }
 .wf.dark { background: #1b1b1b; }
 .wf.dark .bar, .wf.dark .tile { background: #3a3a3a; }
-#mock { position: relative; border: 2px solid var(--line); border-radius: 18px; max-width: 400px; margin: .6em auto; background: #fff; color: #18252a; overflow: hidden; }
+#mock { width: 100%; position: relative; border: 2px solid var(--line); border-radius: 18px; max-width: 400px; margin: .6em auto; background: #fff; color: #18252a; overflow: hidden; }
 #mock.dark { background: #1b1b1b; color: #eee; }
 #mock header { padding: 10px 12px; color: #fff; display: flex; gap: 8px; align-items: center; }
 #mock header b { flex: 1; }
@@ -492,6 +547,10 @@ TAB_JS = """
 document.querySelectorAll('.tab[data-view]').forEach(function(t){t.addEventListener('click',function(){
  document.querySelectorAll('.tab[data-view]').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
  document.querySelectorAll('.view').forEach(function(v){v.hidden=v.id!=='view-'+t.dataset.view});window.scrollTo(0,0)})});
+var org=document.getElementById('origin');
+if(org){var fo=function(){['walk','api'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=org.value!==id})};org.onchange=fo;fo()}
+var sp=document.getElementById('specsel');
+if(sp){var fs=function(){document.querySelectorAll('.sub-view').forEach(function(v){v.hidden=v.dataset.sub!==sp.value})};sp.onchange=fs;fs()}
 document.querySelectorAll('[data-dev]').forEach(function(b){b.addEventListener('click',function(){
  document.querySelectorAll('[data-dev]').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});
  var m=document.getElementById('mock');if(m)m.classList.toggle('pc',b.dataset.dev==='pc')})});
@@ -607,7 +666,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         add("changes", "前の版からの変更", changes_section(spec, build(base_ck), base_label))
 
     if ucs:
-        add("usecases", "誰が何をするか", usecase_diagram(ucs, spec))
+        add("usecases", "誰が何をするか", usecase_diagram(ck, ucs, spec))
 
     # 画面
     if p.screens:
@@ -641,11 +700,26 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
                 steps.append({"screen": scr, "op": o, "result": rs, "to": to, "url": url_of.get(scr, "")})
                 here = scr if o == "見る" or to == "そのまま" else to
             uj.append({"id": f"UC{i}", "name": k, "steps": steps, "end": here or v[-1]["画面"]})
-        ex = plan.get("画面例", [])
-        add("walk", "ユースケースを画面でたどる", lead("画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。")
+        ex = {(r["ユースケース"], r["手順"]): r for r in plan.get("画面例", [])}
+        per_uc = []
+        for i, (k, v) in enumerate(ucs.items(), 1):
+            rows_ = [(r["手順"], r["画面"], r["操作"] + (f"（{r['結果']}）" if r.get("結果") else ""), ex.get((k, r["手順"]), {}).get("入れる・選ぶ", ""), ex.get((k, r["手順"]), {}).get("見えること", "")) for r in v]
+            per_uc.append(f'<details><summary><b>UC{i}</b> {escape(k)}（{len(v)} 手順）</summary>{table(["手順", "画面", "操作（結果）", "入れる・選ぶ", "見えること"], rows_)}</details>')
+        env = ""
+        if spec["模擬"]:
+            env += '<fieldset><legend>外部の返事の種類（開発用の模擬）</legend><div class="chips">' + "".join(f'<span class="envchip">{escape(e)} → {escape(r)}</span>' for e, _, r in spec["模擬"]) + "</div></fieldset>"
+        if spec["出来事"]:
+            env += '<fieldset><legend>外の出来事</legend><div class="chips">' + "".join(f'<span class="envchip">{escape(e)}：{escape(w)}</span>' for e, w, _ in spec["出来事"]) + "</div></fieldset>"
+        timers = [(n_, w) for n_, w, _ in spec["トリガ"] if "期限" in w]
+        if timers:
+            env += '<fieldset><legend>時間（期限）</legend><div class="chips">' + "".join(f'<span class="envchip">{escape(n_)}：{escape(w[w.index("期限"):])}</span>' for n_, w in timers) + "</div></fieldset>"
+        env_html = ("<h3>この画面の外にある設定</h3>" + lead("画面の操作では動かせない、環境の側の設定です。このモックは処理を動かさず、見本の行を出すだけなので、切り替えはできません。確かめる手順は、下の動作の一覧にある「返事を落とす」「時計を進める」のように、画面例に書いてあります。")
+                    + f'<div class="env">{env}</div>') if env else ""
+        add("walk", "動作：画面", lead("画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。")
             + '<div class="devs" role="group" aria-label="端末"><button class="tab" data-dev="phone" aria-pressed="true">スマホ</button><button class="tab" data-dev="pc" aria-pressed="false">PC</button></div>'
             + '<div class="sc"><div id="mock"></div></div>'
-            + examples(None, ["ユースケース", "手順", "入れる・選ぶ", "見えること"], [(r["ユースケース"], r["手順"], r["入れる・選ぶ"], r["見えること"]) for r in ex])
+            + env_html
+            + "<h3>ユースケースの動作の一覧</h3>" + "".join(per_uc)
             + '<div id="ngwrap" hidden><h3>NG にしたもの</h3><ul id="ngs" class="plain"></ul><button id="copy" type="button">コピー</button></div>'
             f'<script type="application/json" id="ucs">{json.dumps(uj, ensure_ascii=False).replace("</", "<\\/")}</script>'
             f'<script type="application/json" id="screens-data">{json.dumps(sj, ensure_ascii=False).replace("</", "<\\/")}</script>'
@@ -653,6 +727,13 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             '<div class="r"><select id="opsel" aria-label="確認するユースケース"></select><button id="bReset" type="button">最初から</button><button id="bPrev" type="button">前へ</button>'
             '<button id="bNext" class="go" type="button">次へ</button><button id="bOk" class="okb" type="button">OK</button><button id="bNg" class="ngb" type="button">NG</button></div>'
             '<div class="ng" id="ngrow" hidden><input id="why" placeholder="NGの理由（空でもよい）" aria-label="NGの理由"><button id="ngsave" type="button">保存して次へ</button></div></div>')
+
+    # 動作：API
+    if spec["ルート"]:
+        url_ex = plan.get("URL例", [])
+        add("api", "動作：API", lead("API は、押して動かせません。計画書の URL の具体例を、リクエストと期待する応答の表にしています。具体例が無いときは、URL の一覧です。")
+            + (table(["ID", "メソッド", "経路", "入力", "期待する結果", "期待する状態"], [(r["ID"], r["メソッド"], r["経路"], r["入力"], r["期待する結果"], r["期待する状態"]) for r in url_ex])
+               if url_ex else table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"])))
 
     # 決まりごと
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
@@ -681,8 +762,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             + table(["データ", "消してよい状態", "参照元の扱い"], spec["削除"]))
     if spec["ルート"]:
         add("routes", "URL（ルート）", lead("外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。クエリ文字列は使わず、パスで表します。")
-            + table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"])
-            + examples(None, ["メソッド", "経路", "入力", "期待する結果", "期待する状態"], [(r["メソッド"], r["経路"], r["入力"], r["期待する結果"], r["期待する状態"]) for r in plan.get("URL例", [])]))
+            + table(["メソッド", "経路", "動作", "呼ぶもの", "結果→状態"], spec["ルート"]))
 
     if records:
         add("open", "意図的に決めていないこと", lead("計画書で「未規定」としたところです。実装が自由に選んでよい箇所で、書き忘れとは区別して記録しています。") + f'<div class="cards">{"".join(records)}</div>')
@@ -693,24 +773,45 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if base_ck is not None:
         meta.append(f"<span>比較元：{escape(base_label or '前の版')}</span>")
     by_id = {a: h for a, _, h in sec}
-    groups = [
-        ("ov", "概要と問い", lambda a: a in ("questions", "overview", "usage", "changes", "open")),
-        ("uc", "ユースケース図", lambda a: a == "usecases"),
-        ("wf", "画面の動き（さわれます）", lambda a: a in ("screens", "walk", "design", "coverage")),
-        ("rules", "決まりごと", lambda a: a in ("data", "rules") or a.startswith("states-")),
-        ("flows", "つながりと流れ", lambda a: a in ("systems", "triggers", "deletes") or a.startswith("flow-")),
-        ("routes", "URL", lambda a: a == "routes"),
-    ]
-    tabs, views = [], []
-    for gid, label, pick in groups:
-        ids = [a for a, _, _ in sec if pick(a)]
-        if not ids:
-            continue
+    titles = {a: t for a, t, _ in sec}
+    # 問いと変更点は、見落とさないよう、タブの外（上）に出す
+    above = "".join(by_id[a] for a in ("questions", "changes") if a in by_id)
+    views, tabs = [], []
+
+    def add_view(gid, label, html):
         first = not tabs
         tabs.append(f'<button class="tab" role="tab" id="t-{gid}" aria-selected="{"true" if first else "false"}" data-view="{gid}">{escape(label)}</button>')
-        views.append(f'<div class="view" id="view-{gid}"{"" if first else " hidden"}>{"".join(by_id[a] for a in ids)}</div>')
+        views.append(f'<div class="view" id="view-{gid}"{"" if first else " hidden"}>{html}</div>')
+
+    # [ユースケース]：全体を把握するための図
+    if "usecases" in by_id:
+        add_view("uc", "ユースケース", by_id["usecases"])
+    # [動作]：起点を選んで、動く画面とコントローラーで確かめる
+    origins = [(a, l) for a, l in (("walk", "画面（スマホ・PC）"), ("api", "API")) if a in by_id]
+    if origins:
+        pick = (f'<div class="pick"><label for="origin">動作の起点</label><select id="origin">'
+                + "".join(f'<option value="{a}">{escape(l)}</option>' for a, l in origins) + "</select></div>") if len(origins) > 1 else ""
+        add_view("act", "動作", pick + "".join(by_id[a] for a, _ in origins))
+    # [仕様]：上の二つに入らなかったすべて。種類ごとに分けて、一つずつ見る
+    spec_groups = [
+        ("overview", "概要", ["overview", "usage"]),
+        ("screens", "画面（流れ・一覧・デザイン・確認の網羅）", ["screens", "design", "coverage"]),
+        ("data", "データと状態", ["data"] + [a for a in by_id if a.startswith("states-")]),
+        ("rules", "決まりごと（処理・問い合わせ・不変条件）", ["rules"]),
+        ("systems", "外部とのつながり", ["systems"]),
+        ("flows", "処理の流れ", [a for a in by_id if a.startswith("flow-")]),
+        ("triggers", "待ち・期限・出来事・削除", ["triggers", "deletes"]),
+        ("routes", "URL", ["routes"]),
+        ("open", "意図的に決めていないこと", ["open"]),
+    ]
+    spec_groups = [(g, l, [a for a in ids if a in by_id]) for g, l, ids in spec_groups]
+    spec_groups = [x for x in spec_groups if x[2]]
+    sub = "".join(f'<div class="sub-view" data-sub="{g}"{"" if i == 0 else " hidden"}>{"".join(by_id[a] for a in ids)}</div>' for i, (g, _, ids) in enumerate(spec_groups))
+    pick = ('<div class="pick"><label for="specsel">分類</label><select id="specsel">'
+            + "".join(f'<option value="{g}">{escape(l)}</option>' for g, l, _ in spec_groups) + "</select></div>")
+    add_view("spec", "仕様", pick + sub)
     nav = f'<div class="tabs" role="tablist">{"".join(tabs)}</div>'
-    body = "".join(views)
+    body = above + "".join(views)
     footer = ("<footer><p>この画面は、コード（geas）から自動で生成しています。図・表・具体例・問いはすべてコードと検査器から導いたもので、AI による要約は含みません。"
               "直さずに、会話で答えてコードを変えます。</p></footer>")
     head = (f"<title>{escape(title)}</title>\n"

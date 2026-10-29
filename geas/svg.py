@@ -152,19 +152,22 @@ def flow(nodes: list[str], edges: list[Edge], start: str, finals: list[str] = ()
     return _svg(total_w + 12, height, parts, title)
 
 
-def usecases(actors: list[str], cases: list[tuple[str, str, str]], title: str = "") -> str:
-    """cases は (アクター, ユースケース名, 種類) の並び。"""
+def usecases(actors: list[str], cases: list[tuple[str, str, str]], title: str = "",
+             externals: list[tuple[str, str, list[str]]] = ()) -> str:
+    """cases は (アクター, ユースケース名, 種類) の並び。externals は (外部システム名, 添える行, 使うユースケース名の並び)。"""
     by_actor = {a: [c for c in cases if c[0] == a] for a in actors}
     actor_w = max([text_width(a) for a in actors] + [60]) + 16
     case_w = max([text_width(c[1]) for c in cases] + [80]) + 48
     ax, ux = PAD + actor_w / 2, PAD + actor_w + 120 + case_w / 2
     parts, y = [], PAD
+    ycase: dict[str, float] = {}
     for a in actors:
         items = by_actor[a] or [(a, "", SAME)]
         block_h = len(items) * (NODE_H + 14) - 14
         ay = y + block_h / 2
         for i, (_, name, kind) in enumerate(by_actor[a]):
             cy = y + i * (NODE_H + 14) + NODE_H / 2
+            ycase[name] = cy
             parts.append(f'<path class="edge {kind}" d="M{ax + actor_w / 2 - 4} {ay} C{ax + actor_w / 2 + 60} {ay} {ux - case_w / 2 - 60} {cy} {ux - case_w / 2} {cy}"/>')
             parts.append(
                 f'<g class="usecase {kind}"><ellipse cx="{ux}" cy="{cy}" rx="{case_w / 2}" ry="{NODE_H / 2}"/>'
@@ -177,10 +180,40 @@ def usecases(actors: list[str], cases: list[tuple[str, str, str]], title: str = 
             f'<text x="{ax}" y="{ay + 27}" text-anchor="middle">{escape(a)}</text></g>'
         )
         y += max(block_h, 64) + 28
-    return _svg(ux + case_w / 2 + PAD, y - 28 + PAD + 12, parts, title)
+    width = ux + case_w / 2 + PAD
+    height = y - 28 + PAD + 12
+    if externals:
+        box_h = NODE_H + 16
+        sys_w = max([text_width(n) for n, _, _ in externals] + [text_width(t, 11) for _, t, _ in externals] + [80]) + 40
+        sx = ux + case_w / 2 + 90 + sys_w / 2
+        want = sorted(((sum(ycase[u] for u in us if u in ycase) / max(1, sum(1 for u in us if u in ycase)), n, t, us) for n, t, us in externals), key=lambda r: r[0])
+        last = PAD - box_h
+        for cy0, n, t, us in want:
+            by = max(cy0, last + box_h + 18)
+            last = by
+            for u in us:
+                if u in ycase:
+                    parts.append(f'<path class="edge same" d="M{ux + case_w / 2} {ycase[u]} C{ux + case_w / 2 + 70} {ycase[u]} {sx - sys_w / 2 - 70} {by} {sx - sys_w / 2 - 2} {by}" marker-end="url(#arrow-same)"/>')
+            parts.append(
+                f'<g class="node"><rect x="{sx - sys_w / 2}" y="{by - box_h / 2}" width="{sys_w}" height="{box_h}" rx="8"/>'
+                f'<text x="{sx}" y="{by - 2}" text-anchor="middle">{escape(n)}</text>'
+                f'<text class="sub" x="{sx}" y="{by + 14}" text-anchor="middle">{escape(t)}</text></g>'
+            )
+        width = sx + sys_w / 2 + PAD
+        height = max(height, last + box_h / 2 + PAD)
+    return _svg(width, height, parts, title)
+
+
+_serial = [0]
 
 
 def _svg(w: float, h: float, parts: list[str], title: str) -> str:
+    # 矢じりの id は図ごとに変える。同じ id が複数あると、先に出てくる非表示の図（別のタブ）のものが使われて、矢じりが消える
+    _serial[0] += 1
+    return _svg_raw(w, h, parts, title).replace("arrow-", f"arrow{_serial[0]}-")
+
+
+def _svg_raw(w: float, h: float, parts: list[str], title: str) -> str:
     markers = "".join(
         f'<marker id="arrow-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
         f'<path class="arrowhead {k}" d="M0 0L10 5L0 10z"/></marker>'
