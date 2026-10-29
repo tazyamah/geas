@@ -5,6 +5,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 
+/// 検査器が「必ずある」と示した所の取り出し。通常のビルドは確かめずに借りる。
+/// `--features verify` のビルドでは通常の確認に変わり、検査器の抜けがあればここで panic して見つかる。
+#[cfg(feature = "verify")]
+macro_rules! proven { ($e:expr, $what:expr) => { $e.expect($what) }; }
+#[cfg(not(feature = "verify"))]
+macro_rules! proven { ($e:expr, $what:expr) => { unsafe { $e.unwrap_unchecked() } }; }
+
 /// 端数の出る値（分子/分母）。丸めの指定が無いと整数にできない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ratio {
@@ -155,8 +162,8 @@ impl Store {
         for w in writes {
             match w {
                 Write::Order_New(r) => { self.Order.insert(r.order_id.clone(), r); }
-                Write::Product_stock(id, v) => { unsafe { self.Product.get_mut(&id).unwrap_unchecked() }.stock = v; }
-                Write::Order_status(id, v) => { unsafe { self.Order.get_mut(&id).unwrap_unchecked() }.status = v; }
+                Write::Product_stock(id, v) => { proven!(self.Product.get_mut(&id), "検査で示した書込先が無い: Product").stock = v; }
+                Write::Order_status(id, v) => { proven!(self.Order.get_mut(&id), "検査で示した書込先が無い: Order").status = v; }
             }
         }
     }

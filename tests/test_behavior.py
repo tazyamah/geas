@@ -20,7 +20,7 @@ def run_app(src, main, tmp_path, host=False):
     ck = check(parse(src))
     assert ck.ok and not [d for d in ck.diags if d.level == "問い"], ck.diags
     write_crate(ck, generate(ck), main, tmp_path, host=host)
-    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline", "--features", "verify"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     return r.stdout.splitlines()
 
