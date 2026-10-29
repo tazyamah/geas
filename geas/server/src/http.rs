@@ -14,11 +14,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tiny_http::{Header, Method, Request, Response};
 
+/// 画面と API の応答に付ける Content-Security-Policy。スクリプトと通信先は、このサーバーのものだけ。
+/// 定義の文字列が HTML に紛れても、インラインのスクリプトやイベントハンドラは動かない（エスケープの漏れの保険）。
+const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+fn csp() -> Header {
+    Header::from_bytes("Content-Security-Policy", CSP).unwrap()
+}
+
 fn json_resp(code: u16, v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_string(v.to_string())
         .with_status_code(code)
         .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
         .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
+        .with_header(csp())
 }
 
 fn decode(s: &str) -> String {
@@ -82,6 +91,7 @@ fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_string(v.to_string())
         .with_header(Header::from_bytes("Content-Type", "application/manifest+json; charset=utf-8").unwrap())
         .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap())
+        .with_header(csp())
 }
 
 fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -96,7 +106,8 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
     match std::fs::read(&p) {
         Ok(bytes) => Response::from_data(bytes)
             .with_header(Header::from_bytes("Content-Type", mime(&p)).unwrap())
-            .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap()),
+            .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap())
+            .with_header(csp()),
         Err(_) => json_resp(404, json!({ "error": "ファイルがありません" })),
     }
 }

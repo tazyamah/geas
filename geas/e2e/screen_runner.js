@@ -79,6 +79,7 @@ async function runPwaCase(ctx, defs, cal, c) {
   const p = await ctx.newPage();
   const errors = [];
   p.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+  p.on("console", (m) => { if (m.type() === "error" && /Content Security Policy/i.test(m.text())) errors.push("CSP 違反: " + m.text()); });
   p.on("dialog", async (d) => { errors.push("ダイアログが出ました: " + d.message()); await d.dismiss(); });
   for (const [i, st] of c.steps.entries()) {
     const here = `#screen[data-screen="${st.screen}"]`;

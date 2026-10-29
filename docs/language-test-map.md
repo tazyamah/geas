@@ -8,7 +8,13 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 - **○**：検査器（静的）で誤りを止めるテストだけがある。実行時の動きは、別の項目のテストが間接的に通している。
 - **✕**：動かす確認がまだ無い。
 
-小さな `.geas` を書いて動かすテストは、[tests/test_behavior.py](../tests/test_behavior.py)（この表のために足したもの）と、`tests/test_geas.py`・`tests/test_delete.py` にあります。お店アプリ（`tests/fixtures/overseas_shop`）は、サーバーまで組んで動かす `tests/test_shop_app.py`（以下「お店の通し」）が確かめます。
+小さな `.geas` を書いて動かすテストは、次の 4 か所にあります（お店アプリを使わずに、機能ごとに確かめます）。
+
+- [tests/test_behavior.py](../tests/test_behavior.py)：生成した Rust（処理・問い合わせ・削除・金額）を直接動かす。
+- [tests/test_runtime.py](../tests/test_runtime.py)：サーバーの実行部まで組み、並列・待ち合わせ・期限・出来事・rule・冪等キー・REST の状態・再起動・画面・拡張を動かす（題材は `tests/fixtures/runtime_demo`）。
+- `tests/test_geas.py`・`tests/test_delete.py`：ホストの境界・型・部品・モジュールなど。
+
+お店アプリ（`tests/fixtures/overseas_shop`）の `tests/test_shop_app.py`（以下「お店の通し」）は、機能ごとの確認ではなく、実アプリの通しの確認（E2E）です。
 
 | リファレンスの項目 | 実行 | 動かすテスト |
 |---|---|---|
@@ -27,22 +33,28 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 4. 金額の丸め `round(…, floor｜ceil｜half_up)`・割合×金額 | ◎ | `test_behavior.py` の「金額の丸めは指定の方向になり…」、`test_geas.py` の「組み込みの丸めは単位より近い値を返す」 |
 | 4. 割り算と余り・`convert`・`part` の保証 | ◎ | `test_geas.py` の「割り算と余りは生成コードで動く」「convert は生成コードの中で計算され…」「部品の保証は呼ぶたびに確かめ…」 |
 | 4. `request`（冪等キー・`for` の中の組） | ◎ | `test_behavior.py` の「…外部作用の冪等キーは回す値ごとに決まる」、お店の通し（同じ冪等キーで引き直す） |
-| 5. `rule`（上から順に最初に当てはまる行） | ◎ | お店の通し（国内送料・海外送料・税率）。誤りは `test_rest.py` の「rule の誤りは止まる」 |
-| 6. `effect` の `replies`・`joins`・`no_wait`・`failures` | ◎ | お店の通し（決済・倉庫の返事、返金）、`test_geas.py` の「外部作用の返事は joins で…」 |
-| 6. `trigger` の `all`（待ち合わせ）・どれか1つ・`deadline` | ◎ | お店の通し（返事がそろって確定／30分で取り消し／拒否で取り消し） |
-| 7. `nexus` の次の処理・`reply`・`wait`・`par` | ◎ | お店の通し（受注のあと並列の枝が動く）。枝の重なりの誤りは `test_geas.py` の「par の枝が同じ項目に書くか…」 |
-| 7. `event … on online｜opened`・`each` | ◎ | お店の通し「決済の返事が落ちても、つながりが戻ると…」 |
+| 5. `rule`（上から順に最初に当てはまる行） | ◎ | `test_runtime.py` の「rule は上から順に…」。誤りは `test_rest.py` の「rule の誤りは止まる」 |
+| 6. `effect` の `replies`・`joins`・`no_wait` | ◎ | `test_runtime.py` の「par の枝は両方動き、待ち合わせは…」「返事がそろうと行き先へ進み…」「拒否の返事は…」 |
+| 6. `trigger` の `all`（待ち合わせ）・`deadline` | ◎ | `test_runtime.py` の「par の枝は両方動き…」「期限が来るまでは待ち…」。応答の中身（承認の与信）が行き先へ渡ることも同じ |
+| 6. `trigger` の「どれか1つ」（`reply X → …`） | ◎ | `test_runtime.py` の「どれか1つの返事で進むトリガは…」（1つ届けば進む／届かなければ期限で進む） |
+| 6. `effect` の `failures` | ○ | 検査のみ（`test_geas.py`）。実行時には動きを持たない宣言（✕ではなく対象外） |
+| 7. `nexus` の次の処理・`reply`・`wait`・`par` | ◎ | `test_runtime.py`（受付のあと並列の枝が動く、結果の種類ごとに行き先が分かれる）。枝の重なりの誤りは `test_geas.py` の「par の枝が同じ項目に書くか…」 |
+| 7. `event … on online`・`each` | ◎ | `test_runtime.py` の「つながりが戻る出来事は…」。`opened` は「アプリを開いた出来事も…」。外から渡す入力で動く形（`external → 処理`）は動かす確認が無い（✕） |
 | 8. `query` の `filter`（equals／at_least／at_most／contains ignore_case）・`where`（or）・`order`・`page`・`select` | ◎ | `test_behavior.py` の「問い合わせは絞り込み…」、`test_geas.py` の「null になりうる項目の問い合わせ…」「page は並びのうえで先頭の1ページを返す」 |
-| 8. `filter … within`・`sum(…)`・`count(…)` の列 | ○ | `sum`・`count` は `test_geas.py`（null 関連）。`within` は動かす確認が無い（✕） |
-| 9. `screen`（欄・行・操作・遷移） | ◎ | `test_screens.py`、お店の通し（計画書の「画面の具体例」から生成した Playwright。node と Playwright があるときだけ） |
-| 9. ブラウザ拡張の `read`（url／element／row／lookup） | ◎ | `test_extgen.py`、お店の通し（拡張） |
-| 10. `resource`（7 動作・結果ごとの HTTP の状態・入れ子・`key`） | ◎ | `test_rest.py`、お店の通し（計画書の「URL の具体例」から生成した HTTP のテスト） |
-| サーバーの再起動で状態が残る | ◎ | お店の通し「再起動しても注文と返事待ちは残る」 |
+| 8. `sum(…)`・`count(…)` の列 | ◎ | `test_geas.py` の「null になりうる項目の問い合わせ…」 |
+| 8. `filter … within`（期間の絞り込み） | ◎ | `test_behavior.py` の「within は current_time から1時間以内のものだけ返す」（時刻の slot `current_time` と比べる） |
+| 9. `screen`（欄・行・操作・通知・遷移・design） | ◎ | `test_screens.py`、`test_runtime.py` の「計画書の画面の具体例から…」（実際の画面で通す。node と Playwright があるときだけ）。固定通貨の金額列は `test_screens.py` の「固定の通貨の金額の列は…」 |
+| 9. ブラウザ拡張の `read`（url／element／row／lookup） | ◎ | `test_extgen.py`、`test_runtime.py` の「計画書の画面の具体例から…」（拡張の 3 通り：ページから読む・ページの表・読めない） |
+| 9. 画面の行き先 `back`・`open`（行を選んで進む） | ◎ | `test_runtime.py` の「計画書の画面の具体例から…」（一覧で行を選んで詳細へ進み、取り下げて一覧へ戻る） |
+| 10. `resource`（結果ごとの HTTP の状態・`key`・create の出来事） | ◎ | `test_rest.py`、`test_runtime.py`（状態の返り方と、境界の 400） |
+| 10. `resource` の `update`・`destroy`・入れ子（`under`） | ◎ | `test_runtime.py` の「update・destroy・入れ子は…」と、計画書の URL の具体例から生成したテスト |
+| 12. 生成物の守り（CSP・名前のエスケープ） | ◎ | `test_runtime.py` の「画面と API の応答には CSP が付き…」（応答ヘッダ、生成した HTML にインラインのスクリプト・イベントハンドラ属性・style 属性が無いこと、拡張の manifest の CSP）。画面の通しは CSP 違反を誤りとして数える |
+| 11. MCP（AI から使う口。ツール定義・REST への中継） | ◎／○ | `test_screens.py` の「MCP のツール定義は URL の定義から機械的に作られ…」「MCP の橋渡しはツールの呼び出しを REST に中継する」（中継先は模擬のサーバー）。実サーバーに中継して動かす確認は無い（✕） |
+| サーバーの再起動で、待ち・時計の先・ID の採番が続く | ◎ | `test_runtime.py` の「再起動しても…」 |
 | モジュール（`use`／`module`） | ◎ | `test_geas.py` の「モジュールを使ったコードがビルドでき動く」 |
 
 ## まだ無いもの（✕）
 
-- `filter … within`（期間での絞り込み）を動かす確認。
-- `ratio` 型の項目への書き込み、`bytes` 型の値の入出力（ホスト経由）。
-- `endless` の状態。
-- 同時に来た書き込み（サーバーの並行リクエスト）の直列化。サーバー実行部のテストとして別に足す。
+- `event` の `external → 処理`（外から渡す入力で動く形）。
+- 同時に来た書き込み（サーバーへの並行リクエスト）の直列化。
+- `now`・`tz_offset` を使う処理（時刻の計算は `test_geas.py` の時刻の項目で動かしている）。

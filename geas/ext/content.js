@@ -23,7 +23,7 @@
   function cell(col, row) {
     const v = row[col.name];
     if (v === null || v === undefined) return "";
-    if (col.kind === "money") return `<span class="p" data-cur="${esc(row[col.unit] ?? "")}">${fmt(v, row[col.unit])}</span>`;
+    if (col.kind === "money") return `<span class="p" data-cur="${esc(col.currency || row[col.unit] || "")}">${fmt(v, col.currency || row[col.unit])}</span>`;
     if (col.kind === "enum") return `<span>${esc(col.values.find((x) => x.value === v)?.label ?? v)}</span>`;
     return `<span>${esc(v)}</span>`;
   }

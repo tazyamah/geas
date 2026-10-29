@@ -163,7 +163,7 @@ query orders_of {
   input customer: id required
   from Order
   where status != Canceled or status == Received      // 行が or、行どうしが and
-  filter customer equals customer                     // equals／at_least／at_most／contains（ignore_case 等）／within 30 day
+  filter customer equals customer                     // equals／at_least／at_most／contains（ignore_case 等）／within 1 hour（slot current_time: time が要る）
   order created_at newest                             // newest｜oldest
   page 20                                             // order が必須
   select order_id, customer.customer_id as customer, sum(items) as item_count

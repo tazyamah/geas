@@ -146,6 +146,17 @@ def test_画面の定義はリソースのURLを持つ():
     assert d["MyOrders"]["url"] == "/customers/:customer_id/orders"
 
 
+def test_固定の通貨の金額の列は通貨を持って定義に出る():
+    """money(JPY) のような固定の通貨の列は、通貨そのものを持つ。money(currency) の列は、通貨を持つ列の名前を持つ"""
+    fixed = chk((DIR.parent / "runtime_demo" / "runtime_demo.geas").read_text())
+    q = fixed.queries["parcel_list"]
+    from geas.screengen import query_def
+    cols = {c["name"]: c for c in query_def(fixed, q, lambda x: x)["columns"]}
+    assert cols["fee"]["kind"] == "money" and cols["fee"].get("currency") == "JPY" and "unit" not in cols["fee"]
+    shop_cols = {c["name"]: c for c in query_def(chk(CODE), chk(CODE).queries["orders_of"], lambda x: x)["columns"]}
+    assert shop_cols["total"]["unit"] == "currency" and "currency" not in shop_cols["total"]
+
+
 def test_MCPのツール定義は_URLの定義から機械的に作られ_仕様書の動作とその他に出る():
     from geas.mcp import tool_defs
     from geas.review import review

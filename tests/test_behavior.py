@@ -354,3 +354,114 @@ fn main() {
 def test_問い合わせは絞り込み_並び_ページ_where_のとおりに返す(tmp_path):
     got = run_app(MEMOS, MAIN_MEMOS, tmp_path)
     assert got == ["m4,m2", "m5,m1", "m2", "", "m1,m3,m5,m2,m4", "m4"], got
+
+
+# ---- バイト列・割合・終わりなく続く状態・「無いこと」の確認 ----
+NOTES = """ltype Blob = bytes 1..8
+ltype Share = ratio 0..1
+
+entity Note {
+  note_id: id unique
+  at: time required
+  data: Blob required
+  share: Share required
+  phase: LifeState
+}
+
+state LifeState {
+  initial Fresh
+  middle Seen
+  endless
+}
+
+result NoteResult { Done, Missing, Gone }
+
+deed touch {
+  input note_id: id required, data: Blob required
+  slot rate: Share
+  reads Note.phase
+  writes Note.data, Note.share, Note.phase
+  transition Note: Fresh → Seen
+  result NoteResult
+  effects none
+
+  let n = Note[note_id] else { return Missing }
+  if n.phase != Fresh { return Gone }
+  n.data = data
+  n.share = rate
+  n.phase = Seen
+  return Done
+}
+
+result PeekResult { Absent, Present }
+deed peek {
+  input note_id: id required
+  reads Note
+  result PeekResult
+  effects none
+
+  if Note[note_id] is absent { return Absent }
+  return Present
+}
+"""
+
+MAIN_NOTES = """use geas_app::*;
+fn main() {
+    let mut s = Store::default();
+    s.Note.insert("n1".into(), Note { note_id: "n1".into(), at: 0, data: vec![], share: Ratio { num: 0, den: 1 }, phase: LifeState::Fresh });
+    // バイト列は長さ（1〜8）を境界で確かめる
+    let ok = |n: usize| touchInput { note_id: "n1".into(), data: vec![7u8; n] }.validate().is_ok();
+    println!("{} {} {} {}", ok(0), ok(1), ok(8), ok(9));
+    // 割合の slot は範囲（0〜1）を境界で確かめる
+    let r = |num, den| touchCtx { rate: Ratio { num, den } }.validate().is_ok();
+    println!("{} {} {}", r(1, 4), r(1, 1), r(5, 4));
+    // 書いたバイト列と割合がそのまま入る。終わりのない状態は、進んだあとは同じ操作を断る
+    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 4 } }, &s, &touchInput { note_id: "n1".into(), data: vec![1, 2, 3] });
+    println!("{}", o.result.show());
+    s.apply(o.Write);
+    println!("{:?} {}/{} {}", s.Note["n1"].data, s.Note["n1"].share.num, s.Note["n1"].share.den, s.Note["n1"].phase.name());
+    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "n1".into(), data: vec![9] });
+    println!("{}|{}", o.result.show(), o.Write.len());
+    println!("{}", touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "zz".into(), data: vec![9] }).result.show());
+    // 「無い」の確認
+    println!("{} {}", peek(&peekCtx {}, &s, &peekInput { note_id: "n1".into() }).result.show(), peek(&peekCtx {}, &s, &peekInput { note_id: "zz".into() }).result.show());
+}
+"""
+
+
+def test_バイト列_割合_終わりなく続く状態_無いことの確認が動く(tmp_path):
+    got = run_app(NOTES, MAIN_NOTES, tmp_path)
+    assert got == ["false true true false", "true true false", "Done", "[1, 2, 3] 1/4 Seen", "Gone|0", "Missing", "Present Absent"], got
+
+
+# ---- 期間の絞り込み（within）：時刻の slot current_time と比べる ----
+WITHIN = """ltype Weight = int 0..
+entity Memo {
+  memo_id: id unique
+  written_at: time required
+}
+query recent {
+  slot current_time: time
+  from Memo
+  filter written_at within 1 hour
+  select memo_id
+  reads Memo.memo_id, Memo.written_at
+}
+"""
+
+MAIN_WITHIN = """use geas_app::*;
+fn main() {
+    let mut s = Store::default();
+    for (id, at) in [("old", 1000i64), ("edge", 6400), ("new", 9000), ("future", 20000)] {
+        s.Memo.insert(id.into(), Memo { memo_id: id.into(), written_at: at });
+    }
+    let rows = recent(&recentCtx { current_time: 10000 }, &s, &recentInput {});
+    println!("{}", rows.iter().map(|r| r.memo_id.clone()).collect::<Vec<_>>().join(","));
+}
+"""
+
+
+def test_within_は_current_time_から1時間以内のものだけ返す(tmp_path):
+    assert check(parse(WITHIN), strict_names=True).ok
+    got = run_app(WITHIN, MAIN_WITHIN, tmp_path)
+    assert got == ["edge,future,new"], got  # 現在 − 3600 以降（境界を含む）。未来の時刻も条件を満たす
