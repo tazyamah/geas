@@ -13,6 +13,7 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | 小さな例 | [tests/fixtures/shop/shop.geas](../tests/fixtures/shop/shop.geas)、削除の例 `tests/fixtures/delete_demo/` |
 | 計画書の作り方（会話で聞く手順） | [skills/plan-interview/SKILL.md](../skills/plan-interview/SKILL.md) |
 | 言語機能ごとの動作テスト（どの機能が実際に動かして確かめられているか） | [language-test-map.md](language-test-map.md) |
+| geas の基本の考えと、仕様書とコードがずれない仕組み（どこまで保証しているか） | [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md) |
 | 名前の付け方 | [naming.md](naming.md)、[v0.1.0-scope.md](v0.1.0-scope.md) の「名前の書き方」 |
 | 決まった設計の経緯（par・待ち合わせ・金額の単位・検査数字など） | [v0.1.0-scope.md](v0.1.0-scope.md) |
 | モジュール（`use`／`module`） | [modules.md](modules.md) |
