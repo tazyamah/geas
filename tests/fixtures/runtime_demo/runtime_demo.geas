@@ -1,0 +1,379 @@
+app "小包"
+ltype Kind = text 1..10
+ltype Fee = money(JPY) 0..
+
+entity Parcel {
+  parcel_id: id unique
+  kind: Kind required
+  fee: Fee required
+  status: ParcelStatus
+  refund_ref: id
+  removable in Shipped
+}
+
+state ParcelStatus {
+  initial Received
+  middle Waiting
+  final Shipped, Canceled
+}
+
+result AcceptResult { Accepted(parcel_id: id) }
+result PayResult { Charged, NoParcel, WrongStatus }
+result ReserveResult { Reserved, NoParcel }
+result SettleResult { Approved(parcel_id: id), PayFailed(parcel_id: id), NoParcel, WrongStatus }
+result MoveResult { Applied, NoParcel, WrongStatus }
+result RemoveResult { Removed, NoParcel, NotRemovable }
+result StampResult { Stamped, NoParcel }
+result RefundAsk { Asked, NoParcel }
+result RefundMark { Marked, NoParcel }
+
+effect Pay. charge(parcel_id: id, amount: Fee) replies PaySettled
+effect Depot. reserve(parcel_id: id) joins Pending replies DepotSettled
+effect Pay. refund(parcel_id: id) replies RefundSettled
+effect Courier. send(parcel_id: id) no_wait "配送の結果は人が見る"
+
+reply PaySettled(auth_id: id) {
+  Approved gives auth_id
+  Declined
+}
+reply RefundSettled {
+  Refunded
+}
+reply DepotSettled {
+  Reserved
+}
+
+rule fee {
+  kind == "heavy": 900
+  default: 300
+}
+
+deed accept {
+  input kind: Kind required
+  slot fee: Fee
+  writes Parcel
+  transition Parcel: (new) → Received
+  result AcceptResult
+  effects none
+
+  let p = create Parcel { kind: kind, fee: fee, status: Received }
+  return Accepted(p.parcel_id)
+}
+
+deed request_pay {
+  input parcel_id: id required
+  reads Parcel.fee, Parcel.status
+  writes Parcel.status
+  transition Parcel: Received → Waiting
+  result PayResult
+  effects Pay.charge
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Received { return WrongStatus }
+  p.status = Waiting
+  request Pay.charge(parcel_id, p.fee, idempotency_key = parcel_id)
+  return Charged
+}
+
+deed request_reserve {
+  input parcel_id: id required
+  reads Parcel
+  result ReserveResult
+  effects Depot.reserve
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  request Depot.reserve(parcel_id, idempotency_key = parcel_id)
+  return Reserved
+}
+
+deed settle {
+  input parcel_id: id required, auth_id: id
+  reads Parcel.status
+  result SettleResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Waiting { return WrongStatus }
+  let auth = auth_id else { return PayFailed(parcel_id) }
+  return Approved(parcel_id)
+}
+
+deed ship {
+  input parcel_id: id required
+  reads Parcel.status
+  writes Parcel.status
+  transition Parcel: Waiting → Shipped
+  result MoveResult
+  effects Courier.send
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Waiting { return WrongStatus }
+  p.status = Shipped
+  request Courier.send(parcel_id, idempotency_key = parcel_id)
+  return Applied
+}
+
+deed cancel {
+  input parcel_id: id required
+  reads Parcel.status
+  writes Parcel.status
+  transition Parcel: Waiting → Canceled
+  result MoveResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Waiting { return WrongStatus }
+  p.status = Canceled
+  return Applied
+}
+
+deed expire {
+  input parcel_id: id required
+  reads Parcel.status
+  writes Parcel.status
+  transition Parcel: Waiting → Canceled
+  result MoveResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Waiting { return WrongStatus }
+  p.status = Canceled
+  return Applied
+}
+
+deed remove_parcel {
+  input parcel_id: id required
+  reads Parcel.status
+  writes Parcel
+  result RemoveResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Shipped { return NotRemovable }
+  delete p
+  return Removed
+}
+
+deed restamp {
+  input parcel_id: id required, kind: Kind required
+  reads Parcel
+  writes Parcel.kind
+  result StampResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  p.kind = kind
+  return Stamped
+}
+
+deed ask_refund {
+  input parcel_id: id required
+  reads Parcel
+  result RefundAsk
+  effects Pay.refund
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  request Pay.refund(parcel_id, idempotency_key = parcel_id)
+  return Asked
+}
+
+deed mark_refunded {
+  input parcel_id: id required
+  reads Parcel
+  writes Parcel.refund_ref
+  result RefundMark
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  p.refund_ref = parcel_id
+  return Marked
+}
+
+deed recheck {
+  input parcel_id: id required
+  reads Parcel.fee, Parcel.status
+  result PayResult
+  effects Pay.charge
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  if p.status != Waiting { return WrongStatus }
+  request Pay.charge(parcel_id, p.fee, idempotency_key = parcel_id)
+  return Charged
+}
+
+query parcel_of {
+  input parcel_id: id required
+  from Parcel
+  filter parcel_id equals parcel_id
+  select parcel_id, kind, status
+  reads Parcel.parcel_id, Parcel.kind, Parcel.status
+}
+
+query waiting_parcels {
+  from Parcel
+  where status == Waiting
+  reads Parcel.status
+}
+
+query parcel_list {
+  from Parcel
+  select parcel_id, kind, fee, status
+  reads Parcel.parcel_id, Parcel.kind, Parcel.fee, Parcel.status
+}
+
+query fee_by_kind {
+  input kind: Kind required
+  from Parcel
+  filter kind equals kind
+  select parcel_id, fee
+  reads Parcel.kind, Parcel.parcel_id, Parcel.fee
+}
+
+trigger RefundPending(parcel_id: id) {
+  reply RefundSettled → mark_refunded
+  deadline now + 10 min → mark_refunded
+}
+
+trigger Pending(parcel_id: id) {
+  all reply PaySettled, DepotSettled → settle
+  deadline now + 30 min → expire
+}
+
+nexus Intake {
+  accept: Accepted → par { request_pay, request_reserve }
+  request_pay: Charged → wait Pending, NoParcel → reply, WrongStatus → reply
+  request_reserve: Reserved → reply, NoParcel → reply
+}
+
+nexus Settlement {
+  settle: Approved → ship, PayFailed → cancel, NoParcel → reply, WrongStatus → reply
+  ship: Applied → reply, NoParcel → reply, WrongStatus → reply
+  cancel: Applied → reply, NoParcel → reply, WrongStatus → reply
+  expire: Applied → reply, NoParcel → reply, WrongStatus → reply
+}
+
+nexus Refund {
+  ask_refund: Asked → wait RefundPending, NoParcel → reply
+  mark_refunded: Marked → reply, NoParcel → reply
+}
+
+nexus Removal {
+  remove_parcel: Removed → reply, NoParcel → reply, NotRemovable → reply
+}
+
+nexus Stamping {
+  restamp: Stamped → reply, NoParcel → reply
+}
+
+nexus Recheck {
+  recheck: Charged → wait Pending, NoParcel → reply, WrongStatus → reply
+}
+
+event Reconnected on online {
+  each waiting_parcels → recheck
+}
+
+event Opened on opened {
+  each waiting_parcels → recheck
+}
+
+resource Parcels {
+  create accept {
+    Accepted → 201
+  }
+  index parcel_list
+  update restamp {
+    Stamped → 200
+    NoParcel → 404
+  }
+  destroy remove_parcel {
+    Removed → 200
+    NoParcel → 404
+    NotRemovable → 409
+  }
+}
+
+resource ParcelDetails under Parcels {
+  index parcel_of
+}
+
+resource RefundRequests {
+  create ask_refund {
+    Asked → 201
+    NoParcel → 404
+  }
+}
+
+resource Openings {
+  create Opened
+}
+
+resource Settlements {
+  create settle {
+    Approved → 201
+    PayFailed → 201
+    NoParcel → 404
+    WrongStatus → 409
+  }
+}
+
+resource Cancellations {
+  create cancel {
+    Applied → 201
+    NoParcel → 404
+    WrongStatus → 409
+  }
+}
+
+resource Reconnections {
+  create Reconnected
+}
+
+screen ParcelList entry {
+  show parcel_list
+  field kind
+  open ParcelDetail
+  action accept {
+    Accepted → stay
+  }
+  design {
+    layout form
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+resource FeeByKinds key kind {
+  show fee_by_kind
+}
+
+screen FeeCheck entry {
+  page "*://shop.test/*"
+  read {
+    subject Tag url "/item/([a-z]+)"
+    subject Tag element "input#tag" matches "[a-z]+"
+    value row "Kind", "Type"
+    value lookup "tagheavy": "heavy"
+  }
+  field kind
+  show fee_by_kind
+  design {
+    layout stack
+    accent "#e47911"
+    mode dark
+  }
+}
+
+screen ParcelDetail(parcel_id: id) {
+  show parcel_of
+  action remove_parcel {
+    Removed → back
+    NoParcel → stay
+    NotRemovable → stay
+  }
+  design {
+    layout list
+    accent "#0b5cad"
+    mode light
+  }
+}

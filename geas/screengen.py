@@ -23,7 +23,8 @@ def type_def(ck, t, show) -> dict:
     if k == "整数":
         return {"kind": "int", "lo": t.range.lo if t.range else None, "hi": t.range.hi if t.range else None}
     if k == "金額":
-        return {"kind": "money", "unit": (t.unit or "")[1:]}
+        u = t.unit or ""
+        return {"kind": "money", "unit": u[1:]} if u.startswith("$") else {"kind": "money", "currency": u}  # 通貨を持つ列の名前か、固定の通貨
     if k == "名前":
         st = ck.states.get(t.target)
         values = ([st.initial] if st and st.initial else []) + (st.middle if st else []) + (st.final if st else [])

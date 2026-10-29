@@ -36,7 +36,7 @@ function fmt(col, row) {
   const v = row[col.name];
   if (v === null || v === undefined) return "";
   if (col.kind === "money") {
-    const cur = row[col.unit], m = D.screens.minor[cur] ?? 0;
+    const cur = col.currency || row[col.unit], m = D.screens.minor[cur] ?? 0;
     try { return new Intl.NumberFormat("ja-JP", { style: "currency", currency: cur, minimumFractionDigits: m, maximumFractionDigits: m }).format(v / 10 ** m); } catch { return String(v); }
   }
   if (col.kind === "enum") return col.values.find((x) => x.value === v)?.label ?? v;
