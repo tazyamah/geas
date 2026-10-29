@@ -61,7 +61,7 @@ def test_仕様書は読み書きと遷移をコードから取り出す():
 
 def test_物理数は範囲から選ばれる():
     spec = build(chk(CODE))
-    assert dict(spec["実現"])["商品.在庫"] == "u64"
+    assert dict(spec["実現"])["商品.在庫"] == "u32"
     assert ("明細.値", "u8") in next(x for x in spec["処理"] if x["処理"] == "受注")["物理数"]
 
 
@@ -151,12 +151,12 @@ def test_コードが計画に無いものを書き込むと検出する():
 
 
 def test_範囲の食い違いを検出する():
-    fs = static(mutate(PLAN, "| 在庫 | 整数 0.. |", "| 在庫 | 整数 1.. |"))
+    fs = static(mutate(PLAN, "| 在庫 | 整数 0..1000000 |", "| 在庫 | 整数 1..1000000 |"))
     assert any(f.kind == DIFF and "商品.在庫" in f.where for f in fs)
 
 
 def test_計画に無い項目がコードにあると検出する():
-    fs = static(mutate(PLAN, "| DA3 | 商品 | 単価 | 金額(円) 0.. | ○ |  | 仮 |\n", ""))
+    fs = static(mutate(PLAN, "| DA3 | 商品 | 単価 | 金額(円) 0..10000000 | ○ |  | 仮 |\n", ""))
     assert any(f.kind == B_ONLY and "商品.単価" in f.where for f in fs)
 
 
@@ -2442,8 +2442,9 @@ def test_問い合わせは_equals_で文字列やIDの完全一致で絞れる(
 # ---- 通貨コードを slot で渡す金額（money(currency)） ----
 def shop_currency():
     s = SHOP_SRC
-    s = s.replace("/// 単価\n  unit_price: NonNegMoney required\n", "/// 通貨\n  currency: currency required\n  /// 単価\n  unit_price: money(currency) required\n", 1)
-    s = s.replace("  total: NonNegMoney required\n", "  total: money(currency) required\n  /// 通貨\n  currency: currency required\n", 1)
+    s = s.replace("/// 単価\n  unit_price: NonNegMoney required\n", "/// 通貨\n  currency: currency required\n  /// 単価\n  unit_price: CurUnitPrice required\n", 1)
+    s = s.replace("  total: OrderTotal required\n", "  total: CurOrderTotal required\n  /// 通貨\n  currency: currency required\n", 1)
+    s = s.replace("ltype ProductQuantity", "ltype CurUnitPrice = money(currency) 0..10000000\nltype CurOrderTotal = money(currency) 0..1000000000000\nltype ProductQuantity", 1)
     s = s.replace("  slot tax_rate: TaxRateValue\n", "  slot tax_rate: TaxRateValue\n  slot currency: currency\n", 1)
     s = s.replace("  reads Product.stock, Product.unit_price, Customer\n", "  reads Product.stock, Product.unit_price, Product.currency, Customer\n", 1)
     s = s.replace("  let short = { k | (k, v) in items, Product[k].stock < v }\n",
@@ -2625,3 +2626,59 @@ def test_生成した_unsafe_は_proven_マクロの中だけで_verify_で通�
     body = lib.split("/// 端数の出る値")[1]  # マクロ定義より後ろ（生成した処理の本体）
     assert "unsafe" not in body and "unwrap_unchecked" not in body
     assert '#[cfg(feature = "verify")]' in lib and ".expect($what)" in lib
+
+
+# ---- 書く値が物理型・ltype の範囲に収まることを示す ----
+def test_合計が収まると示せなければ止まる_要素数の上限が要る():
+    ck = chk(mutate(CODE, "Product → Quantity max 100", "Product → Quantity"))
+    assert any("注文.合計" in m and "収まると示せません" in m for m in msgs(ck, ERROR))
+
+
+def test_合計の項目の上限が小さいと止まる():
+    ck = chk(mutate(CODE, "ltype OrderTotal = money(JPY) 0..1000000000000", "ltype OrderTotal = money(JPY) 0..1000"))
+    assert any("注文.合計" in m and "収まると示せません" in m for m in msgs(ck, ERROR))
+
+
+def test_単価の上限を書かないと合計が物理型に収まると示せない():
+    ck = chk(mutate(CODE, "ltype NonNegMoney = money(JPY) 0..10000000", "ltype NonNegMoney = money(JPY) 0.."))
+    assert any("注文.合計" in m and "収まると示せません" in m for m in msgs(ck, ERROR))
+
+
+COUNTER = """ltype Count = int 0..1000
+entity Box {
+  box_id: id unique
+  n: Count required
+}
+result AddResult { Added, NoBox, Full }
+deed add {
+  input box_id: id required
+  reads Box.n
+  writes Box.n
+  result AddResult
+  effects none
+  let b = Box[box_id] else { return NoBox }
+  %s
+  b.n += 5
+  return Added
+}
+nexus 流れ {
+  add: Added → reply, NoBox → reply, Full → reply
+}
+"""
+
+
+def test_加算は上限の確認が無いと止まり_確認すれば通る():
+    bad = chk(COUNTER % "")
+    assert any("Box.n" in m and "収まると示せません" in m for m in msgs(bad, ERROR))
+    assert chk(COUNTER % "if b.n > 995 { return Full }").ok
+
+
+def test_上限の確認が足りないと止まる():
+    assert any("収まると示せません" in m for m in msgs(chk(COUNTER % "if b.n > 996 { return Full }"), ERROR))
+
+
+def test_上限を書かない整数は物理型の最大までとして扱う():
+    ck = chk(CODE.replace("ltype StockCount = int 0..1000000", "ltype StockCount = int 0.."))
+    assert ck.ok, ck.diags  # 減らすだけの更新は、物理型の最大までの範囲で収まる
+    src = (COUNTER % "").replace("ltype Count = int 0..1000", "ltype Count = int 0..")
+    assert any("収まると示せません" in m for m in msgs(chk(src), ERROR))

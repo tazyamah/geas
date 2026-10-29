@@ -26,19 +26,26 @@
 | `bytes` | バイト列 |
 | `set of id` | 集合 |
 | `ref Customer` | データへの参照 |
-| `Product → Quantity` | 写像（キーは entity、値は型）。キーが `id` の写像は保存しない入れ物 |
+| `Product → Quantity` / `Product → Quantity max 100` | 写像（キーは entity、値は型）。キーが `id` の写像は保存しない入れ物。`max N` は要素数の上限（`sum` の合計が範囲に収まると示すのに使う） |
 | 状態の名前 | 下の `state` |
 
 範囲・組み合わせは、`ltype` で**名前を付けてから**使います（直に項目へ書けません）。
 
 ```
 ltype Quantity = int 1..99
-ltype ProductQuantity = Product → Quantity
+ltype ProductQuantity = Product → Quantity max 100
 ltype Address {                      // 合成型：成分を持つ。作るときは Address { country: …, … }、読むときは a.country
   country: CountryCode
   line: AddressLine optional         // optional の成分は未指定にでき、未指定にアクセスしうるとエラー
 }
 ```
+
+**整数と金額の範囲は、物理型（`int` は `i64`、`int 0..` は `u64` など、範囲から選ぶ）に収まる範囲として扱います。** 上限や下限を書かなくても、保存できる値は物理型の範囲までです。項目へ値を書くときは、書く値が項目の範囲（と物理型）に収まると検査器が示せなければエラーです（panic する書き方は書けません）。示す手がかりは次のとおりです。
+
+- 単価・合計・点数のように増える値の上限は、`ltype` に書く（`money(JPY) 0..1000000000000`）。
+- `sum` の合計は、集まりの型の `max N` と、要素の範囲の掛け算で示す。
+- 足し算（`x.n += 5`）は、`if x.n > 995 { return Full }` のような上限の確認が前にあれば示せる（数との比較だけを見る）。
+- 時刻どうしの差は、外から来る時刻の範囲（10^15 秒）から示す。
 
 組み込みの合成型に `vtime`（year month day hour minute second。仮想日時）があります。整数と金額は混ぜられません（金額×整数、金額×割合は可。端数は `round(値, floor|ceil|half_up, JPY)`）。
 

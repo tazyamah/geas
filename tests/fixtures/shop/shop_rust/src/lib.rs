@@ -132,7 +132,7 @@ impl OrderStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Product {
     pub product_id: String,
-    pub stock: u64,
+    pub stock: u32,
     pub unit_price: i64,
 }
 
@@ -207,7 +207,7 @@ impl Store {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Write {
     Order_New(Order),
-    Product_stock(String, u64),
+    Product_stock(String, u32),
     Order_status(String, OrderStatus),
 }
 
@@ -370,7 +370,7 @@ pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput
         let v: i128 = *v_ as i128;
         {
             let new_value: i128 = (Store.Product[&(k.clone())].stock as i128) - v;
-            writes.push(Write::Product_stock(k.clone(), u64::try_from(new_value).expect("物理数に収まらない")));
+            writes.push(Write::Product_stock(k.clone(), ((new_value) as u32)));
         }
     }
     let subtotal: i128 = { let mut acc: i128 = 0; for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; acc += ((Store.Product[&(k.clone())].unit_price as i128) * v); } acc };
@@ -379,7 +379,7 @@ pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput
         order_id: ctx.new_Order_id.clone(),
         customer: Input.customer_id.clone(),
         items: Input.items.clone(),
-        total: i64::try_from(total).expect("物理数に収まらない"),
+        total: ((total) as i64),
         status: OrderStatus::Received,
     };
     writes.push(Write::Order_New(order.clone()));

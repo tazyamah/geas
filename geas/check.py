@@ -1187,8 +1187,18 @@ def iv_mul(a, b):
     return (min(ps), max(ps))
 
 
+PHYS_IV = {"u8": (0, 2**8 - 1), "u16": (0, 2**16 - 1), "u32": (0, 2**32 - 1), "u64": (0, 2**64 - 1),
+           "i8": (-2**7, 2**7 - 1), "i16": (-2**15, 2**15 - 1), "i32": (-2**31, 2**31 - 1), "i64": (-2**63, 2**63 - 1),
+           "i128": (-2**127, 2**127 - 1)}
+
+
 def iv_of(t: Type):
-    r = t.range if t.kind in ("整数", "金額", "割合") else None
+    """型の値の範囲。整数と金額は、書いた範囲に、物理数に収まる範囲を重ねる（上限や下限を書かなくても、保存できる値はそこまで）"""
+    if t.kind in ("整数", "金額"):
+        r = t.range
+        plo, phi = PHYS_IV[phys(t)]
+        return (plo if r is None or r.lo is None else r.lo, phi if r is None or r.hi is None else r.hi)
+    r = t.range if t.kind == "割合" else None
     return (None, None) if r is None else (r.lo, r.hi)
 
 
@@ -1196,9 +1206,13 @@ def iv_show(a):
     return f"{'' if a[0] is None else a[0]}..{'' if a[1] is None else a[1]}"
 
 
+TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足し引きであふれないため境界で確かめる
+UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
+
+
 def iv_join(a: dict, b: dict) -> dict:
-    """2つの道の合流。両方で分かっていることだけが残る（下限は小さいほう）"""
-    return {k: min(a[k], b[k]) for k in a.keys() & b.keys()}
+    """2つの道の合流。両方で分かっていることだけが残る（下限は小さいほう、上限は大きいほう）"""
+    return {k: (max if k[0] == UP else min)(a[k], b[k]) for k in a.keys() & b.keys()}
 
 class ProcChecker:
     def __init__(self, ck: Checker, proc: Process):
@@ -1661,12 +1675,17 @@ class ProcChecker:
                 known = self.facts.get((self.bindings[e.e.n], e.n))
                 if known is not None and (lo is None or known > lo):
                     lo = known
+                upper = self.facts.get((UP, self.bindings[e.e.n], e.n))
+                if upper is not None and (hi is None or upper < hi):
+                    hi = upper
             return (lo, hi)
         if isinstance(e, Bin) and e.op == "%":  # 負でも 0 以上 n 未満（rem_euclid）
             return (0, e.r.v - 1)
         if isinstance(e, Bin) and e.op == "/":  # 正の定数で割る切り捨て：区間の端をそのまま割る
             lo, hi = self.interval(e.l, env)
             return (None if lo is None else lo // e.r.v, None if hi is None else hi // e.r.v)
+        if isinstance(e, Bin) and e.op == "-" and self.ty_quiet(e.l, env) == "Time" and self.ty_quiet(e.r, env) == "Time":
+            return (-2 * TIME_LIMIT, 2 * TIME_LIMIT)  # 時刻どうしの差（秒）。外から来る時刻は境界で TIME_LIMIT 秒までに止める
         if isinstance(e, Bin) and e.op in ("+", "-", "*"):
             a, b = self.interval(e.l, env), self.interval(e.r, env)
             return iv_add(a, b) if e.op == "+" else iv_add(a, iv_neg(b)) if e.op == "-" else iv_mul(a, b)
@@ -1680,11 +1699,15 @@ class ProcChecker:
             if getattr(e.args[2], "n", "") == "JPY":  # 1円単位：整数への丸め
                 return (None if lo is None else Fraction(floor(lo) if how != "ceil" else ceil(lo)),
                         None if hi is None else Fraction(ceil(hi) if how != "floor" else floor(hi)))
-            # 単位の大きさが分からないとき：0 以上の値は、どう丸めても 0 以上
-            return (0 if lo is not None and lo >= 0 else None, None)
+            # 単位の大きさが分からないとき：0 以上の値は、どう丸めても 0 以上。切り捨てなら元の値より大きくならない
+            return (0 if lo is not None and lo >= 0 else None,
+                    ceil(hi) if how == "floor" and lo is not None and lo >= 0 and hi is not None else None)
         if isinstance(e, SumE):
-            lo, _ = self.interval(e.elem, self.range_env(e.binder, env))
-            return (0 if lo is not None and lo >= 0 else None, None)
+            lo, hi = self.interval(e.elem, self.range_env(e.binder, env))
+            src = self.decl_type(e.binder.src, env)  # 要素数の上限（K → V max N）があれば、合計の上限も示せる
+            n = src.maxn if src is not None and src.kind == "写像" else None
+            return (0 if lo is not None and lo >= 0 else None if n is None or lo is None else n * lo,
+                    None if n is None or hi is None else max(0, n * hi))
         return (None, None)
 
     def bind(self, b: Binder, env=None):
@@ -2009,6 +2032,8 @@ class ProcChecker:
                 self.forget(data, st.f)
                 if iv[0] is not None:
                     self.facts[(b, st.f)] = iv[0]
+                if iv[1] is not None:
+                    self.facts[(UP, b, st.f)] = iv[1]
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
             info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
@@ -2195,7 +2220,8 @@ class ProcChecker:
 
     def add_facts(self, facts, new):
         for k, lo in new.items():
-            if k not in facts or lo > facts[k]:
+            better = (lambda a, b: a < b) if k[0] == UP else (lambda a, b: a > b)
+            if k not in facts or better(lo, facts[k]):
                 facts[k] = lo
         return facts
 
@@ -2210,9 +2236,14 @@ class ProcChecker:
         n = c.r.v
         op = c.op if holds else {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!="}[c.op]
         lo = {">": n + 1, ">=": n, "==": n}.get(op)
+        hi = {"<": n - 1, "<=": n, "==": n}.get(op)
         if op == "!=" and self.interval(c.l)[0] == n:
             lo = n + 1
-        return {} if lo is None else {(self.bindings[c.l.e.n], c.l.n): lo}
+        b = self.bindings[c.l.e.n]
+        out = {} if lo is None else {(b, c.l.n): lo}
+        if hi is not None:
+            out[(UP, b, c.l.n)] = hi
+        return out
 
     def note_currency_set(self, name, e: SetB):
         """{ k | (k, v) in 元, D[k].通貨 != 通貨 } の形なら、「通貨が違う k の集まり」として覚える（空と確かめると、元のどの1件も同じ通貨）"""
@@ -2237,7 +2268,8 @@ class ProcChecker:
         """data.fname が書き換わった。同じデータのどの束縛（同じ1件かもしれない）についても、分かっていた下限を消す"""
         self.facts = {k: v for k, v in self.facts.items()
                       if not ((k[0] == "#不足" and k[1:3] == (data, fname))
-                              or (k[0] != "#不足" and self.binding_data.get(k[0]) == data and k[1] == fname))}
+                              or (k[0] == UP and self.binding_data.get(k[1]) == data and k[2] == fname)
+                              or (k[0] not in ("#不足", UP) and self.binding_data.get(k[0]) == data and k[1] == fname))}
         # 通貨の項目が書き換わったら、「同じ通貨と確かめた」ことも消える
         self.state_guards = {g for g in self.state_guards if not (self.binding_data.get(g[0]) == data and g[1] == fname
                                                                    and self.ck.currency_field(data, fname))}
@@ -2257,7 +2289,8 @@ class ProcChecker:
         lo, hi = iv_of(fld.type)
         if not null and ((lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi))):
             self.d(ERROR, "範囲", f"{data}.{fname} に書く値が、項目の範囲 {iv_show((lo, hi))} に収まると示せません"
-                   f"（書く値の範囲 {iv_show(iv)}。はみ出す例（反例）があります）", line)
+                   f"（書く値の範囲 {iv_show(iv)}。はみ出す例（反例）があります。"
+                   "上限は ltype に書き、合計は集まりの型に要素数の上限（K → V max N）を書くと示せます）", line)
         for i, form in enumerate(self.ck.inv_forms):
             if form is None or form[1] != data:
                 continue

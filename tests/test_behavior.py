@@ -27,9 +27,10 @@ def run_app(src, main, tmp_path, host=False):
 
 # ---- 状態の遷移・数量・金額・不変条件 ----
 ORDERS = """ltype Qty = int 1..99
-ltype Stock = int 0..
-ltype Price = money(JPY) 0..
-ltype ItemQty = Item → Qty
+ltype Stock = int 0..1000000
+ltype Price = money(JPY) 0..10000000
+ltype Total = money(JPY) 0..1000000000000
+ltype ItemQty = Item → Qty max 100
 
 entity Item {
   item_id: id unique
@@ -40,7 +41,7 @@ entity Item {
 entity Order {
   order_id: id unique
   items: ItemQty required
-  total: Price required
+  total: Total required
   status: OrderStatus
 }
 
@@ -90,7 +91,7 @@ deed pay {
 
 result DoneResult { Done, NoOrder, WrongState }
 
-result RestockResult { Restocked, NoItem }
+result RestockResult { Restocked, NoItem, Full }
 deed restock {
   input item_id: id required, amount: Qty required
   reads Item.stock
@@ -98,6 +99,7 @@ deed restock {
   result RestockResult
   effects none
   let it = Item[item_id] else { return NoItem }
+  if it.stock > 999901 { return Full }
   it.stock += amount
   return Restocked
 }

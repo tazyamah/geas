@@ -5,17 +5,23 @@ app "海外にも売るお店"
 // お店の例（../shop/shop.geas）の続きで、名前は半角英数、日本語の表示名は /// で付ける。
 
 /// 在庫数
-ltype StockCount = int 0..
+ltype StockCount = int 0..1000000
 /// 数量
 ltype Quantity = int 1..99
 /// 商品数量
-ltype ProductQuantity = Product → Quantity
+ltype ProductQuantity = Product → Quantity max 100
+/// 単価
+ltype UnitPrice = money(currency) 0..10000000
+/// 送料
+ltype ShippingFee = money(currency) 0..100000
+/// 合計金額
+ltype OrderTotal = money(currency) 0..1000000000000
 /// 税率値
 ltype TaxRateValue = ratio 0..1
 /// ID集合
 ltype IdSet = set of id
 /// ポイント
-ltype PointCount = int 0..
+ltype PointCount = int 0..1000000000
 /// 国コード
 ltype CountryCode = text 2..2 of "A-Z"
 /// 郵便番号
@@ -49,7 +55,7 @@ entity Product {
   /// 通貨
   currency: currency required
   /// 価格
-  price: money(currency) required
+  price: UnitPrice required
   // 取り下げても、注文の明細には商品IDが残る（確定のときに「商品なし」として扱う）
   on delete Order.items → leave
 }
@@ -75,7 +81,7 @@ entity Order {
   /// 通貨
   currency: currency required
   /// 合計
-  total: money(currency) required
+  total: OrderTotal required
   /// 状態
   status: OrderStatus
 }
@@ -137,6 +143,8 @@ result PointsResult {
   NoSuchOrder
   /// 顧客なし
   NoSuchCustomer
+  /// 上限
+  PointsFull
 }
 
 /// 決済と在庫の結果の見立て
@@ -232,7 +240,7 @@ deed place_order {
   /// 税率
   slot tax_rate: TaxRateValue
   /// 送料
-  slot shipping: money(currency)
+  slot shipping: ShippingFee
   reads Product.stock, Product.price, Product.currency, Customer
   writes Order
   transition Order: (new) → Received
@@ -291,6 +299,7 @@ deed grant_campaign_points {
 
   let order = Order[order_id] else { return NoSuchOrder }
   let customer = Customer[order.customer] else { return NoSuchCustomer }
+  if customer.points > 999999995 { return PointsFull }
   customer.points += 5
   return Granted
 }
@@ -305,6 +314,7 @@ deed grant_points {
 
   let order = Order[order_id] else { return NoSuchOrder }
   let customer = Customer[order.customer] else { return NoSuchCustomer }
+  if customer.points > 999999990 { return PointsFull }
   customer.points += 10
   return Granted
 }
@@ -421,6 +431,8 @@ result RestockResult {
   Restocked
   /// 商品なし
   NoSuchProduct
+  /// 在庫の上限
+  StockFull
 }
 
 /// 取り下げの結果
@@ -441,6 +453,7 @@ deed restock_product {
   effects none
 
   let product = Product[product_id] else { return NoSuchProduct }
+  if product.stock > 999901 { return StockFull }
   product.stock = product.stock + quantity
   return Restocked
 }
@@ -513,8 +526,8 @@ nexus Intake {
   place_order: Received → par { request_payment, request_stock_hold, grant_points, grant_campaign_points }, OutOfStock → reply, OtherCurrency → reply, NoSuchProduct → reply, NoSuchCustomer → reply
   request_payment: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
   request_stock_hold: HoldRequested → reply, NoSuchOrder → reply
-  grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
-  grant_campaign_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply
+  grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply, PointsFull → reply
+  grant_campaign_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply, PointsFull → reply
 }
 
 // 決済の返事と倉庫の返事がそろったら見立てる。そろわないまま30分たったら取り消す
@@ -535,7 +548,7 @@ nexus Settlement {
 
 /// 商品の入荷の流れ
 nexus Restock {
-  restock_product: Restocked → reply, NoSuchProduct → reply
+  restock_product: Restocked → reply, NoSuchProduct → reply, StockFull → reply
 }
 
 /// 商品の取り下げの流れ
@@ -627,6 +640,7 @@ screen ProductAdmin entry {
   action restock_product {
     Restocked → stay
     NoSuchProduct → stay
+    StockFull → stay
   }
   action withdraw_product {
     Withdrawn → stay
@@ -674,6 +688,7 @@ resource PointGrants {
     Granted → 201
     NoSuchOrder → 404
     NoSuchCustomer → 404
+    PointsFull → 409
   }
 }
 
@@ -683,6 +698,7 @@ resource CampaignPointGrants {
     Granted → 201
     NoSuchOrder → 404
     NoSuchCustomer → 404
+    PointsFull → 409
   }
 }
 
@@ -749,6 +765,7 @@ resource Products {
   update restock_product {
     Restocked → 200
     NoSuchProduct → 404
+    StockFull → 409
   }
   destroy withdraw_product {
     Withdrawn → 200
