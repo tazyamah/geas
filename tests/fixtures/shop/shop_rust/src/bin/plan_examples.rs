@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 fn main() {
     {
         let mut Store = Store::default();
-        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u64, unit_price: 100i64 });
+        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u32, unit_price: 100i64 });
         Store.Customer.insert("C1".to_string(), Customer { customer_id: "C1".to_string() });
         let ctx = place_orderCtx { tax_rate: Ratio { num: 1, den: 10 }, new_Order_id: "N1".to_string() };
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 2u8)]) };
@@ -21,7 +21,7 @@ fn main() {
     }
     {
         let mut Store = Store::default();
-        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u64, unit_price: 100i64 });
+        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u32, unit_price: 100i64 });
         Store.Customer.insert("C1".to_string(), Customer { customer_id: "C1".to_string() });
         let ctx = place_orderCtx { tax_rate: Ratio { num: 1, den: 10 }, new_Order_id: "N1".to_string() };
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 6u8)]) };
@@ -37,7 +37,7 @@ fn main() {
     }
     {
         let mut Store = Store::default();
-        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u64, unit_price: 100i64 });
+        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u32, unit_price: 100i64 });
         Store.Customer.insert("C1".to_string(), Customer { customer_id: "C1".to_string() });
         let ctx = place_orderCtx { tax_rate: Ratio { num: 1, den: 10 }, new_Order_id: "N1".to_string() };
         let Input = place_orderInput { customer_id: "C9".to_string(), items: BTreeMap::from([("A".to_string(), 2u8)]) };
@@ -53,7 +53,7 @@ fn main() {
     }
     {
         let mut Store = Store::default();
-        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u64, unit_price: 100i64 });
+        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u32, unit_price: 100i64 });
         Store.Customer.insert("C1".to_string(), Customer { customer_id: "C1".to_string() });
         let ctx = place_orderCtx { tax_rate: Ratio { num: 1, den: 10 }, new_Order_id: "N1".to_string() };
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("Z".to_string(), 1u8)]) };
@@ -69,7 +69,7 @@ fn main() {
     }
     {
         let mut Store = Store::default();
-        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u64, unit_price: 105i64 });
+        Store.Product.insert("A".to_string(), Product { product_id: "A".to_string(), stock: 5u32, unit_price: 105i64 });
         Store.Customer.insert("C1".to_string(), Customer { customer_id: "C1".to_string() });
         let ctx = place_orderCtx { tax_rate: Ratio { num: 1, den: 10 }, new_Order_id: "N1".to_string() };
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 1u8)]) };

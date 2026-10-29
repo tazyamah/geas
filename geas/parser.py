@@ -396,11 +396,20 @@ class Parser:
             raise ParseError("範囲や組み合わせは、ltype で名前を付けてから使ってください（例：ltype 数量 = int 1..99）", line)
         return t
 
+    def max_opt(self):
+        """写像のあとの「max N」：要素数の上限（合計が物理型に収まるかを示すのに使う）"""
+        if not self.accept("max"):
+            return None
+        n = self.num()
+        if n < 1:
+            raise self.err("max のあとは 1 以上の整数です（例：Product → Quantity max 100）")
+        return n
+
     def _type(self) -> Type:
         tok = self.name()
         if tok == "id":
             if self.accept("→"):  # id → 値：キーが entity のキーに限られない、読み取り専用の値の入れ物
-                return Type("写像", key="id", value=self.type())
+                return Type("写像", key="id", value=self.type(), maxn=self.max_opt())
             return Type("ID")
         if tok == "set":  # set of id
             self.expect("of")
@@ -429,7 +438,7 @@ class Parser:
         if tok == "ref":  # ref Data
             return Type("参照", target=self.name())
         if self.accept("→"):
-            return Type("写像", key=tok, value=self.type())
+            return Type("写像", key=tok, value=self.type(), maxn=self.max_opt())
         if tok == "vtime":
             self.used_builtin.add(tok)
             return virtual_datetime()

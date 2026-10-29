@@ -2,13 +2,15 @@
 // 名前は半角英数。仕様書に出す日本語の名前は /// で付ける（コンパイラは読まない）。
 
 /// 在庫数
-ltype StockCount = int 0..
+ltype StockCount = int 0..1000000
 /// 非負金額
-ltype NonNegMoney = money(JPY) 0..
+ltype NonNegMoney = money(JPY) 0..10000000
+/// 合計金額
+ltype OrderTotal = money(JPY) 0..1000000000000
 /// 数量
 ltype Quantity = int 1..99
 /// 商品数量
-ltype ProductQuantity = Product → Quantity
+ltype ProductQuantity = Product → Quantity max 100
 /// 税率値
 ltype TaxRateValue = ratio 0..1
 /// ID集合
@@ -39,7 +41,7 @@ entity Order {
   /// 明細
   items: ProductQuantity required
   /// 合計
-  total: NonNegMoney required
+  total: OrderTotal required
   /// 状態
   status: OrderStatus
 }
