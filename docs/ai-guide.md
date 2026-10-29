@@ -55,7 +55,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 `rust` の付けものは次のとおりです。
 
 - 何も付けない：Rust の crate（検査済みの処理の本体）だけ。
-- `--host`：画面（PWA）・開発用の模擬パネル・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。
+- `--host`：画面（PWA）・開発用の模擬パネル・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。AI から使う口として、MCP のツール定義（`mcp/tools.json`、URL の定義から機械的に作る）と、サーバーへ中継する汎用の橋渡し `mcp/bridge.py`・登録例 `mcp/mcp.json` も作る。
 - `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
 - `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `tests/test_url_examples.py` 、計画書の「画面の具体例」（下）から画面の通しテスト `tests/test_screen_examples.py` も作る（サーバーをビルドしてから `python -m pytest 出力先/tests`）。
 
@@ -128,6 +128,7 @@ python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $
 | `spec.py`・`review.py`・`svg.py`・`plan.py` | 仕様書（Markdown／HTML）の生成（図は `svg.py` の自前 SVG。見た目・構造は specgap のレビュー画面に合わせる）、計画書の読み取りと突合、確認の網羅 |
 | `rustgen.py`・`hostgen.py` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
 | `rest.py`・`screengen.py` | REST の URL と状態、画面の定義 |
+| `mcp.py`・`mcp_bridge.py` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（定義を読むだけの汎用） |
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
 | `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
 | `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |

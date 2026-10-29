@@ -48,6 +48,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 9. 画面の行き先 `back`・`open`（行を選んで進む） | ◎ | `test_runtime.py` の「計画書の画面の具体例から…」（一覧で行を選んで詳細へ進み、取り下げて一覧へ戻る） |
 | 10. `resource`（結果ごとの HTTP の状態・`key`・create の出来事） | ◎ | `test_rest.py`、`test_runtime.py`（状態の返り方と、境界の 400） |
 | 10. `resource` の `update`・`destroy`・入れ子（`under`） | ◎ | `test_runtime.py` の「update・destroy・入れ子は…」と、計画書の URL の具体例から生成したテスト |
+| 11. MCP（AI から使う口。ツール定義・REST への中継） | ◎／○ | `test_screens.py` の「MCP のツール定義は URL の定義から機械的に作られ…」「MCP の橋渡しはツールの呼び出しを REST に中継する」（中継先は模擬のサーバー）。実サーバーに中継して動かす確認は無い（✕） |
 | サーバーの再起動で、待ち・時計の先・ID の採番が続く | ◎ | `test_runtime.py` の「再起動しても…」 |
 | モジュール（`use`／`module`） | ◎ | `test_geas.py` の「モジュールを使ったコードがビルドでき動く」 |
 
