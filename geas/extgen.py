@@ -51,4 +51,6 @@ def write_ext(ck, dest, server: str = DEFAULT_SERVER) -> None:
         "background": {"service_worker": "background.js"},
         "content_scripts": [{"matches": sc.pages, "js": ["defs.js", "reader.js", "content.js"], "css": ["content.css"], "run_at": "document_idle"}],
         "action": {"default_title": d["label"], "default_popup": "popup.html"},
+        # 拡張のページは、同梱したスクリプトだけ動かす（インラインのスクリプトや外のスクリプトは動かない）
+        "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'self'"},
     }, ensure_ascii=False, indent=2) + "\n")

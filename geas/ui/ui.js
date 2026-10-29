@@ -129,21 +129,21 @@ async function render() {
   main.innerHTML = [
     ...sc.slots.map((s) => `<div class="pills" role="group" aria-label="${esc(s.label)}" data-slot="${esc(s.name)}">${s.values.map((v) => `<button type="button" data-slotval="${esc(v.value)}" class="${v.value === slotVal[s.name] ? "on" : ""}">${esc(v.label)}</button>`).join("")}</div>`),
     ...sc.fields.map((f) => fieldHtml(sc, f)),
-    ...sc.shows.map((q) => `<section data-show="${q}"><h2>${esc(Q[q].label)}</h2><div class="rows ${sc.design.layout}"></div></section>`),
-    sc.actions.length ? `<div class="actions">${sc.actions.map((a) => `<button type="button" class="primary" data-action="${a.deed}">${esc(a.label)}</button>`).join("")}</div>` : "",
+    ...sc.shows.map((q) => `<section data-show="${esc(q)}"><h2>${esc(Q[q].label)}</h2><div class="rows ${esc(sc.design.layout)}"></div></section>`),
+    sc.actions.length ? `<div class="actions">${sc.actions.map((a) => `<button type="button" class="primary" data-action="${esc(a.deed)}">${esc(a.label)}</button>`).join("")}</div>` : "",
   ].join("");
   for (const f of sc.fields) { await fillField(sc, f); if (my !== gen) return; }
   await Promise.all(sc.shows.map((q) => loadShow(sc, q).catch((e) => notice("読み込めません: " + e.message, "warn"))));
 }
 function fieldHtml(sc, f) {
   const t = f.type;
-  if (t.kind === "map") return `<h2>${esc(f.label)}</h2><div class="rows ${sc.design.layout === "form" ? "stack" : sc.design.layout}" data-field="${f.name}"></div>`;
+  if (t.kind === "map") return `<h2>${esc(f.label)}</h2><div class="rows ${esc(sc.design.layout === "form" ? "stack" : sc.design.layout)}" data-field="${esc(f.name)}"></div>`;
   if (t.kind === "group") return `<fieldset class="group"><legend>${esc(f.label)}</legend>${t.parts.map((p) => inputHtml(`${f.name}.${p.name}`, p.label, p)).join("")}</fieldset>`;
-  if (f.from) return `<label class="f">${esc(f.label)}<select data-field="${f.name}"></select></label><div class="picked" data-picked="${f.name}"></div>`;
+  if (f.from) return `<label class="f">${esc(f.label)}<select data-field="${esc(f.name)}"></select></label><div class="picked" data-picked="${esc(f.name)}"></div>`;
   return inputHtml(f.name, f.label, t);
 }
 function inputHtml(name, label, t) {
-  const attrs = t.kind === "int" ? `type="number" ${t.lo != null ? `min="${t.lo}"` : ""} ${t.hi != null ? `max="${t.hi}"` : ""}` : `type="text" ${t.max ? `maxlength="${t.max}"` : ""}`;
+  const attrs = t.kind === "int" ? `type="number" ${t.lo != null ? `min="${Number(t.lo)}"` : ""} ${t.hi != null ? `max="${Number(t.hi)}"` : ""}` : `type="text" ${t.max ? `maxlength="${Number(t.max)}"` : ""}`;
   return `<label class="f">${esc(label)}<input data-field="${esc(name)}" ${attrs} autocomplete="off"></label>`;
 }
 async function fillField(sc, f) {

@@ -256,3 +256,21 @@ def test_アプリを開いた出来事も_返事待ちを引き直す(server):
     assert code == 201 and [t["deed"] for run in ev["runs"] for t in run["trace"]] == ["recheck"]
     server.advance(6)
     assert server.parcels()[pid]["status"] == "Shipped"
+
+
+def test_画面と_API_の応答には_CSP_が付き_生成した_HTML_にインラインのスクリプトは無い(server, built):
+    import re
+    for path in ("/", "/parcels/new", "/ui.js", "/manifest.webmanifest", "/api/defs", "/api/health"):
+        try:
+            csp = urllib.request.urlopen(server.base + path, timeout=5).headers.get("Content-Security-Policy", "")
+        except urllib.error.HTTPError as e:  # 見つからない応答（404）にも付く
+            csp = e.headers.get("Content-Security-Policy", "")
+        assert "script-src 'self'" in csp and "connect-src 'self'" in csp and "object-src 'none'" in csp, (path, csp)
+    # 生成した HTML には、インラインのスクリプト・イベントハンドラ属性・style 属性が無い（CSP で止まるものを書いていない）
+    for html in [*built.glob("ui/*.html"), *built.glob("ext/*.html"), *built.glob("dev/*.html")]:
+        text = html.read_text()
+        assert not re.search(r"<script(?![^>]*\ssrc=)", text), html
+        assert not re.search(r"\son[a-z]+\s*=", text), html
+        assert 'style="' not in text, html
+    manifest = json.loads((built / "ext" / "manifest.json").read_text())
+    assert manifest["content_security_policy"]["extension_pages"] == "script-src 'self'; object-src 'self'"
