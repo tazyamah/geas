@@ -60,7 +60,7 @@ def run_interview(a) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合（試作）")
+    ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合")
     sub = ap.add_subparsers(dest="cmd", required=True)
     iv = sub.add_parser("interview", help="初回の対話の台帳（init／status／render）。Cockburn のユースケース手法に基づく")
     iv.add_argument("action", choices=["init", "status", "render"])

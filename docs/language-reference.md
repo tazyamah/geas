@@ -1,6 +1,6 @@
 # Geas 言語リファレンス（AI 向け）
 
-2026-10-28 時点の Python 版（試作）の書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`python -m geas check`）が正本**です。
+2026-10-28 時点の書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`python -m geas check`）が正本**です。
 
 ## 1. 全体の決まり
 

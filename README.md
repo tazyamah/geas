@@ -26,7 +26,7 @@ AI（Claude Code など）が geas を入れて使うときは、[AGENTS.md](AGE
 2. 計画書から、AI がコード（`.geas`）を起こす。
 3. コードを検査し、仕様書を生成して、計画書と突き合わせる。具体例は生成した Rust で実際に動かして確かめる。
 
-## 使い方（試作の Python 版。最終的にはすべて Rust にする）
+## 使い方（Python 3.10 以上、外部ライブラリなし）
 
 ```
 python -m geas check アプリ.geas                  # 検査
@@ -107,4 +107,4 @@ geas 本体は GPL-3.0-or-later です。使うのは自由で、改変して配
 
 ## 状態
 
-試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。キーワードは英語にしました（名前と、構文木の中身は日本語のまま）。
+もとは [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で作っていました。ここへ移して、v0.1.0 を目指します。キーワードは英語にしました（名前と、構文木の中身は日本語のまま）。

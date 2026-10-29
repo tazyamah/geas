@@ -6,7 +6,7 @@
 
 | 層 | 対象 | ライセンス |
 |---|---|---|
-| geas 本体 | 構文解析・検査・生成器・CLI など `geas/` の Python（のちに Rust）のコード、docs、skills | GPL-3.0-or-later（[LICENSE](../LICENSE)） |
+| geas 本体 | 構文解析・検査・生成器・CLI など `geas/` の Python のコード、docs、skills | GPL-3.0-or-later（[LICENSE](../LICENSE)） |
 | 生成コードに埋め込まれる部品 | 生成される Rust に写される、範囲検査・有理数・丸め・割合検査・冪等キーの組・保証違反・JSON の入出力・WASM の入口などのコード片 | MIT OR Apache-2.0（[LICENSE-MIT](../LICENSE-MIT)・[LICENSE-APACHE](../LICENSE-APACHE)） |
 | 生成された Rust とバイナリ | `.geas` から作られた Rust のコードと、そこからビルドしたもの | 利用者のもの。制限なし（埋め込まれた部品の MIT/Apache の表示だけ守る） |
 
