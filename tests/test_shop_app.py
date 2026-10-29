@@ -189,35 +189,6 @@ def test_再起動しても注文と返事待ちは残る(server):
     reset_mock(b)
 
 
-_fresh = []
-
-
-def _fresh_server(tmp_path, port=0):
-    """状態のない新しい DB で、もう1つサーバーを起こす（テストの最後に止める）。port=0 なら空いているポート"""
-    s = socket.socket()
-    s.bind(("127.0.0.1", port))
-    port = s.getsockname()[1]
-    s.close()
-    proc = subprocess.Popen([str(APP / "generated" / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(tmp_path / "ui.sqlite"),
-                             "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _fresh.append(proc)
-    for _ in range(50):
-        try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1)
-            return port
-        except OSError:
-            time.sleep(0.1)
-    raise RuntimeError("サーバーが起動しません")
-
-
-@pytest.fixture(autouse=True, scope="module")
-def _stop_fresh():
-    yield
-    for p in _fresh:
-        p.kill()
-        p.wait()
-
-
 def _node_env():
     node = shutil.which("node")
     if node is None:
@@ -228,22 +199,13 @@ def _node_env():
     return env if ok else None
 
 
-@pytest.mark.skipif(_node_env() is None, reason="node と Playwright が無い")
-def test_画面_PWA_で注文から完了まで進む(server, tmp_path):
-    # 画面の確認は、状態を持たない新しい DB のサーバーで行う
-    r = subprocess.run(["node", str(APP / "e2e" / "pwa.js"), "http://127.0.0.1:" + str(_fresh_server(tmp_path))], env=_node_env(), capture_output=True, text=True, timeout=120)
-    assert r.returncode == 0, r.stdout + r.stderr
-
-
-@pytest.mark.skipif(_node_env() is None, reason="node と Playwright が無い")
-def test_Chrome拡張がAmazonの商品ページにお店の価格を出す(server, tmp_path):
-    # 拡張が問い合わせてよいオリジンは manifest の host_permissions にある localhost:8787 だけなので、そのポートで起こす
-    try:
-        _fresh_server(tmp_path, 8787)
-    except OSError:
-        pytest.skip("ポート 8787 が使用中")
-    r = subprocess.run(["node", str(APP / "e2e" / "extension.js"), str(tmp_path)], env=_node_env(), capture_output=True, text=True, timeout=180)
-    assert r.returncode == 0, r.stdout + r.stderr
+def test_計画書の画面の具体例から生成したテストが通る(server):
+    # build.sh が、計画書の「ユースケースの手順」と「画面の具体例」から generated/tests/test_screen_examples.py を作る。
+    # PWA と Chrome 拡張の通しは、手書きでなくこの表が持つ（node と Playwright が無ければ、その中で飛ばされる）
+    f = APP / "generated" / "tests" / "test_screen_examples.py"
+    assert f.exists()
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-rs", str(f)], env=_node_env() or os.environ, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0 and ("1 passed" in r.stdout or "1 skipped" in r.stdout), r.stdout + r.stderr
 
 
 def test_計画書のURLの具体例から生成したテストが通る(server):

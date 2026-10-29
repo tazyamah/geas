@@ -2,6 +2,8 @@
 """リソース（resource）：URL の決め方・検査（状態の対応が必須、クエリ文字列を使わない、重なりなし）"""
 from pathlib import Path
 
+import pytest
+
 from geas.check import ERROR, WARN, check
 from geas.parser import parse
 from geas.rest import routes, singular, snake
@@ -161,3 +163,35 @@ def test_URLの具体例はルートと突き合わされ_テストに変わる(
     for old, new, what in (("| UX4 | POST | /orders |", "| UX4 | POST | /nothing |", "ルートがない"), ("| 通貨が違う | 422 |", "| 通貨が違う | 200 |", "状態が違う"), ("| 受付 | 201 |", "| 受付済 | 201 |", "結果がない")):
         bad = read_plan(mutate(plan_md, old, new))
         assert [f for f in compare_static(sp, bad) if "URL例" in f.where], what
+
+
+def test_画面の具体例はユースケースの手順と結ばれ_通しテストの手順に変わる(tmp_path):
+    from geas.plan import read_plan
+    from geas.testgen import screen_cases, write_screen_tests
+    plan_md = (Path(__file__).parent / "fixtures" / "overseas_shop" / "overseas_shop_plan.md").read_text()
+    ck = chk(CODE)
+    plan = read_plan(plan_md)
+    cases = {c["name"]: c["steps"] for c in screen_cases(ck, plan)}
+    order = cases["商品を見つけて注文する"]
+    assert [s["op"] for s in order] == ["look", "open", "act", "look"] and order[1]["row"] == "tea-jp" and order[1]["opens"] == "OrderForm"
+    placed = order[2]
+    assert placed["deed"] == "place_order" and placed["result"] == "Received" and placed["to"] == "MyOrders"
+    assert {"as": "field", "field": "ship_to.country", "map": False, "value": "JP"} in placed["set"]  # 合成の部品は 欄.部品
+    assert {"as": "count", "row": "knife-jp", "value": 1} in placed["set"]
+    assert order[0]["design"]["layout"] == "grid"  # 画面デザインの表から
+    rej = cases["注文が受け付けられない理由を知る"]
+    assert rej[3]["replace"] == [{"as": "slot", "slot": "currency", "value": "USD"}] and rej[3]["result"] == "OtherCurrency"
+    assert cases["取り下げた商品を扱おうとして失敗する"][1]["replace"][0]["field"] == "product_id"
+    exp = cases["返事が来ない注文は、30分で取り消される"][2]
+    assert exp["drop"] == ["PaymentSettled"] and exp["advance"] == 1800  # 返事を落とし、時計を進める（実際には待たない）
+    ext = cases["商品ページでなければ、何も出さない"][0]
+    assert ext["ext"] and ext["origin"] == "https://www.amazon.co.jp" and ext["expect"] == [{"as": "表示なし", "value": ""}]
+    f = write_screen_tests(ck, plan, tmp_path)
+    assert f == tmp_path / "tests" / "test_screen_examples.py" and (tmp_path / "tests" / "screen_runner.js").exists() and (tmp_path / "tests" / "screen_cases.json").exists()
+    for old, new, what in (
+        ("| 商品を見つけて注文する | 3 | 明細.knife-jp", "| 商品を見つけて注文する | 3 | 明細.knife-jp = 1; 備考 = x; 明細.knife-jp", "ない入力欄"),
+        ("| 通知: 受付 |\n| 商品を見つけて注文する | 4", "| 通知: 受付; 色: 赤 |\n| 商品を見つけて注文する | 4", "読めない見えること"),
+        ("| 商品を入荷する | 2 | 商品ID = bowl-jp", "| 商品を入荷する | 9 | 商品ID = bowl-jp", "手順がない"),
+    ):
+        with pytest.raises(ValueError):
+            screen_cases(ck, read_plan(mutate(plan_md, old, new)))
