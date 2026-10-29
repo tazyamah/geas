@@ -9,8 +9,9 @@ from html import escape
 from .ast import *  # noqa: F401,F403
 from .check import QUESTION, WARN
 from . import svg
-from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, split_top, usecases
+from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, split_top, tables, usecases
 from .spec import build
+from .mcp import tool_defs
 
 
 
@@ -64,9 +65,78 @@ def plan_sections(plan_md: str) -> tuple[str, str]:
         head, _, body = part.partition("\n")
         if head.startswith("0.1"):
             got["利用"] = body
+        elif head.startswith("0.2"):  # その他の利用イメージは別のタブ（plan_others）
+            continue
         elif head.startswith("0."):
             got["概要"] = body
     return got["概要"], got["利用"]
+
+
+def plan_others(plan_md: str) -> tuple[str, list[tuple[str, list[dict]]]]:
+    """計画書の「0.2 その他の利用イメージ」：前置きの文章と、場面ごとの台本（話し手・発言・呼ぶツールの表）。
+    Geas で定義できないもの（AI との会話など）を、人と AI の認識合わせのために書く節で、突合しない"""
+    for part in re.split(r"^## ", plan_md, flags=re.M):
+        head, _, body = part.partition("\n")
+        if not head.startswith("0.2"):
+            continue
+        intro, *scenes = re.split(r"^### ", body, flags=re.M)
+        out = []
+        for sc in scenes:
+            title, _, rest = sc.partition("\n")
+            rows = [r for hd, rs in tables(rest) for r in rs]
+            out.append((title.strip(), rows))
+        return intro, out
+    return "", []
+
+
+def mcp_summary(t: dict) -> str:
+    sch = t["inputSchema"]
+    ps = sch["properties"]
+    return "、".join(f"{n}{'＊' if n in sch['required'] else ''}" for n in ps) or "なし"
+
+
+def mcp_section(tools: list[dict]) -> str:
+    rows = [(t["name"], t["title"], f'{t["geas"]["method"]} {t["geas"]["path"]}', mcp_summary(t),
+             "読むだけ" if t["annotations"]["readOnlyHint"] else "消す" if t["annotations"]["destructiveHint"] else "書く") for t in tools]
+    return (lead("AI（MCP クライアント）は、人や画面と同じ URL・同じ処理を、次のツールとして呼べます。ツールの定義は、URL の定義から機械的に作ったもので、手で足したものはありません。"
+                 "押して動かすことはできません。入力の「＊」は必須です。")
+            + table(["ツール名", "呼ぶもの", "URL", "入力", "種類"], rows))
+
+
+def check_call(call: str, by_name: dict) -> str:
+    """台本のツール呼び出し（名前と JSON の入力）が、ツール定義と合っているか。合っていれば空、違えばその理由"""
+    name, _, arg = call.strip().partition(" ")
+    name = name.strip("`")
+    if name not in by_name:
+        return "定義にないツール"
+    sch = by_name[name]["inputSchema"]
+    try:
+        given = json.loads(arg.strip().strip("`") or "{}")
+    except ValueError:
+        return "入力が JSON ではありません"
+    if set(given) - set(sch["properties"]):
+        return "定義にない入力：" + "、".join(sorted(set(given) - set(sch["properties"])))
+    if set(sch["required"]) - set(given):
+        return "足りない入力：" + "、".join(sorted(set(sch["required"]) - set(given)))
+    return ""
+
+
+def others_view(plan_md: str, tools: list[dict]) -> str:
+    intro, scenes = plan_others(plan_md)
+    by_name = {t["name"]: t for t in tools}
+    out = [f'<div class="intro">{md_to_html(intro)}</div>'] if intro.strip() else []
+    for title, rows in scenes:
+        bs = []
+        for r in rows:
+            who, say, call = r.get("話し手", ""), r.get("発言", ""), r.get("呼ぶツール", "")
+            cls = {"人": "me", "AI": "ai"}.get(who, "tool")
+            tool = ""
+            if call:
+                problem = check_call(call, by_name)
+                tool = f'<div class="call{" bad" if problem else ""}">{f"⚠ {escape(problem)}：" if problem else "ツール："}{inline(call)}</div>'
+            bs.append(f'<div class="bub {cls}"><span class="who">{escape(who)}</span><div class="say">{inline(say)}</div>{tool}</div>')
+        out.append(f'<section><h2>{escape(title)}</h2><div class="chat">{"".join(bs)}</div></section>')
+    return "".join(out)
 
 
 def sample_value(ck, t: Type, i: int, label: str) -> str:
@@ -550,6 +620,15 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 #pad .ng { display: flex; gap: 6px; margin-top: 6px; }
 #pad .ng input { flex: 1; min-width: 0; font: inherit; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 #ngs li { margin: .3em 0; }
+
+.intro p { margin: 0 0 .6em; }
+.chat { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.bub { max-width: 88%; padding: 8px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+.bub.me { align-self: flex-end; background: var(--accent); border-color: var(--accent); color: #fff; }
+.bub.tool { align-self: center; max-width: 100%; background: var(--bg); font-size: .85rem; color: var(--muted); }
+.bub .who { display: block; font-size: .72rem; opacity: .7; margin-bottom: 2px; }
+.bub .call { margin-top: 6px; padding: 4px 8px; border-radius: 8px; background: var(--bg); color: var(--ink); font-size: .82rem; }
+.bub .call.bad { background: var(--ask-soft); color: var(--ask); font-weight: 600; }
 [hidden] { display: none !important; }
 """
 
@@ -558,7 +637,7 @@ document.querySelectorAll('.tab[data-view]').forEach(function(t){t.addEventListe
  document.querySelectorAll('.tab[data-view]').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
  document.querySelectorAll('.view').forEach(function(v){v.hidden=v.id!=='view-'+t.dataset.view});window.scrollTo(0,0)})});
 var org=document.getElementById('origin');
-if(org){var fo=function(){['walk','api'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=org.value!==id})};org.onchange=fo;fo()}
+if(org){var fo=function(){['walk','api','mcp'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=org.value!==id})};org.onchange=fo;fo()}
 var sp=document.getElementById('specsel');
 if(sp){var fs=function(){document.querySelectorAll('.sub-view').forEach(function(v){v.hidden=v.dataset.sub!==sp.value})};sp.onchange=fs;fs()}
 document.querySelectorAll('[data-dev]').forEach(function(b){b.addEventListener('click',function(){
@@ -778,6 +857,11 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             '<button id="bNext" class="go" type="button">次へ</button><button id="bOk" class="okb" type="button">OK</button><button id="bNg" class="ngb" type="button">NG</button></div>'
             '<div class="ng" id="ngrow" hidden><input id="why" placeholder="NGの理由（空でもよい）" aria-label="NGの理由"><button id="ngsave" type="button">保存して次へ</button></div></div>')
 
+    # 動作：MCP（AI から）。ツールは URL の定義から機械的に作る
+    tools = tool_defs(ck) if spec["ルート"] else []
+    if tools:
+        add("mcp", None, mcp_section(tools))
+
     # 動作：API
     if spec["ルート"]:
         url_ex = plan.get("URL例", [])
@@ -830,7 +914,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if "usecases" in by_id:
         add_view("uc", "ユースケース", by_id["usecases"])
     # [動作]：起点を選んで、動く画面とコントローラーで確かめる
-    origins = [(a, l) for a, l in (("walk", "画面（スマホ・PC）"), ("api", "API")) if a in by_id]
+    origins = [(a, l) for a, l in (("walk", "画面（スマホ・PC）"), ("api", "API"), ("mcp", "MCP（AI から）")) if a in by_id]
     if origins:
         devs = ('<span id="devs" class="devs" role="group" aria-label="端末"><button class="tab" data-dev="phone" aria-pressed="true">スマホ</button>'
                 '<button class="tab" data-dev="pc" aria-pressed="false">PC</button></span>') if "walk" in by_id else ""
@@ -856,6 +940,9 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     pick = ('<div class="pick"><label for="specsel">分類</label><select id="specsel">'
             + "".join(f'<option value="{g}">{escape(l)}</option>' for g, l, _ in spec_groups) + "</select></div>")
     add_view("spec", "仕様", pick + sub)
+    # [その他]：Geas で定義できないものの利用イメージ（AI との会話など）。計画書に書いたときだけ
+    if plan_md and plan_others(plan_md)[1]:
+        add_view("etc", "その他", others_view(plan_md, tools))
     nav = f'<div class="tabs" role="tablist">{"".join(tabs)}</div>'
     body = "".join(views)
     return page(f"仕様書 {name}".strip(), name.strip("（）") or "仕様書", nav, body, f"<script>{TAB_JS}</script>" + (f"<script>{JS}</script>" if p.screens else ""), fragment)

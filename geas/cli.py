@@ -88,7 +88,7 @@ def main(argv=None) -> int:
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
     r.add_argument("--runtime", action="store_true", help="サーバーの実行部（geas_server の crate）も、生成物の server/ に置く（--host と一緒に）")
     r.add_argument("--seed", help="サーバーが、DB が空のときだけ入れる最初のデータ（実体名→キー→行の JSON）。無ければ何も入れない")
-    r.add_argument("--server", default="http://localhost:8787", help="拡張が問い合わせるサーバーの既定の URL")
+    r.add_argument("--server", default="http://localhost:8787", help="拡張と MCP の橋渡しが問い合わせるサーバーの既定の URL")
     m = sub.add_parser("compare", help="plan の仕様書（①）とコードの突合。具体例も実行する")
     m.add_argument("code")
     m.add_argument("plan")
@@ -170,6 +170,9 @@ def main(argv=None) -> int:
                     return 1
                 if f:
                     print(f"画面の具体例のテストを生成しました: {f}")
+        if a.host:
+            from .mcp import write_mcp
+            write_mcp(ck, a.o, a.server)
         if a.host and ext_screens(ck):
             write_ext(ck, a.o, a.server)
         print(f"生成しました: {a.o}")
