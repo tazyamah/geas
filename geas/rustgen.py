@@ -297,7 +297,7 @@ class Gen:
             def guard(cond):  # null は絞り込みを満たさない。値があれば fv で比べる
                 return f"match &r.{f} {{ Some(fv) => {cond}, None => false }}" if nul else cond
             if op == "直近":
-                self.w(f"        if !({guard(f'{v} >= ctx.現在 - {a}')}) {{ return false; }}")
+                self.w(f"        if !({guard(f'{v} >= ctx.current_time - {a}')}) {{ return false; }}")
                 continue
             t = ins[a]
             if op.startswith("含む"):

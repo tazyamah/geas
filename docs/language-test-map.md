@@ -42,7 +42,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 7. `event … on online`・`each` | ◎ | `test_runtime.py` の「つながりが戻る出来事は…」。`opened` は「アプリを開いた出来事も…」。外から渡す入力で動く形（`external → 処理`）は動かす確認が無い（✕） |
 | 8. `query` の `filter`（equals／at_least／at_most／contains ignore_case）・`where`（or）・`order`・`page`・`select` | ◎ | `test_behavior.py` の「問い合わせは絞り込み…」、`test_geas.py` の「null になりうる項目の問い合わせ…」「page は並びのうえで先頭の1ページを返す」 |
 | 8. `sum(…)`・`count(…)` の列 | ◎ | `test_geas.py` の「null になりうる項目の問い合わせ…」 |
-| 8. `filter … within`（期間の絞り込み） | ✕ | **不具合**：必要な参照の名前が「現在」固定で、名前の規則（英小文字）に合わず、規則どおりには書けない。`test_behavior.py` に、直すまで xfail のテストを置いた |
+| 8. `filter … within`（期間の絞り込み） | ◎ | `test_behavior.py` の「within は current_time から1時間以内のものだけ返す」（時刻の slot `current_time` と比べる） |
 | 9. `screen`（欄・行・操作・通知・遷移・design） | ◎ | `test_screens.py`、`test_runtime.py` の「計画書の画面の具体例から…」（実際の画面で通す。node と Playwright があるときだけ）。固定通貨の金額列は `test_screens.py` の「固定の通貨の金額の列は…」 |
 | 9. ブラウザ拡張の `read`（url／element／row／lookup） | ◎ | `test_extgen.py`、`test_runtime.py` の「計画書の画面の具体例から…」（拡張の 3 通り：ページから読む・ページの表・読めない） |
 | 9. 画面の行き先 `back`・`open`（行を選んで進む） | ◎ | `test_runtime.py` の「計画書の画面の具体例から…」（一覧で行を選んで詳細へ進み、取り下げて一覧へ戻る） |
@@ -53,7 +53,6 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 
 ## まだ無いもの（✕）
 
-- `filter … within`（上の不具合を直してから、通常のテストにする）。
 - `event` の `external → 処理`（外から渡す入力で動く形）。
 - 同時に来た書き込み（サーバーへの並行リクエスト）の直列化。
 - `now`・`tz_offset` を使う処理（時刻の計算は `test_geas.py` の時刻の項目で動かしている）。

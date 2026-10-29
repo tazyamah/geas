@@ -564,8 +564,8 @@ class Checker:
                 if op == "直近":
                     if f.type.kind != "日時":
                         self.d(ERROR, "型", where, f"「{fn} 直近」は日時の項目にだけ使えます")
-                    if not any(n == "現在" for n, _ in q.refs):
-                        self.d(ERROR, "名前", where, "「直近」を使うには、参照 現在 が必要です")
+                    if not any(n == "current_time" for n, _ in q.refs):
+                        self.d(ERROR, "名前", where, "「within」を使うには、時刻の slot current_time が必要です")
                     continue
                 t = ins.get(arg)
                 if t is None:

@@ -434,14 +434,14 @@ def test_バイト列_割合_終わりなく続く状態_無いことの確認�
     assert got == ["false true true false", "true true false", "Done", "[1, 2, 3] 1/4 Seen", "Gone|0", "Missing", "Present Absent"], got
 
 
-# ---- 既知の不具合：filter … within は、必要な参照の名前「現在」が、名前の規則（英小文字）に合わず書けない ----
+# ---- 期間の絞り込み（within）：時刻の slot current_time と比べる ----
 WITHIN = """ltype Weight = int 0..
 entity Memo {
   memo_id: id unique
   written_at: time required
 }
 query recent {
-  slot current: time
+  slot current_time: time
   from Memo
   filter written_at within 1 hour
   select memo_id
@@ -449,8 +449,19 @@ query recent {
 }
 """
 
+MAIN_WITHIN = """use geas_app::*;
+fn main() {
+    let mut s = Store::default();
+    for (id, at) in [("old", 1000i64), ("edge", 6400), ("new", 9000), ("future", 20000)] {
+        s.Memo.insert(id.into(), Memo { memo_id: id.into(), written_at: at });
+    }
+    let rows = recent(&recentCtx { current_time: 10000 }, &s, &recentInput {});
+    println!("{}", rows.iter().map(|r| r.memo_id.clone()).collect::<Vec<_>>().join(","));
+}
+"""
 
-@pytest.mark.xfail(strict=True, reason="within の参照が「現在」固定で、名前の規則に合わない（直すとき、このテストを通常のテストにする）")
-def test_within_は規則どおりの名前で書ける():
-    ck = check(parse(WITHIN), strict_names=True)
-    assert ck.ok, ck.diags
+
+def test_within_は_current_time_から1時間以内のものだけ返す(tmp_path):
+    assert check(parse(WITHIN), strict_names=True).ok
+    got = run_app(WITHIN, MAIN_WITHIN, tmp_path)
+    assert got == ["edge,future,new"], got  # 現在 − 3600 以降（境界を含む）。未来の時刻も条件を満たす
