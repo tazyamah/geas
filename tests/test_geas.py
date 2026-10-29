@@ -2617,3 +2617,11 @@ def test_問い合わせの_equals_は参照の項目をIDの入力で絞れる(
     assert "r.customer == *x" in generate(ck)
     bad = OVERSEAS.replace("filter customer equals customer", "filter total equals customer")
     assert any("equals" in m for m in msgs(chk(bad), ERROR))
+
+
+def test_生成した_unsafe_は_proven_マクロの中だけで_verify_で通常の確認になる():
+    lib = generate(chk(CODE))
+    assert "proven!(" in lib
+    body = lib.split("/// 端数の出る値")[1]  # マクロ定義より後ろ（生成した処理の本体）
+    assert "unsafe" not in body and "unwrap_unchecked" not in body
+    assert '#[cfg(feature = "verify")]' in lib and ".expect($what)" in lib

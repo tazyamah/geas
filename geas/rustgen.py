@@ -14,6 +14,13 @@ PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 
+/// 検査器が「必ずある」と示した所の取り出し。通常のビルドは確かめずに借りる。
+/// `--features verify` のビルドでは通常の確認に変わり、検査器の抜けがあればここで panic して見つかる。
+#[cfg(feature = "verify")]
+macro_rules! proven { ($e:expr, $what:expr) => { $e.expect($what) }; }
+#[cfg(not(feature = "verify"))]
+macro_rules! proven { ($e:expr, $what:expr) => { unsafe { $e.unwrap_unchecked() } }; }
+
 /// 端数の出る値（分子/分母）。丸めの指定が無いと整数にできない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ratio {
@@ -403,7 +410,7 @@ class Gen:
                 self.w(f"                Write::{d}_Del(id) => {{ self.del_{d}(&id); }}")
             else:
                 # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
-                self.w(f"                Write::{d}_{f}(id, v) => {{ unsafe {{ self.{d}.get_mut(&id).unwrap_unchecked() }}.{f} = v; }}")
+                self.w(f"                Write::{d}_{f}(id, v) => {{ proven!(self.{d}.get_mut(&id), \"検査で示した書込先が無い: {d}\").{f} = v; }}")
         self.w("            }\n        }\n    }")
         self.delete_methods()
         self.w("    pub fn diff(&self, after: &Store) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
@@ -654,7 +661,7 @@ class ProcGen:
     def src(self, e) -> str:
         """読むだけの場所。無いかもしれない入力は、検査で確かめてあるので中身を借りる"""
         if isinstance(e, Name) and e.n in self.null_inputs and self.scope.get(e.n, ("",))[0] == "input":
-            return f"unsafe {{ {self.place(e)}.as_ref().unwrap_unchecked() }}"
+            return f'proven!({self.place(e)}.as_ref(), "検査で示した入力が無い: {e.n}")'
         return self.place(e)
 
     def rx(self, e) -> str:
@@ -667,7 +674,7 @@ class ProcGen:
                 kind, tok = self.scope[e.n]
                 x = self.place(e)
                 if kind == "input" and e.n in self.null_inputs:  # 検査で、無くないと確かめてある（実行時に確かめない）
-                    return self.wrap(tok, f"unsafe {{ {x}.clone().unwrap_unchecked() }}")
+                    return self.wrap(tok, f'proven!({x}.clone(), "検査で示した入力が無い: {e.n}")')
                 if kind == "local" and tok in ("Int", "Money", "Rational", "Ratio"):
                     return x
                 if kind == "ref":  # slot も入力と同じく、整数と金額は i128 で計算する
@@ -681,7 +688,7 @@ class ProcGen:
                 return self.wrap(self.tok(e), f"{self.place(e)}.unwrap_or({self.fills[(e.e.n, e.n)]})")
             if self.nullable(e):  # 検査で、null でないと確かめてある
                 # 検査で、null でないと確かめてある（No.28：示せた所は実行時に確かめない）
-                return self.wrap(self.tok(e), f'unsafe {{ {self.place(e)}.clone().unwrap_unchecked() }}')
+                return self.wrap(self.tok(e), f'proven!({self.place(e)}.clone(), "検査で示した項目が null: {e.n}")')
             return self.wrap(self.tok(e), self.place(e))
         if isinstance(e, Index):
             return self.place(e)
@@ -949,6 +956,9 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 {crate_type}
+[features]
+verify = []
+
 [profile.release]
 {opt}overflow-checks = true
 '''
