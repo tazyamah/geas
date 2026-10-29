@@ -98,6 +98,7 @@ def test_人向けの仕様書は画面の遷移とモックとデザインを�
         assert s in html, s
     assert "mermaid" not in html and "https://cdnjs" not in html  # 図は自前の SVG で、外部の読み込みに頼らない
     assert "受け入れ可" in html and "前の版からの変更" not in html
+    assert 'role="tab"' in html and "画面の動き（さわれます）" in html and 'data-dev="pc"' in html  # タブとコントローラー
 
 
 def test_前の版を渡すと_仕様書に変更点が出る():

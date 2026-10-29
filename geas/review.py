@@ -432,6 +432,15 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 .bad { color: var(--remove); font-weight: 600; }
 @media (max-width: 480px) { h1 { font-size: 1.55rem; } .cards { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+/* タブ：ユースケース図／画面の動き／決まりごと…。画面の動きのタブでだけ、レビュー操作パネルが浮く */
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.tab { font: inherit; font-size: .9rem; padding: 8px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; cursor: pointer; }
+.tab[aria-selected="true"], .tab[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.view { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
+.view[hidden] { display: none; }
+.devs { display: flex; gap: 8px; }
+#mock.pc { max-width: none; border-radius: 8px; }
 /* geas 独自：画面のモック・レビュー操作パネル・画面デザインの見取り図 */
 .sub { color: var(--muted); font-size: .9rem; margin: 0; }
 .wfs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
@@ -452,7 +461,7 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 #mock .ucid { position: absolute; left: 6px; top: 2px; font-size: .62rem; opacity: .45; color: #fff; z-index: 1; }
 #mock button, #mock input { font: inherit; }
 #mock button { border: 0; border-radius: 8px; padding: 8px 12px; color: #fff; }
-#mock input { padding: 7px; border: 1px solid #8886; border-radius: 6px; width: 100%; background: transparent; color: inherit; }
+#mock input { box-sizing: border-box; padding: 7px; border: 1px solid #8886; border-radius: 6px; width: 100%; background: transparent; color: inherit; }
 #mock label { font-size: .8rem; opacity: .8; display: block; }
 #mock table { border-collapse: collapse; font-size: .85rem; width: 100%; }
 #mock th, #mock td { border: 1px solid #8884; padding: 4px 6px; text-align: left; vertical-align: top; }
@@ -479,6 +488,15 @@ svg.diagram .note.ask rect { fill: var(--ask-soft); stroke: var(--ask); stroke-w
 [hidden] { display: none !important; }
 """
 
+TAB_JS = """
+document.querySelectorAll('.tab[data-view]').forEach(function(t){t.addEventListener('click',function(){
+ document.querySelectorAll('.tab[data-view]').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
+ document.querySelectorAll('.view').forEach(function(v){v.hidden=v.id!=='view-'+t.dataset.view});window.scrollTo(0,0)})});
+document.querySelectorAll('[data-dev]').forEach(function(b){b.addEventListener('click',function(){
+ document.querySelectorAll('[data-dev]').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});
+ var m=document.getElementById('mock');if(m)m.classList.toggle('pc',b.dataset.dev==='pc')})});
+"""
+
 JS = """
 const S=JSON.parse(document.getElementById('screens-data').textContent),U=JSON.parse(document.getElementById('ucs').textContent);
 const mock=document.getElementById('mock'),pad=document.getElementById('pad'),sel=document.getElementById('opsel'),$=id=>document.getElementById(id);
@@ -488,7 +506,7 @@ function nsteps(){return U[op].steps.length}
 function curScreen(){const u=U[op];return k<u.steps.length?u.steps[k].screen:u.end}
 function banner(){const u=U[op];if(k>0){const p=u.steps[k-1];if(p.result&&p.to==='そのまま')return p.op+'の結果：'+p.result}return''}
 function draw(){
- const u=U[op],n=curScreen(),s=S[n],d=s.design;mock.className=d.mode==='dark'?'dark':'';mock.innerHTML='';
+ const u=U[op],n=curScreen(),s=S[n],d=s.design;mock.className=(d.mode==='dark'?'dark':'')+(document.querySelector('[data-dev=pc]').getAttribute('aria-pressed')==='true'?' pc':'');mock.innerHTML='';
  mock.append(el('span','ucid',u.id));
  const h=el('header');h.style.background=d.accent;h.append(el('b','',n));mock.append(h);
  const body=el('div','in lay-'+d.layout);const bn=banner();if(bn)body.append(el('div','banner',bn));
@@ -625,6 +643,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             uj.append({"id": f"UC{i}", "name": k, "steps": steps, "end": here or v[-1]["画面"]})
         ex = plan.get("画面例", [])
         add("walk", "ユースケースを画面でたどる", lead("画面の下に浮いているレビュー操作パネルで、ユースケースを選び、[次へ]を押していくと、押す場所が黄色く光って画面が進みます。最後に OK か NG を付けてください（NG は理由を書けます）。表の中身は型から作った見本で、処理は動きません。")
+            + '<div class="devs" role="group" aria-label="端末"><button class="tab" data-dev="phone" aria-pressed="true">スマホ</button><button class="tab" data-dev="pc" aria-pressed="false">PC</button></div>'
             + '<div class="sc"><div id="mock"></div></div>'
             + examples(None, ["ユースケース", "手順", "入れる・選ぶ", "見えること"], [(r["ユースケース"], r["手順"], r["入れる・選ぶ"], r["見えること"]) for r in ex])
             + '<div id="ngwrap" hidden><h3>NG にしたもの</h3><ul id="ngs" class="plain"></ul><button id="copy" type="button">コピー</button></div>'
@@ -673,8 +692,25 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     meta = [f'<span class="chip {vcls}">{verdict}</span>', f"<span>拒否 {len(rejects)} 件 ・ 確認 {len(asks)} 件 ・ 記録 {len(records)} 件</span>"]
     if base_ck is not None:
         meta.append(f"<span>比較元：{escape(base_label or '前の版')}</span>")
-    nav = "".join(f'<a href="#{escape(a)}">{escape(t.split("：")[0].split("（")[0] if "：" in t or "（" in t else t)}</a>' for a, t, _ in sec)
-    body = "".join(h for _, _, h in sec)
+    by_id = {a: h for a, _, h in sec}
+    groups = [
+        ("ov", "概要と問い", lambda a: a in ("questions", "overview", "usage", "changes", "open")),
+        ("uc", "ユースケース図", lambda a: a == "usecases"),
+        ("wf", "画面の動き（さわれます）", lambda a: a in ("screens", "walk", "design", "coverage")),
+        ("rules", "決まりごと", lambda a: a in ("data", "rules") or a.startswith("states-")),
+        ("flows", "つながりと流れ", lambda a: a in ("systems", "triggers", "deletes") or a.startswith("flow-")),
+        ("routes", "URL", lambda a: a == "routes"),
+    ]
+    tabs, views = [], []
+    for gid, label, pick in groups:
+        ids = [a for a, _, _ in sec if pick(a)]
+        if not ids:
+            continue
+        first = not tabs
+        tabs.append(f'<button class="tab" role="tab" id="t-{gid}" aria-selected="{"true" if first else "false"}" data-view="{gid}">{escape(label)}</button>')
+        views.append(f'<div class="view" id="view-{gid}"{"" if first else " hidden"}>{"".join(by_id[a] for a in ids)}</div>')
+    nav = f'<div class="tabs" role="tablist">{"".join(tabs)}</div>'
+    body = "".join(views)
     footer = ("<footer><p>この画面は、コード（geas）から自動で生成しています。図・表・具体例・問いはすべてコードと検査器から導いたもので、AI による要約は含みません。"
               "直さずに、会話で答えてコードを変えます。</p></footer>")
     head = (f"<title>{escape(title)}</title>\n"
@@ -684,7 +720,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
             f"<style>{CSS}</style>\n")
     content = (f'<div class="page"><header class="top"><p class="eyebrow">仕様レビュー</p><h1>{escape(name.strip("（）") or "仕様書")}</h1>'
                f'<div class="meta">{"".join(meta)}</div><nav>{nav}</nav></header>{body}{footer}</div>'
-               + (f"<script>{JS}</script>" if p.screens else ""))
+               + f"<script>{TAB_JS}</script>" + (f"<script>{JS}</script>" if p.screens else ""))
     if fragment:
         return head + content
     return ('<!doctype html>\n<html lang="ja"><head><meta charset="utf-8">'
