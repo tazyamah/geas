@@ -77,6 +77,8 @@ def main(argv=None) -> int:
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
     v.add_argument("code")
     v.add_argument("--plan", help="計画書（①）")
+    v.add_argument("--base", help="比べる前の版のコード。渡すと「前の版からの変更」が載る")
+    v.add_argument("--base-git", metavar="REV", help="比べる前の版を、git の REV（例: HEAD~1）にある同じコードにする")
     v.add_argument("-o", required=True)
     r = sub.add_parser("rust", help="Rust の crate を生成する")
     r.add_argument("code")
@@ -111,7 +113,24 @@ def main(argv=None) -> int:
     if a.cmd == "review":
         plan_md = Path(a.plan).read_text() if a.plan else None
         findings = compare_static(build(ck), read_plan(plan_md)) if plan_md else []
-        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
+        base_ck, base_label = None, ""
+        if a.base:
+            base_ck, base_label = load(a.base), a.base
+        elif a.base_git:
+            import subprocess, tempfile
+            code = Path(a.code).resolve()
+            top = subprocess.run(["git", "-C", str(code.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+            rel = code.relative_to(Path(top).resolve())
+            old = subprocess.run(["git", "-C", top, "show", f"{a.base_git}:{rel.as_posix()}"], capture_output=True, text=True)
+            if old.returncode:
+                print(f"前の版を読めません（{a.base_git}:{rel.as_posix()}）: {old.stderr.strip()}", file=sys.stderr)
+                return 2
+            with tempfile.TemporaryDirectory() as d:
+                tmp = Path(d) / code.name
+                tmp.write_text(old.stdout)
+                base_ck = load(tmp)
+            base_label = f"git {a.base_git}"
+        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label))
         print(f"生成しました: {a.o}")
         return 0 if ck.ok else 1
     if not ck.ready:

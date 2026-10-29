@@ -94,9 +94,18 @@ def test_人向けの仕様書は画面の遷移とモックとデザインを�
     from geas.review import review
     ck = chk(CODE)
     html = review(ck, PLAN, compare_static(build(ck), read_plan(PLAN)), "（海外店）")
-    for s in ("画面の遷移", "画面デザイン", "ユースケースを画面でたどる", 'id="screens-data"', "商品を見つけて注文する", "stateDiagram-v2", "flowchart LR"):
+    for s in ("画面の流れ", "画面デザイン", "ユースケースを画面でたどる", 'id="screens-data"', "商品を見つけて注文する", "誰が何をするか", "状態の移り変わり：注文", "処理の流れ：", 'class="diagram"'):
         assert s in html, s
-    assert "計画書との食い違いはなく" in html
+    assert "mermaid" not in html and "https://cdnjs" not in html  # 図は自前の SVG で、外部の読み込みに頼らない
+    assert "受け入れ可" in html and "前の版からの変更" not in html
+
+
+def test_前の版を渡すと_仕様書に変更点が出る():
+    from geas.review import review
+    ck = chk(CODE)
+    old = chk(mutate(CODE, "    OtherCurrency → stay\n", "    OtherCurrency → reply\n"))
+    html = review(ck, PLAN, [], "（海外店）", base_ck=old, base_label="前の版")
+    assert "前の版からの変更" in html and "比較元：前の版" in html and 'class="removed"' in html and 'class="added"' in html
 
 
 def test_画面の定義と_design_が生成物に載る():

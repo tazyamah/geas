@@ -114,13 +114,15 @@ python -m geas spec $F/overseas_shop.geas --plan $F/overseas_shop_plan.md > $F/o
 python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $F/overseas_shop_review.html
 ```
 
+更新のレビューでは、前の版を渡すと仕様書に「前の版からの変更」が載る：`--base 前のコード.geas`、または git の版なら `--base-git HEAD~1`。
+
 ## ソースの地図（`geas/`）
 
 | ファイル | 役目 |
 |---|---|
 | `lexer.py`・`parser.py`・`ast.py` | 字句・構文・構文木。宣言の入口は `Parser.program` |
 | `check.py` | 検査器（型・範囲・書き込みの重なり・遷移・REST・画面・拡張・rule など） |
-| `spec.py`・`review.py`・`plan.py` | 仕様書（Markdown／HTML）の生成、計画書の読み取りと突合、確認の網羅 |
+| `spec.py`・`review.py`・`svg.py`・`plan.py` | 仕様書（Markdown／HTML）の生成（図は `svg.py` の自前 SVG。見た目・構造は specgap のレビュー画面に合わせる）、計画書の読み取りと突合、確認の網羅 |
 | `rustgen.py`・`hostgen.py` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
 | `rest.py`・`screengen.py` | REST の URL と状態、画面の定義 |
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
