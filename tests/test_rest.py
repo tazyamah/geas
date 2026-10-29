@@ -182,6 +182,8 @@ def test_画面の具体例はユースケースの手順と結ばれ_通しテ�
     rej = cases["注文が受け付けられない理由を知る"]
     assert rej[3]["replace"] == [{"as": "slot", "slot": "currency", "value": "USD"}] and rej[3]["result"] == "OtherCurrency"
     assert cases["取り下げた商品を扱おうとして失敗する"][1]["replace"][0]["field"] == "product_id"
+    exp = cases["返事が来ない注文は、30分で取り消される"][2]
+    assert exp["drop"] == ["PaymentSettled"] and exp["advance"] == 1800  # 返事を落とし、時計を進める（実際には待たない）
     ext = cases["商品ページでなければ、何も出さない"][0]
     assert ext["ext"] and ext["origin"] == "https://www.amazon.co.jp" and ext["expect"] == [{"as": "表示なし", "value": ""}]
     f = write_screen_tests(ck, plan, tmp_path)

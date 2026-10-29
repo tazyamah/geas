@@ -101,6 +101,9 @@ async function runPwaCase(ctx, defs, cal, c) {
       assert.ok(decodeURIComponent(await p.evaluate(() => location.pathname + location.hash)).includes(st.row), `${st.text}: 選んだ行の ID が URL に載る`);
     }
     if (st.op === "act") {
+      const post = (p, body) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const drop = (on) => Promise.all((st.drop || []).map((n) => post("/api/test/settings", { replies: { [n]: { drop: on } } })));
+      await drop(true);  // 返事を落とす：届かないまま待たせる
       for (const s of st.set) {
         if (s.as === "field") {
           const sel = `[data-field="${s.field}"]`;
@@ -152,6 +155,16 @@ async function runPwaCase(ctx, defs, cal, c) {
       const j = await resp.json();
       if (st.result) assert.strictEqual(j.result, st.result, `${st.text}: 結果の種類（応答: ${JSON.stringify(j).slice(0, 200)}）`);
       if (st.replace.length) await p.unroute(urlIs);
+      if (st.advance) {  // 模擬の時計を進める：待ちが登録されてから進める（実際には待たない）
+        const t0 = Date.now();
+        while (!((await getJson("/api/test/state")).waits || []).length) {
+          if (Date.now() - t0 > cal.budget) throw new Error(`${st.text}: 返事待ちが ${cal.budget}ms たっても登録されません`);
+          await new Promise((ok) => setTimeout(ok, 100));
+        }
+        const adv = await (await post("/api/test/advance", { secs: st.advance })).json();
+        assert.ok((adv.fired || []).length, `${st.text}: 時計を ${st.advance} 秒進めても何も起きません`);
+      }
+      await drop(false);
       if (st.to === "stay") assert.ok(await p.locator(here).count(), `${st.text}: そのままの画面にとどまる`);
       else if (st.to !== "back") await p.waitForSelector(`#screen[data-screen="${st.to}"]`, { timeout: cal.budget });
     }

@@ -284,6 +284,18 @@ def screen_cases(ck, plan: dict) -> list[dict]:
                         raise ValueError(f"{where}: 拡張の画面で指せるのは「ページ = 経路」と「ページの表 = 見出し: 値」です")
                     step["set"].append({"as": "page" if k == "ページ" else "table", "value": v})
                     continue
+                if k == "返事を落とす":  # 外部作用の返事を、届かないままにする（応答の宣言の名前）
+                    rn = ck.p.resolve(v, [r.name for r in ck.p.replies])
+                    if rn not in {r.name for r in ck.p.replies}:
+                        raise ValueError(f"{where}: 返事「{v}」は、応答の宣言にありません")
+                    step.setdefault("drop", []).append(rn)
+                    continue
+                if k == "時計を進める":  # 模擬の時計を進める（実際には待たない）。単位は 秒・分・時間
+                    m = re.fullmatch(r"(\d+)\s*(秒|分|時間)", v)
+                    if not m:
+                        raise ValueError(f"{where}: 時計を進める長さ「{v}」は 30分・90秒・2時間 の形で書きます")
+                    step["advance"] = int(m.group(1)) * {"秒": 1, "分": 60, "時間": 3600}[m.group(2)]
+                    continue
                 if k.startswith("差し替え "):
                     t = _field_target(where, sc, k[len("差し替え "):].strip(), whole=True)
                     t["value"] = v
