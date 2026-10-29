@@ -144,3 +144,55 @@ def test_画面の定義はリソースのURLを持つ():
     d = definitions(chk(CODE))["screens"]["screens"]
     assert d["OrderForm"]["url"] == "/orders/new"
     assert d["MyOrders"]["url"] == "/customers/:customer_id/orders"
+
+
+def test_MCPのツール定義は_URLの定義から機械的に作られ_仕様書の動作とその他に出る():
+    from geas.mcp import tool_defs
+    from geas.review import review
+    ck = chk(CODE)
+    tools = {t["name"]: t for t in tool_defs(ck)}
+    assert len(tools) == len(ck_routes(ck))  # 1 ルート＝1 ツール
+    o = tools["create_orders"]["inputSchema"]
+    assert o["required"] == ["customer_id", "items", "ship_to", "slots"] and "tax_rate" not in o["properties"]["slots"]["properties"]  # サーバーが決める slot は渡させない
+    assert tools["show_product_prices"]["annotations"]["readOnlyHint"] and tools["destroy_products"]["annotations"]["destructiveHint"]
+    assert tools["update_products"]["inputSchema"]["required"] == ["id", "quantity"]
+    html = review(ck, PLAN, [], "（海外店）")
+    assert 'value="mcp"' in html and "MCP（AI から）" in html and 'data-view="etc"' in html and "注文の状況を AI に聞く" in html
+    assert "⚠" not in html  # 台本のツール呼び出しは、定義と合っている
+    bad = PLAN.replace('show_product_prices `{"jan":"12345"}`', 'show_product_prices `{"code":"12345"}`')
+    assert "定義にない入力：code" in review(ck, bad, [], "（海外店）")
+
+
+def ck_routes(ck):
+    from geas.rest import routes
+    return routes(ck.p)
+
+
+def test_MCPの橋渡しはツールの呼び出しをRESTに中継する():
+    import json, threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from geas.mcp import tool_defs
+    from geas.mcp_bridge import handle
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(("GET", self.path))
+            self.send_response(404); self.end_headers(); self.wfile.write(b'{"error":"x"}')
+
+        def do_PUT(self):
+            seen.append(("PUT", self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            self.send_response(200); self.end_headers(); self.wfile.write(b'{"result":"ok"}')
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    tools = tool_defs(chk(CODE))
+    r = handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "update_products", "arguments": {"id": "tea-jp", "quantity": 5}}}, tools, base)
+    assert not r["result"]["isError"] and seen[-1] == ("PUT", "/products/tea-jp", {"quantity": 5})
+    r = handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "show_product_prices", "arguments": {"jan": "x y"}}}, tools, base)
+    assert r["result"]["isError"] and seen[-1] == ("GET", "/product_prices/x%20y")
+    assert len(handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, tools, base)["result"]["tools"]) == len(tools)
+    srv.shutdown()

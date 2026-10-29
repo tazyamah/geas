@@ -11,6 +11,7 @@ from .rustgen import column_type, opt
 from .rest import routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
+from .mcp import tool_defs
 
 JSON_PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない。
@@ -223,6 +224,7 @@ def definitions(ck: Checker) -> dict:
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {})}
                    for m, path, kind, tgt, rn, st in rest_routes(ck.p)],
+        "mcp": tool_defs(ck),
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
                   "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "replies": key.split(",") if k == "all" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
     }
