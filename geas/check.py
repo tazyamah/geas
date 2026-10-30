@@ -28,7 +28,7 @@ def unit_label(u: str) -> str:
 
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
-RAW_OPS = ("len", "only", "text")  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
+RAW_OPS = ("len", "only", "text", "positions", "digit")  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -1405,6 +1405,17 @@ class ProcChecker:
             return "Bool"
         if isinstance(e, Bin):
             return self.binop(e, env)
+        if isinstance(e, Cond):
+            c, a, b = self.ty(e.c, env), self.ty(e.a, env), self.ty(e.b, env)
+            if c not in ("Bool", "?"):
+                self.d(ERROR, "型", f"「{show(e)}」: if のあとは真偽の式です（{c}）")
+            if "?" in (a, b):
+                return "?"
+            both_num = {a, b} <= {"Int", "Money"} and (isinstance(e.a, Num) or isinstance(e.b, Num))
+            if a != b and not both_num:
+                self.d(ERROR, "型", f"「{show(e)}」: then と else の型が違います（{a}／{b}）")
+                return "?"
+            return b if isinstance(e.a, Num) and not isinstance(e.b, Num) else a
         if isinstance(e, StrLit):
             self.d(ERROR, "型", "文字列の書き込みは、raw の only( ) の文字種にだけ使えます")
             return "?"
@@ -1746,6 +1757,9 @@ class ProcChecker:
                 if upper is not None and (hi is None or upper < hi):
                     hi = upper
             return (lo, hi)
+        if isinstance(e, Cond):
+            (al, ah), (bl, bh) = self.interval(e.a, env), self.interval(e.b, env)
+            return (None if None in (al, bl) else min(al, bl), None if None in (ah, bh) else max(ah, bh))
         if isinstance(e, Bin) and e.op == "%":  # 負でも 0 以上 n 未満（rem_euclid）
             return (0, e.r.v - 1)
         if isinstance(e, Bin) and e.op == "/":  # 正の定数で割る切り捨て：区間の端をそのまま割る
@@ -1787,6 +1801,8 @@ class ProcChecker:
             env2[b.names[0]] = "ID"
             env2[b.names[1]] = vt
             env2["#元:" + b.names[0]] = show(b.src)
+        elif st == "Positions" and len(b.names) == 1:
+            env2[b.names[0]] = "Int"
         elif st == "Set" and len(b.names) == 1:
             env2[b.names[0]] = "ID"
             env2["#元:" + b.names[0]] = show(b.src)
@@ -1820,7 +1836,7 @@ class ProcChecker:
 
     def raw_op(self, e: Call, env) -> str:
         """raw の操作：len(r)＝文字数、only(r, "文字種")＝文字種だけか、text(r)＝文字列として取り出す"""
-        n = {"len": 1, "only": 2, "text": 1}[e.n]
+        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2}[e.n]
         if len(e.args) != n:
             self.d(ERROR, "型", f"{e.n}( ) の引数は {n} 個です")
             return "?"
@@ -1837,6 +1853,12 @@ class ProcChecker:
             except ValueError as ex:
                 self.d(ERROR, "型", f"only( ) の文字種が正しくありません（{ex}）")
             return "Bool"
+        if e.n == "digit":  # i 文字目の数字の値（0〜9）。数字でない文字と、文字数の外は 0（先に only( ) で確かめる）
+            if self.ty(e.args[1], env) != "Int":
+                self.d(ERROR, "型", "digit( ) の位置は整数です")
+            return "Int"
+        if e.n == "positions":  # 0 から 文字数-1 までの位置。sum { … | i in positions(r) } で回す
+            return "Positions"
         return "Int" if e.n == "len" else "Str"
 
     def binop(self, e: Bin, env) -> str:

@@ -5,7 +5,7 @@
 ## 本体の実装
 
 - **geas 本体の Rust 化**（検査器・生成器・CLI。いまは Python で約 9,300 行）。「ちゃんと動くのが先」で、いまは Python のまま進める。生成アプリとサーバー実行部は既に Rust。README の Rust 化予告は残す。
-- **raw から convert で境界の値を変換する書き方**。第 1 段（`raw` 型、`require` つきの `convert`、入力の `via`）は実装済み。残り：文字位置の `sum`（`positions`・`digit`・式の `if`）と `check gtin` の書き直し、入れ子の形、`trust` との組み合わせ、`dangerous`（`unsafe` を許す段）。
+- **raw から convert で境界の値を変換する書き方**。第 1 段（`raw` 型、`require` つきの `convert`、入力の `via`、文字位置の `sum`、式の `if`）は実装済み。`check gtin` は、`convert` で同じ判定が書けると確かめたが、組み込みはまだ残している（移すのは別）。残り：入れ子の形、`trust` との組み合わせ、`dangerous`（`unsafe` を許す段）。
 - **言語側の標準部品**（ハッシュなど、geas の式で書けない純粋な計算）。保証つきで言語が用意する方針。未実装。
 - **`part` の外部実装をなくす**。外の計算は外部作用（request と返事）に寄せる方針。未実装。
 

@@ -556,18 +556,30 @@ class Gen:
         if isinstance(e, Num):
             return f"{e.v}i128"
         if isinstance(e, Name):
-            return r
+            return e.n
         if isinstance(e, Call) and e.n == "len":
             return f"({self.raw_rx(e.args[0], r)}.chars().count() as i128)"
         if isinstance(e, Call) and e.n == "text":
             return f"{self.raw_rx(e.args[0], r)}.to_string()"
         if isinstance(e, Call) and e.n == "only":
             return f"{self.raw_rx(e.args[0], r)}.chars().all(|c| ({chars_rust(parse_chars(e.args[1].s))}).iter().any(|&(a, b)| a <= c && c <= b))"
+        if isinstance(e, Call) and e.n == "digit":
+            return (f"(usize::try_from({self.raw_rx(e.args[1], r)}).ok().and_then(|k| {self.raw_rx(e.args[0], r)}.chars().nth(k))"
+                    ".and_then(|c| c.to_digit(10)).map_or(0i128, i128::from))")
+        if isinstance(e, Cond):
+            return f"(if {self.raw_rx(e.c, r)} {{ {self.raw_rx(e.a, r)} }} else {{ {self.raw_rx(e.b, r)} }})"
+        if isinstance(e, SumE):  # sum { 式 | i in positions(raw) }：位置を順に回って足す
+            src = e.binder.src
+            i = e.binder.names[0]
+            return (f'{{ let mut acc: i128 = 0; for {i} in 0..({self.raw_rx(src.args[0], r)}.chars().count() as i128) {{ '
+                    f'acc = acc.checked_add({self.raw_rx(e.elem, r)}).ok_or_else(|| "計算があふれました".to_string())?; }} acc }}')
         if isinstance(e, Bin):
             l, rr = self.raw_rx(e.l, r), self.raw_rx(e.r, r)
             if e.op in ("+", "-", "*"):
                 f = {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op]
                 return f'({l}).{f}({rr}).ok_or_else(|| "計算があふれました".to_string())?'
+            if e.op in ("/", "%"):  # 正の定数で割る（検査で確かめてある）
+                return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({rr})"
             return f"({l} {'&&' if e.op == 'かつ' else e.op} {rr})"
         raise ValueError(f"raw の変換の式に使えません: {show(e)}")
 
