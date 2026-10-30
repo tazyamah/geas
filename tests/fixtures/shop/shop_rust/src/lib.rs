@@ -79,6 +79,8 @@ pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
 }
 /// 時刻（秒）の絶対値の上限。期間の足し引きが i64 であふれないよう、外から入る値を境界で止める
 pub const TIME_LIMIT: i128 = 1_000_000_000_000_000;
+/// 長さの上限を書かなかった文字列の、既定の上限（文字数）。外から入る値を境界で止める。大きくするときは ltype に長さを書く
+pub const TEXT_LIMIT: i128 = 1_048_576;
 pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), String> {
     match s.chars().find(|c| !allowed.iter().any(|&(a, b)| a <= *c && *c <= b)) {
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", name, c)),

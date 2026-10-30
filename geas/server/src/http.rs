@@ -10,6 +10,7 @@
 //! --dev のフォルダ（開発用の模擬操作）は、pwa に無いファイルだけを配る。
 use crate::engine::Engine;
 use serde_json::{json, Map, Value};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tiny_http::{Header, Method, Request, Response};
@@ -112,12 +113,20 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
     }
 }
 
+/// リクエストの本文の上限（バイト）。長さの既定の上限（TEXT_LIMIT 文字）の文字列を数個含められる大きさ
+const MAX_BODY: u64 = 16 * 1024 * 1024;
+
 pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) {
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
+    // 本文の大きさに上限を置く（上限を超える本文を丸ごとメモリに読み込まない）。文字列の入力は、境界で長さの既定の上限も確かめる
     let mut body = String::new();
-    let _ = req.as_reader().read_to_string(&mut body);
+    let _ = req.as_reader().take(MAX_BODY + 1).read_to_string(&mut body);
+    if body.len() as u64 > MAX_BODY {
+        let _ = req.respond(json_resp(413, json!({ "error": "リクエストの本文が大きすぎます" })));
+        return;
+    }
     let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
     let resp = if method == Method::Get && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる

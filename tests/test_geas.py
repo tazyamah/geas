@@ -3183,3 +3183,57 @@ def test_仕様書に_entity_ごとの保存先と直列の担い手が出る():
     assert "## 保存先" in render(ck, build(ck))
     assert "## 保存先" not in render(chk(DIV_SRC), build(chk(DIV_SRC)))
     assert build(chk(DIV_SRC))["保存先"] == []
+
+
+# ---- 資源枯渇：長さの上限を書かない文字列は、既定の上限で境界に止める ----
+TEXT_SRC = """ltype Title = text 1..10
+entity Note {
+  note_id: id unique
+  body: text required
+  title: Title required
+}
+result Done {
+  Saved(note_id: id)
+}
+deed save_note {
+  input body: text required, title: Title required
+  writes Note
+  result Done
+  effects none
+
+  let n = create Note { body: body, title: title }
+  return Saved(n.note_id)
+}
+nexus Flow {
+  save_note: Saved → reply
+}
+"""
+
+
+@needs_cargo
+def test_長さを書かない文字列は既定の上限で止まり_深すぎる入れ子も止まる(tmp_path):
+    ck = chk(TEXT_SRC)
+    assert ck.ready, ck.diags
+    assert "TEXT_LIMIT" in generate(ck)
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    let ok = "あ".repeat(1_048_576);
+    let big = "あ".repeat(1_048_577);
+    for body in [ok.as_str(), big.as_str()] {
+        let req = format!(r#"{{"name":"save_note","ctx":{{"new_Note_id":"A"}},"input":{{"body":"{}","title":"T"}},"store":{{}}}}"#, body);
+        let r = call(&req);
+        println!("{}", match &r { Ok(_) => "ok".to_string(), Err(e) => format!("err {}", e.chars().take(40).collect::<String>()) });
+    }
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+    let req = format!(r#"{{"name":"save_note","ctx":{{}},"input":{{"body":"x","title":"T","extra":{}}},"store":{{}}}}"#, deep);
+    println!("{}", match call(&req) { Ok(_) => "ok".to_string(), Err(e) => format!("err {}", e.chars().take(40).collect::<String>()) });
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    a, b, c = r.stdout.splitlines()
+    assert a == "ok", a
+    assert b.startswith("err") and "長さ" in b, b
+    assert c.startswith("err") and "入れ子" in c, c
