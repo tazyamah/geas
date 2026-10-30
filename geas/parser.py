@@ -180,7 +180,7 @@ class Parser:
                 p.effects.append(self.effect_decl(line))
             elif kw == "part":
                 raise ParseError("part は廃止しました。geas の式で書けるなら convert、根の言語（Rust）のライブラリを呼ぶなら "
-                                 'library を使います（例：library 税込(x: 金額) -> 金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"）', line)
+                                 'library を使います（例：library tax_included(x: Yen) -> Yen from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"）', line)
             elif kw == "library":
                 p.parts.append(self.library(line))
             elif kw == "convert":
@@ -573,7 +573,7 @@ class Parser:
         self.expect(")")
         self.expect("→")
         ret = self.type()
-        usage = f'library {name}(引数: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee 式] trust check "理由"'
+        usage = f'library {name}(arg: Type) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee 式] trust check "理由"'
         if not (self.accept("from") and self.accept("rust")):
             raise self.err(f"ライブラリの呼び出し元がありません（{usage}）")
         strs = []
