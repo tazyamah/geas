@@ -133,7 +133,7 @@ def from_j(t: Type, j: str) -> str:
     if t.optional:
         return f"match {j} {{ J::Null => None, v => Some({from_j(replace(t, optional=False), 'v')}) }}"
     k = t.kind
-    if k in ("ID", "参照", "文字列"):
+    if k in ("ID", "参照", "文字列", "生"):
         return f"{j}.as_str()?.to_string()"
     if k in ("整数", "金額"):
         return f'{phys(t)}::try_from({j}.as_int()?).map_err(|_| "範囲外の数です".to_string())?'
@@ -164,7 +164,7 @@ def to_j(t: Type, x: str) -> str:
     if t.optional:
         return f'match &{x} {{ None => "null".to_string(), Some(v) => {to_j(replace(t, optional=False), "v")} }}'
     k = t.kind
-    if k in ("ID", "参照", "文字列"):
+    if k in ("ID", "参照", "文字列", "生"):
         return f"js_str(&{x})"
     if k in ("整数", "金額", "日時"):
         return f"{x}.to_string()"
@@ -196,7 +196,7 @@ def mock_def(ck: Checker) -> dict:
     """開発用の模擬：外部作用ごとに返る応答と、応答の結果の種類（outcome）。模擬と操作パネルが、これだけで動く"""
     p, show = ck.p, ck.p.show_names
     reps = {r.name: r for r in p.replies}
-    kinds = {"ID": "id", "参照": "id", "文字列": "text", "整数": "int", "集合": "set"}
+    kinds = {"ID": "id", "参照": "id", "文字列": "text", "生": "text", "整数": "int", "集合": "set"}
     return {
         "effects": {e.name: {"label": show(e.name), "reply": e.replies} for e in p.effects if e.replies in reps},
         "replies": {r.name: {"label": show(r.name), "fields": [{"name": n, "kind": kinds.get(t.kind, "text")} for n, t in r.params],

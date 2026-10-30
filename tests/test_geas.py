@@ -2937,3 +2937,61 @@ def test_convert_で書いた検査数字は組み込みの_check_gtin_と同じ
     assert r.returncode == 0, r.stderr[-2500:]
     want = [str(len(c) == 13 and c.isdigit() and valid_gtin(c)).lower() for c in cases]
     assert r.stdout.split() == want, (r.stdout, want)
+
+
+# ---- dangerous：未検査の raw を受けて、そのまま（または情報を付けて）外へ中継する ----
+RELAY_SRC = """ltype Size = int 0..
+ltype Tag = text 1..8
+effect Partner. relay(body: raw) no_wait "中継の失敗は人が見る"
+entity Note {
+  note_id: id unique
+  size: Size required
+}
+result Relayed {
+  Done(note_id: id)
+}
+deed relay_note {
+  input body: raw required trust dangerous "社外システムの本文を加工せずに中継する", tag: Tag required
+  writes Note
+  result Relayed
+  effects Partner.relay
+
+  let note = create Note { size: len(body) }
+  request Partner.relay(raw_cat(to_raw(tag), body), idempotency_key = note.note_id)
+  return Done(note.note_id)
+}
+nexus Flow {
+  relay_note: Done → reply
+}
+"""
+
+
+def test_dangerous_の入力だけが_raw_を受けられ_中継の材料は決まった操作だけ():
+    ck = chk(RELAY_SRC)
+    assert ck.ready, ck.diags
+    # dangerous でない入力・項目・結果には raw を書けない
+    assert any("raw" in m for m in msgs(chk(mutate(RELAY_SRC, ' trust dangerous "社外システムの本文を加工せずに中継する"', "")), ERROR))
+    assert any("raw" in m for m in msgs(chk(mutate(RELAY_SRC, "size: Size required\n}", "size: Size required\n  raw_copy: raw\n}")), ERROR))
+    # 処理の中で raw に使えるのは len・to_raw・raw_cat だけ（中身を読む操作は convert の中でだけ）
+    assert any("convert の中でだけ" in m for m in msgs(chk(mutate(RELAY_SRC, "len(body)", "len(text(body))")), ERROR))
+    assert any("raw 2つ" in m for m in msgs(chk(mutate(RELAY_SRC, "raw_cat(to_raw(tag), body)", "raw_cat(tag, body)")), ERROR))
+    # 人の保証の一覧に、dangerous が出る
+    sp = build(ck)
+    assert sp["人の保証"][0][:2] == ("relay_note", "body") and "危険" in sp["人の保証"][0][3]
+
+
+@needs_cargo
+def test_dangerous_の_raw_は検査も変換もせず_そのまま外部作用へ中継される(tmp_path):
+    ck = chk(RELAY_SRC)
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    let body = r#"<script>alert(\\"x\\")</script> 0x00 \\\\ 日本語"#;
+    let req = format!(r#"{{"name":"relay_note","ctx":{{"new_Note_id":"A"}},"input":{{"body":"{}","tag":"T1"}},"store":{{}}}}"#, body);
+    println!("{:?}", call(&req));
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout.startswith("Ok(") and "T1<script>" in r.stdout and "日本語" in r.stdout, r.stdout
