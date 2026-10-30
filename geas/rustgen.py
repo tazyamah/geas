@@ -90,6 +90,8 @@ pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
 }
 /// 時刻（秒）の絶対値の上限。期間の足し引きが i64 であふれないよう、外から入る値を境界で止める
 pub const TIME_LIMIT: i128 = 1_000_000_000_000_000;
+/// 長さの上限を書かなかった文字列の、既定の上限（文字数）。外から入る値を境界で止める。大きくするときは ltype に長さを書く
+pub const TEXT_LIMIT: i128 = 1_048_576;
 pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), String> {
     match s.chars().find(|c| !allowed.iter().any(|&(a, b)| a <= *c && *c <= b)) {
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", name, c)),
@@ -191,7 +193,9 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'{t.read}(&{x}).map(|_| ())?;')
     if t.kind == "日時":
         chk.append(f'check_range("{label}", {num} as i128, Some(-TIME_LIMIT), Some(TIME_LIMIT))?;')
-    if t.kind == "文字列" and t.range:
+    if t.kind == "文字列" and (t.range is None or t.range.hi is None):  # 上限を書かなければ、既定の上限
+        chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo if t.range else None)}, Some(TEXT_LIMIT))?;')
+    elif t.kind == "文字列":
         chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "文字列" and t.chars is not None:
         chk.append(f'check_chars("{label}", &{x}, {chars_rust(t.chars)})?;')

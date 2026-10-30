@@ -314,3 +314,11 @@ def test_同じDBファイルを使うサーバーが2つあっても_直列に�
         assert len(set(ids)) == 24, ids
     finally:
         other.stop()
+
+
+def test_大きすぎる本文は読み込まずに413で断り_上限ちょうどの文字列は通る(server):
+    req = urllib.request.Request(server.base + "/parcels", method="POST", data=b"x" * (16 * 1024 * 1024 + 1), headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req, timeout=30)
+    assert e.value.code == 413
+    assert server.call("POST", "/parcels", {"kind": "light"})[0] == 201  # そのあとも普通に動く

@@ -37,11 +37,19 @@ impl J {
     }
 }
 
-struct P<'a> { s: &'a [u8], i: usize }
+struct P<'a> { s: &'a [u8], i: usize, d: usize }
 impl<'a> P<'a> {
     fn ws(&mut self) { while self.i < self.s.len() && (self.s[self.i] as char).is_whitespace() { self.i += 1; } }
     fn eat(&mut self, c: u8) -> Result<(), String> { self.ws(); if self.i < self.s.len() && self.s[self.i] == c { self.i += 1; Ok(()) } else { Err(format!("JSON: '{}' が必要です（{}文字目）", c as char, self.i)) } }
+    /// 入れ子の深さに上限を置く（深い入れ子で再帰があふれないように）
     fn value(&mut self) -> Result<J, String> {
+        self.d += 1;
+        if self.d > 64 { return Err("JSON: 入れ子が深すぎます".into()); }
+        let r = self.value_inner();
+        self.d -= 1;
+        r
+    }
+    fn value_inner(&mut self) -> Result<J, String> {
         self.ws();
         if self.i >= self.s.len() { return Err("JSON: 途中で終わっています".into()); }
         match self.s[self.i] {
@@ -72,7 +80,7 @@ impl<'a> P<'a> {
         }
     }
 }
-pub fn parse(s: &str) -> Result<J, String> { let mut p = P { s: s.as_bytes(), i: 0 }; let v = p.value()?; Ok(v) }
+pub fn parse(s: &str) -> Result<J, String> { let mut p = P { s: s.as_bytes(), i: 0, d: 0 }; let v = p.value()?; Ok(v) }
 
 pub fn js_str(s: &str) -> String {
     let mut o = String::from("\"");
