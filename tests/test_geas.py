@@ -1350,7 +1350,7 @@ fn main() { println!("{:?}", call(r#"{"name":"置く","ctx":{"new_品_id":"A"},"
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     assert r.stdout.startswith("Ok(") and '\\"価格\\":1100' in r.stdout, r.stdout
-    two = src + 'library 別(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\n'
+    two = src + 'library other(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\n'
     with pytest.raises(ValueError, match="版が2つ"):
         from geas.rustgen import library_deps
         library_deps(chk(two))
