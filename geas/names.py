@@ -125,9 +125,12 @@ def label_gaps(p: Program, ltype_names=()) -> list[tuple[str, str]]:
     """(場所, 名前) の列：仕様書に出る名前のうち、表示名（///）が無いもの。処理の中の変数は仕様書に出ないので数えない"""
     out: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    ext = {f"部品 {x.name}" for x in p.parts if x.external}
 
     def visit(n: str, where: str):
         ls = p.labels.get(n, {})
+        if where in ext:
+            return  # library の名前は Rust 側の名前に合わせたもので、仕様書の「人の保証」にはその名前のまま出る
         if ls.get("ja") or ls.get("") or (where, n) in seen:
             return
         seen.add((where, n))

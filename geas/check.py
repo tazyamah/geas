@@ -156,6 +156,7 @@ class Checker:
         self.results = {r.name: r for r in prog.results}
         self.effects = {e.name: e for e in prog.effects}
         self.parts = {x.name: x for x in prog.parts}
+        self.used_libs: set[str] = set()  # 呼ばれた library。呼ばれないものは、生成にも仕様書の人の保証にも出さない（標準部品の束を取り込んでも膨らまない）
         self.read_checked: set = set()
         self.comps = {c.target: c for c in prog.composites}
         self.part_types: dict[int, str] = {}  # 保証の式 → 型トークン（生成で使う）
@@ -1488,6 +1489,14 @@ class ProcChecker:
                     self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
                 self.fit_unit(a, t, f"部品 {e.n} の引数「{n}」", e.line if hasattr(e, "line") else 0,
                               siblings={pn: x for (pn, _), x in zip(pt.params, e.args)})
+            if pt.external:
+                ck.used_libs.add(e.n)
+                for a, (n, t) in zip(e.args, pt.params):  # ライブラリには、引数の範囲に収まる値だけを渡す。収まると示せなければ、実行時の確認に逃げず検査で止める
+                    r = t.range
+                    if t.kind in ("整数", "金額") and r is not None:
+                        lo, hi = self.interval(a)
+                        if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
+                            self.d(ERROR, "範囲", f"部品 {e.n} の引数「{n}」に渡す値が、引数の範囲{show_range(r)}に収まると示せません（値の範囲 {iv_show((lo, hi))}）。範囲を限るか、値を限ってから渡してください")
             return tok_of(pt.ret)
         if isinstance(e, Call):
             if e.n != "round" or len(e.args) != 3:

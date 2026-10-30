@@ -539,7 +539,7 @@ class Gen:
                 self.raw_convert(pt)
         if not self.p.parts:
             return
-        libs = [pt for pt in self.p.parts if pt.external]
+        libs = [pt for pt in self.p.parts if pt.external and pt.name in self.ck.used_libs]
         if not libs:
             return
         self.w("/// 根の言語のライブラリを呼ぶ関数の置き場。ここだけは、人が保証した外のコードを呼ぶので lint の禁止を外す。\n"
@@ -1107,13 +1107,13 @@ def dependencies(deps) -> str:
 
 
 def library_deps(ck) -> dict:
-    out: dict[str, str] = {}
+    """呼ばれた library のクレートと版。同じクレートの版が宣言どうしで食い違えばエラー（呼ばれるかどうかによらない）"""
+    seen: dict[str, str] = {}
     for pt in ck.p.parts:
         if pt.external and pt.lib[0] != "std":
-            if out.get(pt.lib[0], pt.lib[1]) != pt.lib[1]:
-                raise ValueError(f"クレート {pt.lib[0]} の版が2つあります（{out[pt.lib[0]]} と {pt.lib[1]}）")
-            out[pt.lib[0]] = pt.lib[1]
-    return out
+            if seen.setdefault(pt.lib[0], pt.lib[1]) != pt.lib[1]:
+                raise ValueError(f"クレート {pt.lib[0]} の版が2つあります（{seen[pt.lib[0]]} と {pt.lib[1]}）")
+    return {pt.lib[0]: pt.lib[1] for pt in ck.p.parts if pt.external and pt.name in ck.used_libs and pt.lib[0] != "std"}
 
 
 def generate(ck: Checker) -> str:
