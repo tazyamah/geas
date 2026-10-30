@@ -187,6 +187,8 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
     chk = []
     num = f"*{x}" if deref else x
     ref = x if deref else f"&{x}"
+    if t.kind == "文字列" and t.read:  # 型に結んだ変換（geas の式）。変換（3）を先に通し、そのあと型の宣言（4）を確かめる。拒否は入力不正
+        chk.append(f'{t.read}(&{x}).map(|_| ())?;')
     if t.kind == "日時":
         chk.append(f'check_range("{label}", {num} as i128, Some(-TIME_LIMIT), Some(TIME_LIMIT))?;')
     if t.kind == "文字列" and t.range:
@@ -735,6 +737,8 @@ class ProcGen:
             lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
             lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+        if pt.ret.kind == "文字列" and pt.ret.read:
+            lines.append(f'if let Err(m) = {pt.ret.read}(&result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
             lines.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         saved = dict(self.scope)

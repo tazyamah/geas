@@ -28,7 +28,7 @@ class Type:
     check: Optional[str] = None  # 文字列の検査数字の種類（gtin＝JAN/EAN/UPC のチェックディジット）
     fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     maxn: Optional[int] = None  # 写像の要素数の上限（K → V max N）。sum の範囲を示すのに使う
-    via: Optional[str] = None  # 入力の型：受けた raw を、この名前の変換（convert）で論理型にする（Strong Parameters 的な境界）
+    read: Optional[str] = None  # 論理型に結びつけた、raw から変換する convert の名前。この型の値は、境界でこの変換を通る（Strong Parameters 的な境界）
     trust: Optional[tuple] = None  # 入力の範囲の確認を省く、人の保証。(段階 "verify"|"assume", 理由)。検査器は範囲を事実として使う
     parts: Optional[tuple] = None  # 合成型の成分。((名前, 型), …)。target は論理型の名前
 
