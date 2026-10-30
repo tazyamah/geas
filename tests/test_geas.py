@@ -2831,3 +2831,71 @@ fn main() {
         outs[lv] = r.stdout.strip()
     assert outs[""].startswith("Err(") and "範囲外" in outs[""], outs
     assert outs[' trust assume "契約 §4"'].startswith("Ok("), outs  # 1000 × 3/2 × 1/2 = 750。範囲外の税率がそのまま通る
+
+
+# ---- raw と、raw から変換する convert（Strong Parameters 的な境界） ----
+RAW_SRC = """ltype 品番型 = text 8..8 of "0-9"
+entity 品 {
+  品ID: id unique
+  品番: 品番型 required
+}
+result 置いた結果 {
+  置いた(品ID: id)
+}
+convert 品番読み(r: raw) -> 品番型 {
+  require len(r) == 8 "8桁にしてください"
+  require only(r, "0-9") "数字だけにしてください"
+  return text(r)
+}
+deed 置く {
+  input 品番: 品番型 required via 品番読み
+  writes 品
+  result 置いた結果
+  effects none
+
+  let 品 = create 品 { 品番: 品番 }
+  return 置いた(品.品ID)
+}
+nexus 流れ {
+  置く: 置いた → reply
+}
+"""
+
+
+def test_raw_から変換する_convert_は_via_で入力に結ぶ():
+    ck = chk(RAW_SRC)
+    assert ck.ready, ck.diags
+    out = generate(ck)
+    assert 'pub fn 品番読み(r: &str) -> Result<String, String>' in out and '"8桁にしてください"' in out
+    # raw は convert の引数にだけ書ける
+    assert any("raw" in m for m in msgs(chk(mutate(RAW_SRC, "品番: 品番型 required\n}", "品番: raw required\n}")), ERROR))
+    # via は raw から変換する convert で、戻り値の型が入力の型と同じこと
+    assert any("via" in m for m in msgs(chk(mutate(RAW_SRC, "via 品番読み", "via 無い変換")), ERROR))
+    assert any("戻り値の型" in m for m in msgs(chk(mutate(RAW_SRC, "ltype 品番型 = text 8..8 of \"0-9\"\n", "ltype 品番型 = text 8..8 of \"0-9\"\nltype 別型 = text 1..3\n").replace("input 品番: 品番型 required via", "input 品番: 別型 required via").replace("品番: 品番", "品番: 品番")), ERROR))
+    # 式の中では呼べない／require は真偽の式／raw の操作は raw にだけ
+    assert any("式の中では呼べません" in m for m in msgs(chk(mutate(RAW_SRC, "create 品 { 品番: 品番 }", 'create 品 { 品番: 品番読み(品番) }')), ERROR))
+    assert any("真偽" in m for m in msgs(chk(mutate(RAW_SRC, "require len(r) == 8", "require len(r)")), ERROR))
+    assert any("raw です" in m for m in msgs(chk(mutate(RAW_SRC, "require len(r) == 8", "require len(1) == 8")), ERROR))
+    with pytest.raises(ParseError, match="理由"):
+        parse(mutate(RAW_SRC, '"8桁にしてください"', ""))
+
+
+@needs_cargo
+def test_raw_の_convert_は拒否を入力不正にし_通った値だけが処理に入る(tmp_path):
+    ck = chk(RAW_SRC)
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    for v in ["12345678", "1234567", "1234567a"] {
+        let req = format!(r#"{{"name":"置く","ctx":{{"new_品_id":"A"}},"input":{{"品番":"{}"}},"store":{{}}}}"#, v);
+        println!("{:?}", call(&req));
+    }
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    a, b, c = r.stdout.splitlines()
+    assert a.startswith("Ok(") and "12345678" in a, a
+    assert b.startswith("Err(") and "8桁" in b, b
+    assert c.startswith("Err(") and "数字だけ" in c, c

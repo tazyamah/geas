@@ -133,6 +133,8 @@ def from_j(t: Type, j: str) -> str:
     if t.optional:
         return f"match {j} {{ J::Null => None, v => Some({from_j(replace(t, optional=False), 'v')}) }}"
     k = t.kind
+    if t.via is not None:  # raw で受け、via の変換（geas の式）で論理型にする。拒否は入力不正
+        return f"{t.via}({j}.as_str()?)?"
     if k in ("ID", "参照", "文字列"):
         return f"{j}.as_str()?.to_string()"
     if k in ("整数", "金額"):

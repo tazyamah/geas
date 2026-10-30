@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
+import json
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
+from .parser import parse_chars
 from .check import Checker, ProcInfo, column_type, phys, tok_of
 from .screengen import rust_screens
 
@@ -526,6 +528,9 @@ class Gen:
 
     def parts(self):
         """外から足す部品。保証は呼んだ直後に確かめる（ProcGen.rx）。違反は、保存へ書く前に処理を止める"""
+        for pt in self.p.parts:
+            if any(t.kind == "生" for _, t in pt.params):
+                self.raw_convert(pt)
         if not self.p.parts:
             return
         if not any(pt.external for pt in self.p.parts):
@@ -537,6 +542,34 @@ class Gen:
             ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
             self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
         self.w("}")
+
+    def raw_convert(self, pt):
+        """raw から論理型への変換。require のどれかが成り立たなければ、理由を添えて入力不正（Err）にする"""
+        n = pt.params[0][0]
+        self.w(f"/// 入力の via で結ぶ変換（Strong Parameters 的な境界）。拒否は入力不正\npub fn {pt.name}({n}: &str) -> Result<String, String> {{")
+        for cond, why in pt.requires:
+            self.w(f"    if !({self.raw_rx(cond, n)}) {{ return Err({json.dumps(why, ensure_ascii=False)}.to_string()); }}")
+        self.w(f"    Ok({self.raw_rx(pt.body, n)})\n}}")
+
+    def raw_rx(self, e, r: str) -> str:
+        """raw の変換の中の式。数は i128 で、あふれは入力不正にする"""
+        if isinstance(e, Num):
+            return f"{e.v}i128"
+        if isinstance(e, Name):
+            return r
+        if isinstance(e, Call) and e.n == "len":
+            return f"({self.raw_rx(e.args[0], r)}.chars().count() as i128)"
+        if isinstance(e, Call) and e.n == "text":
+            return f"{self.raw_rx(e.args[0], r)}.to_string()"
+        if isinstance(e, Call) and e.n == "only":
+            return f"{self.raw_rx(e.args[0], r)}.chars().all(|c| ({chars_rust(parse_chars(e.args[1].s))}).iter().any(|&(a, b)| a <= c && c <= b))"
+        if isinstance(e, Bin):
+            l, rr = self.raw_rx(e.l, r), self.raw_rx(e.r, r)
+            if e.op in ("+", "-", "*"):
+                f = {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op]
+                return f'({l}).{f}({rr}).ok_or_else(|| "計算があふれました".to_string())?'
+            return f"({l} {'&&' if e.op == 'かつ' else e.op} {rr})"
+        raise ValueError(f"raw の変換の式に使えません: {show(e)}")
 
     def effects(self):
         self.w("#[derive(Clone, Debug, PartialEq)]\npub enum Effect {")

@@ -8,6 +8,7 @@ from math import ceil, floor
 
 from .ast import *  # noqa: F401,F403
 from .names import label_gaps, name_problems
+from .parser import parse_chars
 
 
 def valid_gtin(s: str) -> bool:
@@ -27,6 +28,7 @@ def unit_label(u: str) -> str:
 
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
+RAW_OPS = ("len", "only", "text")  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -49,6 +51,8 @@ def tok_of(t: Type) -> str:
         return "Str"
     if k == "バイト列":
         return "Bytes"
+    if k == "生":
+        return "Raw"
     if k == "日時":
         return "Time"
     if k == "整数":
@@ -243,6 +247,8 @@ class Checker:
 
     def check_type(self, t: Type, where: str, comp_ok: bool = False):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
+        if t.kind == "生":
+            self.d(ERROR, "型", where, "raw（未検査の生データ）は、raw から変換する convert の引数にだけ書けます。入力には、via 変換名 で変換を結びます")
         if t.kind == "合成" and not comp_ok:
             self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目・処理の入力と slot・結果の中身・外部作用の引数・応答の中身・トリガの引数にだけ使えます")
         if t.kind == "参照" and t.target not in self.data:
@@ -265,6 +271,11 @@ class Checker:
             self.d(ERROR, "名前", where, "組み込みの部品と同じ名前は使えません")
         names = [n for n, _ in pt.params]
         self.check_unique(names, where, "引数")
+        if any(t.kind == "生" for _, t in pt.params):
+            self.check_raw_convert(pt, where)
+            return
+        if pt.requires:
+            self.d(ERROR, "型", where, "require を書けるのは、raw から変換する convert だけです")
         if "result" in names:
             self.d(ERROR, "名前", where, "引数の名前に result は使えません（戻り値の名前です）")
         for n, t in [*pt.params, ("result", pt.ret)]:
@@ -315,6 +326,38 @@ class Checker:
             self.d(ERROR, "保証", where, "保証が戻り値（result）を使っていません。何も確かめない保証は書けません")
         self.part_types.update(pc.info.types)
 
+    def check_via(self, where: str, t: Type):
+        """入力の via：raw から変換する convert で、戻り値の型が入力の型と同じこと"""
+        pt = self.parts.get(t.via)
+        if pt is None or not any(pt_.kind == "生" for _, pt_ in pt.params):
+            self.d(ERROR, "名前", where, f"via の「{t.via}」は、raw から変換する convert ではありません")
+        elif show_type(replace(pt.ret, optional=False, via=None, trust=None)) != show_type(replace(t, optional=False, via=None, trust=None)):
+            self.d(ERROR, "型", where, f"入力の型（{show_type(replace(t, optional=False, via=None, trust=None))}）と、変換 {t.via} の戻り値の型（{show_type(pt.ret)}）が違います")
+
+    def check_raw_convert(self, pt: Part, where: str):
+        """raw から論理型への変換。require の条件が成り立たなければ入力不正。結果の型の範囲・長さ・文字種は、取り込むときに宣言どおり確かめる"""
+        if len(pt.params) != 1 or pt.params[0][1].kind != "生":
+            self.d(ERROR, "型", where, "raw から変換する convert の引数は、raw 1つだけです")
+            return
+        if pt.body is None:
+            self.d(ERROR, "型", where, "raw から変換する convert は { require … return 式 } の形で書きます")
+            return
+        if pt.ret.kind != "文字列":
+            self.d(ERROR, "型", where, f"raw から変換する convert が返せるのは、いまは文字列（text）だけです（{pt.ret.kind}）")
+        self.check_type(pt.ret, f"{where} / 戻り値")
+        n = pt.params[0][0]
+        pc = ProcChecker(self, Process(pt.name))
+        pc.where = where
+        env = {n: "Raw"}
+        for cond, _ in pt.requires:
+            c = pc.ty(cond, env)
+            if c not in ("Bool", "?"):
+                self.d(ERROR, "型", where, f"require は真偽の式にしてください（{c}）")
+        b = pc.ty(pt.body, env)
+        if b not in (tok_of(pt.ret), "?"):
+            self.d(ERROR, "型", where, f"return の式の型（{b}）が戻り値の型（{tok_of(pt.ret)}）と違います")
+        self.part_types.update(pc.info.types)
+
     def check_fills(self, where, pname, t: Type, pc):
         """fill：未指定にできる成分に、補う値を示す。補った成分は指定されている扱い（読む前の null の確かめが要らない）"""
         ct = self.comps.get(t.target) if t.kind == "合成" else None
@@ -356,6 +399,9 @@ class Checker:
             self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
             for n, t in [*x.inputs, *x.refs]:
                 self.check_type(t, f"{kind} {x.name} / {n}", comp_ok=isinstance(x, Process))
+            for n, t in x.inputs:
+                if t.via is not None:
+                    self.check_via(f"{kind} {x.name} / {n}", t)
         for tg in p.triggers:
             for n, t in tg.params:
                 self.check_type(t, f"トリガ {tg.name} / {n}", comp_ok=True)
@@ -1359,6 +1405,11 @@ class ProcChecker:
             return "Bool"
         if isinstance(e, Bin):
             return self.binop(e, env)
+        if isinstance(e, StrLit):
+            self.d(ERROR, "型", "文字列の書き込みは、raw の only( ) の文字種にだけ使えます")
+            return "?"
+        if isinstance(e, Call) and e.n in RAW_OPS:
+            return self.raw_op(e, env)
         if isinstance(e, Call) and e.n in CONVERSIONS:
             # 型を変えてから計算する：money(整数) は金額、int(金額) は整数
             src, dst = CONVERSIONS[e.n]
@@ -1374,6 +1425,9 @@ class ProcChecker:
             return dst
         if isinstance(e, Call) and e.n in ck.parts:
             pt = ck.parts[e.n]
+            if any(t_.kind == "生" for _, t_ in pt.params):
+                self.d(ERROR, "型", f"「{show(e)}」: raw から変換する convert は、式の中では呼べません（入力に via {e.n} と書いて結びます）")
+                return tok_of(pt.ret)
             if len(e.args) < len(pt.params) and all(n in pt.defaults for n, _ in pt.params[len(e.args):]):
                 e.args = [*e.args, *(pt.defaults[n] for n, _ in pt.params[len(e.args):])]  # 省いた引数は、デフォルト値で補う
             if len(e.args) != len(pt.params):
@@ -1763,6 +1817,27 @@ class ProcChecker:
         elif a[0] * b[0] > RATIO_NUM_LIMIT or a[1] * b[1] > RATIO_NUM_LIMIT:
             self.d(ERROR, "範囲", f"「{show(e)}」: 割合を掛けた途中の分子が最大 約 {a[0] * b[0]:.2e} になり、収まる上限 約 {RATIO_NUM_LIMIT:.2e} を"
                    "超えるかもしれません。金額や割合の範囲を狭めてください")
+
+    def raw_op(self, e: Call, env) -> str:
+        """raw の操作：len(r)＝文字数、only(r, "文字種")＝文字種だけか、text(r)＝文字列として取り出す"""
+        n = {"len": 1, "only": 2, "text": 1}[e.n]
+        if len(e.args) != n:
+            self.d(ERROR, "型", f"{e.n}( ) の引数は {n} 個です")
+            return "?"
+        if self.ty(e.args[0], env) != "Raw":
+            self.d(ERROR, "型", f"{e.n}( ) の対象は raw です")
+            return "?"
+        if e.n == "only":
+            c = e.args[1]
+            if not isinstance(c, StrLit):
+                self.d(ERROR, "型", 'only( ) の文字種は、"a-z0-9" のように文字列で書きます')
+                return "?"
+            try:
+                parse_chars(c.s)
+            except ValueError as ex:
+                self.d(ERROR, "型", f"only( ) の文字種が正しくありません（{ex}）")
+            return "Bool"
+        return "Int" if e.n == "len" else "Str"
 
     def binop(self, e: Bin, env) -> str:
         a, b = self.ty(e.l, env), self.ty(e.r, env)
