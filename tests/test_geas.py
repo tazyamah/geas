@@ -3237,3 +3237,16 @@ fn main() {
     assert a == "ok", a
     assert b.startswith("err") and "長さ" in b, b
     assert c.startswith("err") and "入れ子" in c, c
+
+
+def test_処理の定義に_触れる_entity_が出る_サーバーはそれだけを読み込む():
+    from geas.hostgen import definitions
+
+    d = definitions(chk(CODE))["deeds"]
+    t = d["place_order"]["touches"]
+    assert {"Product", "Customer", "Order"} <= set(t), t
+    # 宣言した読み書きと作る entity が、すべて入っている（足りないと、処理が空の entity を見て誤った結果を返す）
+    ck = chk(CODE)
+    for name, info in ck.infos.items():
+        want = {r.split(".")[0] for r in info.reads} | {w.split(".")[0] for w in info.writes} | set(info.new_ids)
+        assert want <= set(d[name]["touches"]), (name, want, d[name]["touches"])

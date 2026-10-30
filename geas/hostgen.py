@@ -200,6 +200,13 @@ pub extern "C" fn geas_call(ptr: *const u8, len: usize) -> u64 {
 '''
 
 
+def touched_data(info) -> list:
+    """処理が読み書きしうる entity の名前。サーバーは、保存からこれだけを読み込んで処理に渡す（宣言と本体のずれは検査器が止めてある）"""
+    names = {r.split(".")[0] for r in info.reads} | {w.split(".")[0] for w in info.writes} | set(info.deletes) | set(info.new_ids) | set(info.lookup_vars.values())
+    names |= {t[0] for t in info.transitions}
+    return sorted(names)
+
+
 def mock_def(ck: Checker) -> dict:
     """開発用の模擬：外部作用ごとに返る応答と、応答の結果の種類（outcome）。模擬と操作パネルが、これだけで動く"""
     p, show = ck.p, ck.p.show_names
@@ -221,7 +228,8 @@ def definitions(ck: Checker) -> dict:
         for proc, routes in fl.entries:  # 行き先が1つなら文字列、複数なら書いた順の配列
             flows.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else ds for v, ds in route_map(routes).items()})
     return {
-        "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids))} for x in p.processes},
+        "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
+                  "touches": touched_data(ck.infos[x.name])} for x in p.processes},
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},

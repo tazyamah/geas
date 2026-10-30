@@ -32,7 +32,10 @@ impl Engine {
 
     /// 生成した host を1回呼ぶ。保存は DB から読み、書込は差分だけ DB へ戻す
     fn call(&self, name: &str, ctx: &Value, input: &Value) -> R<Value> {
-        let before = self.db.load_store()?;
+        // 処理が触れる実体（定義の touches）だけを読む。定義に無ければ全部読む
+        let touches: Option<Vec<String>> = self.defs["deeds"].get(name).and_then(|d| d.get("touches")).and_then(|t| t.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect());
+        let before = self.db.load_entities(touches.as_deref())?;
         let req = json!({ "name": name, "ctx": ctx, "input": input, "store": before }).to_string();
         let out = geas_app::host::call(&req)?;
         let resp: Value = serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))?;

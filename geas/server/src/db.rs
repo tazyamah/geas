@@ -52,8 +52,13 @@ impl Db {
 
     /// 保存の全体を {実体: {キー: 行}} で読む
     pub fn load_store(&self) -> R<Value> {
+        self.load_entities(None)
+    }
+
+    /// 保存から読む実体を絞る（None なら全部）。処理が触れる実体は検査で決まっているので、ほかは読み込まない
+    pub fn load_entities(&self, only: Option<&[String]>) -> R<Value> {
         let mut all = Map::new();
-        for en in &self.entities {
+        for en in self.entities.iter().filter(|en| only.map_or(true, |o| o.contains(en))) {
             let mut st = self.conn.prepare(&format!("SELECT k, v FROM \"{}\"", en)).map_err(e)?;
             let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)?;
             let mut m = Map::new();
@@ -154,5 +159,27 @@ impl Db {
             })
             .map_err(e)?;
         rows.map(|r| r.map_err(e)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 実体を絞って読むと、指定した実体だけが入る。書き込みの差分は、読まなかった実体に影響しない
+    #[test]
+    fn load_entities_reads_only_the_named_ones() {
+        let db = Db::open(":memory:", vec!["A".into(), "B".into()]).unwrap();
+        db.conn.execute("INSERT INTO \"A\" (k, v) VALUES ('a1', '{\"n\":1}')", []).unwrap();
+        db.conn.execute("INSERT INTO \"B\" (k, v) VALUES ('b1', '{\"n\":2}')", []).unwrap();
+        let only_a = db.load_entities(Some(&["A".to_string()])).unwrap();
+        assert!(only_a.get("A").is_some() && only_a.get("B").is_none());
+        let before = only_a.clone();
+        let mut after = only_a.clone();
+        after["A"]["a2"] = serde_json::json!({"n": 3});
+        db.save_diff(&before, &after).unwrap();
+        let all = db.load_store().unwrap();
+        assert!(all["A"].get("a2").is_some());
+        assert!(all["B"].get("b1").is_some()); // 読まなかった B の行は、消えない
     }
 }
