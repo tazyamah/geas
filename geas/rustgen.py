@@ -580,8 +580,14 @@ class Gen:
             if e.op in ("+", "-", "*"):
                 f = {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op]
                 return f'({l}).{f}({rr}).ok_or_else(|| "計算があふれました".to_string())?'
-            if e.op in ("/", "%"):  # 正の定数で割る（検査で確かめてある）
+            if e.op in ("/", "%") and isinstance(e.r, Num):  # 正の定数で割る（検査で確かめてある）
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({rr})"
+            if e.op in ("/", "%"):  # 変数で割る：0 は失敗（or があれば その値）、あふれも失敗
+                f = "checked_div_euclid" if e.op == "/" else "checked_rem_euclid"
+                if e.dflt is None:
+                    return f'({l}).{f}({rr}).ok_or_else(|| "0 では割れません".to_string())?'
+                return (f'{{ let d_ = {rr}; if d_ == 0 {{ {self.raw_rx(e.dflt, r)} }} '
+                        f'else {{ ({l}).{f}(d_).ok_or_else(|| "計算があふれました".to_string())? }} }}')
             return f"({l} {'&&' if e.op == 'かつ' else e.op} {rr})"
         raise ValueError(f"raw の変換の式に使えません: {show(e)}")
 
@@ -822,8 +828,14 @@ class ProcGen:
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
             l, r = self.rx(e.l), self.rx(e.r)
-            if e.op in ("/", "%"):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
+            if e.op in ("/", "%") and isinstance(e.r, Num):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
+            if e.op in ("/", "%"):  # 変数で割る：1 以上と示してある（Unproven）か、0 のときの値を使う。i64::MIN / -1 のあふれは Fault
+                f = "checked_div_euclid" if e.op == "/" else "checked_rem_euclid"
+                if e.dflt is None:
+                    return f'({l}).{f}({r}).ok_or(Fault::Unproven("割る数が 1 以上: {show(e)}"))?'
+                return (f'{{ let d_ = {r}; if d_ == 0 {{ {self.rx(e.dflt)} }} '
+                        f'else {{ ({l}).{f}(d_).ok_or(Fault::Overflow("{show(e)}"))? }} }}')
             fr = ("Ratio", "Rational")
             if e.op == "*" and lt in fr and rt in fr:
                 return f"mul_ratio({l}, {r})?"

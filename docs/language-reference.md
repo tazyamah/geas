@@ -139,7 +139,8 @@ deed place_order {
 
 - 宣言（`input slot reads writes transition result effects`）が先、本体の文があと。宣言と本体のずれは検査器が見つけます。
 - 文：`let 名前 = 式 [else { return … }]`、`let 名前 = create エンティティ { 項目: 式, … }`、`x.f = 式`、`x.f += 式`、`update { 対象 -= 式 | (k, v) in 集まり }`、`if 条件 { … }`、`for 要素 in 集まり { … }`、`request 名前空間.操作(引数, idempotency_key = 式)`、`delete 変数`、`return 結果の種類(中身)`。
-- 式：`==` `!=` `<` `<=` `>` `>=`、`and`、`+ - *`、`D[k]`（キーで引く）、`x is null|absent|present|empty|nonempty`、`{ k | (k, v) in 集まり, 条件 }`（集合の内包表記）、`sum { 式 | (k, v) in 集まり }`、`round(値, floor, 通貨)`、`now`、`tz_offset`。
+- 式：`==` `!=` `<` `<=` `>` `>=`、`and`、`+ - *`、`/` `%`（整数の割り算と余り。下の説明）、`D[k]`（キーで引く）、`x is null|absent|present|empty|nonempty`、`{ k | (k, v) in 集まり, 条件 }`（集合の内包表記）、`sum { 式 | (k, v) in 集まり }`、`round(値, floor, 通貨)`、`now`、`tz_offset`。
+- 割り算 `x / d`・余り `x % d`（整数。切り捨ては負の無限大へ、余りは 0 以上）：`d` が定数なら正の整数。`d` が変数なら、検査器が **1 以上と示せる**ときだけ通ります（`ltype` の範囲が 1 以上、または `if n == 0 { return … }`・`if n < 1 { return … }` のように、先へ進む道で 0 を除いてある）。示せないときは、`x / d or 0` のように **0 のときの値**（`or` のあとは整数）を書きます。`or` があれば `d` は 0 でも負でもよく、結果の範囲は商（または余り）と `or` の値の合流です。生成物は `checked_div_euclid` を使い、`i64::MIN / -1` のようなあふれは `Fault::Overflow` になります。
 - 結果は `result 名前 { 種類(中身: 型), 種類, … }`。**すべての `return` と、フローの行き先が、結果の種類を漏れなく覆う**必要があります。
 - 外部作用 `request` には冪等キー（`idempotency_key`）が必須。`for` の中では、回す値と、外で決まる値の両方を組（`(order_id, k)`）にします。
 - 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`part 名前(x: 型) -> 型 guarantee result >= x`（保証は式で書き、実装は外から足す）。
