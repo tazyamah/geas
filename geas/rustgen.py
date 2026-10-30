@@ -552,7 +552,7 @@ class Gen:
     def raw_convert(self, pt):
         """raw から論理型への変換。require のどれかが成り立たなければ、理由を添えて入力不正（Err）にする"""
         n = pt.params[0][0]
-        self.w(f"/// 入力の via で結ぶ変換（Strong Parameters 的な境界）。拒否は入力不正\npub fn {pt.name}({n}: &str) -> Result<String, String> {{")
+        self.w(f"/// 入力の via で結ぶ変換（入力の選別を通す境界）。拒否は入力不正\npub fn {pt.name}({n}: &str) -> Result<String, String> {{")
         for cond, why in pt.requires:
             self.w(f"    if !({self.raw_rx(cond, n)}) {{ return Err({json.dumps(why, ensure_ascii=False)}.to_string()); }}")
         self.w(f"    Ok({self.raw_rx(pt.body, n)})\n}}")
