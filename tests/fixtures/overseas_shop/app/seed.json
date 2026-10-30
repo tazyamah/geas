@@ -40,6 +40,14 @@
    "currency": "JPY",
    "price": 2400
   },
+  "bowl-full": {
+   "product_id": "bowl-full",
+   "name": "飯碗（在庫が上限に近い）",
+   "jan": "4911112222333",
+   "stock": 999950,
+   "currency": "JPY",
+   "price": 2400
+  },
   "bowl-eu": {
    "product_id": "bowl-eu",
    "name": "Arita Rice Bowl",
