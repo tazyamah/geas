@@ -1214,7 +1214,7 @@ def names_in(e) -> set:
     if isinstance(e, Call):
         return set().union(*map(names_in, e.args)) if e.args else set()
     if isinstance(e, Bin):
-        return names_in(e.l) | names_in(e.r)
+        return names_in(e.l) | names_in(e.r) | (names_in(e.dflt) if e.dflt is not None else set())
     if isinstance(e, Tuple):
         return set().union(*map(names_in, e.items))
     if isinstance(e, Make):
@@ -1268,11 +1268,17 @@ def iv_show(a):
 
 TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足し引きであふれないため境界で確かめる
 UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
+NAMED = "#名"  # facts のキーの先頭がこれなら、束縛でなく入力や let の変数の範囲
 
 
 def iv_join(a: dict, b: dict) -> dict:
     """2つの道の合流。両方で分かっていることだけが残る（下限は小さいほう、上限は大きいほう）"""
     return {k: (max if k[0] == UP else min)(a[k], b[k]) for k in a.keys() & b.keys()}
+
+def iv_join_one(a, b):
+    """2つの値の範囲の合流（どちらにもなりうる値の範囲）"""
+    return (None if None in (a[0], b[0]) else min(a[0], b[0]), None if None in (a[1], b[1]) else max(a[1], b[1]))
+
 
 class ProcChecker:
     def __init__(self, ck: Checker, proc: Process):
@@ -1709,6 +1715,48 @@ class ProcChecker:
         elif isinstance(e, Num) and e.v != 0 and want != "JPY":
             self.d(ERROR, "単位", f"{what} は円以外の金額なので、0 以外の数字は直接書けません（money(整数, 通貨) で最小単位の個数から作ります）", line)
 
+    def div_interval(self, e: Bin, env):
+        """割り算（負の無限大へ切り捨て）・余り（0 以上）の値の範囲。割る数が定数でなければ、割る数の範囲から求める"""
+        (nl, nh), (dl, dh) = self.interval(e.l, env), self.interval(e.r, env)
+        if isinstance(e.r, Num):
+            dl = dh = e.r.v
+        if e.dflt is not None and dl is not None and dl >= 0:  # 0 は or の側に回るので、残りは 1 以上
+            dl = max(dl, 1)
+            dh = None if dh is None else max(dh, dl)
+        if dl is not None and dl >= 1:  # 割る数は正：端の組み合わせの最小と最大（割る数が上に果てしなければ 0 か -1 に近づく）
+            def q(n, d):
+                return (-1 if n < 0 else 0) if d is None else n // d
+            if e.op == "%":
+                hi = None if dh is None else dh - 1
+                if nl is not None and nl >= 0 and nh is not None:
+                    hi = nh if hi is None else min(hi, nh)
+                out = (0, hi)
+            else:
+                out = (None if nl is None else min(q(nl, dl), q(nl, dh)),
+                       None if nh is None else max(q(nh, dl), q(nh, dh)))
+        else:  # 割る数が負にもなる（or で 0 の場合を別に扱う）：大きさは割られる数以下、余りは割る数の大きさ未満
+            m = None if None in (nl, nh) else max(abs(nl), abs(nh))
+            dm = None if None in (dl, dh) else max(abs(dl), abs(dh))
+            out = (0, None if dm is None else dm - 1) if e.op == "%" else (None if m is None else -m, m)
+        if e.dflt is not None:
+            return iv_join_one(out, self.interval(e.dflt, env))
+        return out
+
+    def check_divisor(self, e: Bin, b, env):
+        """変数で割る割り算・余り。割る数が 1 以上と示せるか、0 のときの値（or）が書いてあるかを確かめる"""
+        if b != "Int":
+            self.d(ERROR, "型", f"「{show(e)}」: 割る数は整数です（{b}）")
+            return
+        if e.dflt is not None:
+            if self.ty(e.dflt, env) not in ("Int", "?"):
+                self.d(ERROR, "型", f"「{show(e)}」: 0 のときの値（or）は整数です")
+            return
+        lo, _ = self.interval(e.r, env)
+        if lo is None or lo < 1:
+            self.d(ERROR, "割り算", f"「{show(e)}」: 割る数「{show(e.r)}」が 0 になる道があります（範囲は{iv_show(self.interval(e.r, env))}）。"
+                   f"割る数の範囲を 1 以上にするか、割る前に「if {show(e.r)} == 0 {{ return … }}」で止めるか、"
+                   f"「{show(e)} or 0」のように 0 のときの値を書いてください")
+
     def decl_type(self, e, env):
         """入力・参照・項目として宣言された型（範囲つき）。分からなければ None"""
         if isinstance(e, Name):
@@ -1744,9 +1792,17 @@ class ProcChecker:
             if "#範囲:" + e.n in env:
                 return env["#範囲:" + e.n]
             if e.n in self.var_iv:
-                return self.var_iv[e.n]
-            t = self.decl_type(e, env)
-            return (None, None) if t is None else iv_of(t)
+                lo, hi = self.var_iv[e.n]
+            else:
+                t = self.decl_type(e, env)
+                lo, hi = (None, None) if t is None else iv_of(t)
+            known = self.facts.get((NAMED, e.n))  # 「if n == 0 { return … }」のように、確かめて先へ進んだ変数の範囲
+            if known is not None and (lo is None or known > lo):
+                lo = known
+            upper = self.facts.get((UP, NAMED, e.n))
+            if upper is not None and (hi is None or upper < hi):
+                hi = upper
+            return (lo, hi)
         if isinstance(e, Attr):
             data = (self.lookup_data.get(e.e.n) if isinstance(e.e, Name)
                     else e.e.d if isinstance(e.e, Index) else None)
@@ -1767,11 +1823,8 @@ class ProcChecker:
         if isinstance(e, Cond):
             (al, ah), (bl, bh) = self.interval(e.a, env), self.interval(e.b, env)
             return (None if None in (al, bl) else min(al, bl), None if None in (ah, bh) else max(ah, bh))
-        if isinstance(e, Bin) and e.op == "%":  # 負でも 0 以上 n 未満（rem_euclid）
-            return (0, e.r.v - 1)
-        if isinstance(e, Bin) and e.op == "/":  # 正の定数で割る切り捨て：区間の端をそのまま割る
-            lo, hi = self.interval(e.l, env)
-            return (None if lo is None else lo // e.r.v, None if hi is None else hi // e.r.v)
+        if isinstance(e, Bin) and e.op in ("/", "%"):
+            return self.div_interval(e, env)
         if isinstance(e, Bin) and e.op == "-" and self.ty_quiet(e.l, env) == "Time" and self.ty_quiet(e.r, env) == "Time":
             return (-2 * TIME_LIMIT, 2 * TIME_LIMIT)  # 時刻どうしの差（秒）。外から来る時刻は境界で TIME_LIMIT 秒までに止める
         if isinstance(e, Bin) and e.op in ("+", "-", "*"):
@@ -1936,6 +1989,8 @@ class ProcChecker:
             if a != "Int":
                 self.d(ERROR, "型", f"「{show(e)}」: 割り算できるのは整数だけです（{a}）")
                 return "?"
+            if not isinstance(e.r, Num):
+                self.check_divisor(e, b, env)
             return "Int"
         if e.op == "*":
             if a == "Money" and b == "Money":
@@ -2384,22 +2439,30 @@ class ProcChecker:
 
     def cond_facts(self, c, holds: bool) -> dict:
         """条件 c が成り立つ（holds）／成り立たないときに分かる下限。「x.項目 と 数」の比較だけを見る（整数と金額）"""
-        if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==") and isinstance(c.l, Attr)
-                and isinstance(c.l.e, Name) and c.l.e.n in self.bindings and isinstance(c.r, Num)):
+        if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==", "!=") and isinstance(c.r, Num)):
             return {}
-        t = self.decl_type(c.l, self.env)
-        if t is None or t.kind not in ("整数", "金額"):
+        if isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
+            t = self.decl_type(c.l, self.env)
+            if t is None or t.kind not in ("整数", "金額"):
+                return {}
+            b, f = self.bindings[c.l.e.n], c.l.n
+        elif isinstance(c.l, Name) and c.l.n not in self.bindings and self.ty_quiet(c.l, self.env) == "Int":
+            b, f = NAMED, c.l.n  # 入力や let の整数の変数
+        else:
             return {}
         n = c.r.v
-        op = c.op if holds else {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!="}[c.op]
+        op = c.op if holds else {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!=", "!=": "=="}[c.op]
         lo = {">": n + 1, ">=": n, "==": n}.get(op)
         hi = {"<": n - 1, "<=": n, "==": n}.get(op)
-        if op == "!=" and self.interval(c.l)[0] == n:
-            lo = n + 1
-        b = self.bindings[c.l.e.n]
-        out = {} if lo is None else {(b, c.l.n): lo}
+        if op == "!=":
+            known = self.interval(c.l)
+            if known[0] == n:
+                lo = n + 1
+            elif known[1] == n:
+                hi = n - 1
+        out = {} if lo is None else {(b, f): lo}
         if hi is not None:
-            out[(UP, b, c.l.n)] = hi
+            out[(UP, b, f)] = hi
         return out
 
     def note_currency_set(self, name, e: SetB):

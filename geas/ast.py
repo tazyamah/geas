@@ -367,6 +367,7 @@ class Bin:
     op: str
     l: object
     r: object
+    dflt: object = None  # 割り算・余りで、割る数が 0 のときの値（x / d or 0）。書かなければ None
 
 
 @dataclass
@@ -547,7 +548,7 @@ def show(e) -> str:
     if isinstance(e, Make):
         return f"{e.n} {{ {', '.join(f'{n}: {show(x)}' for n, x in e.fields)} }}"
     if isinstance(e, Bin):
-        return f"{show(e.l)} {e.op} {show(e.r)}"
+        return f"{show(e.l)} {e.op} {show(e.r)}" + (f" or {show(e.dflt)}" if e.dflt is not None else "")
     if isinstance(e, Pred):
         return f"{show(e.e)} が {e.kind}"
     if isinstance(e, Implies):

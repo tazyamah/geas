@@ -832,13 +832,18 @@ class Parser:
         while True:
             if self.accept("*"):
                 l = Bin("*", l, self.postfix())
-            elif self.is_("/") or self.is_("%"):  # 整数の割り算（切り捨て）と余り。割る数は正の整数の定数だけ（0で割る道を作らない）
+            elif self.is_("/") or self.is_("%"):  # 整数の割り算（切り捨て）と余り。0 で割る道は検査器が止める（1 以上と示すか、or で 0 のときの値を書く）
                 op = self.next().val
                 t = self.peek()
-                if t.kind != "NUM" or int(t.val) <= 0:
-                    raise self.err(f"「{op}」の右は、正の整数の定数だけです（割る数が0になる道を作らないため）")
-                self.next()
-                l = Bin(op, l, Num(int(t.val)))
+                if t.kind == "NUM":
+                    if int(t.val) <= 0:
+                        raise self.err(f"「{op}」の右の定数は、正の整数です（0 で割る道を作らないため）")
+                    self.next()
+                    r = Num(int(t.val))
+                else:
+                    r = self.postfix()
+                dflt = self.postfix() if self.accept("or") else None
+                l = Bin(op, l, r, dflt)
             else:
                 return l
 

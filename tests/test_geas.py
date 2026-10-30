@@ -1780,10 +1780,10 @@ convert 端(d: 日数) -> 余り日 = d % 7
 def test_整数の割り算は正の定数で切り捨て_範囲は端を割って示す():
     ck = chk(DIVIDE.replace("convert 端(d: 日数) -> 余り日 = d % 7\n", ""))
     assert ck.ready, ck.diags
-    with pytest.raises(ParseError, match="正の整数の定数"):
+    with pytest.raises(ParseError, match="正の整数"):
         parse(DIVIDE.replace("d / 7", "d / 0", 1))
-    with pytest.raises(ParseError, match="正の整数の定数"):
-        parse(DIVIDE.replace("d / 7", "d / d", 1))
+    # 変数で割るのは、割る数が 1 以上と示せるか or で 0 のときの値を書くときだけ（下の「変数で割れる…」の試験）
+    assert any("0 になる道" in m for m in msgs(chk(DIVIDE.replace("d / 7", "d / d", 1)), ERROR))
     assert any("割り算できるのは整数だけ" in m for m in msgs(chk(DIVIDE.replace("ltype 日数 = int 0..", "ltype 日数 = money(JPY) 0..").replace("convert 端(d: 日数) -> 余り日 = d % 7\n", "")), ERROR))
 
 
@@ -2995,3 +2995,78 @@ fn main() {
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     assert r.stdout.startswith("Ok(") and "T1<script>" in r.stdout and "日本語" in r.stdout, r.stdout
+
+
+# ---- 変数で割る割り算：割る数が 1 以上と示せるか、0 のときの値（or）を書く ----
+DIV_SRC = """ltype Count = int 1..1000
+ltype Total = int 0..1000000
+entity Stat {
+  stat_id: id unique
+  average: Total required
+  rest: Total required
+}
+result Done {
+  Saved(stat_id: id)
+}
+deed save_average {
+  input total: Total required, n: Count required
+  writes Stat
+  result Done
+  effects none
+
+  let stat = create Stat { average: total / n, rest: total % n }
+  return Saved(stat.stat_id)
+}
+nexus Flow {
+  save_average: Saved → reply
+}
+"""
+DIV_GUARD = (DIV_SRC.replace("ltype Count = int 1..1000", "ltype Count = int 0..1000")
+             .replace("result Done {\n  Saved(stat_id: id)\n}", "result Done {\n  Saved(stat_id: id)\n  NoCount\n}")
+             .replace("  let stat = create", "  if n == 0 {\n    return NoCount\n  }\n  let stat = create")
+             .replace("save_average: Saved → reply", "save_average: Saved → reply, NoCount → reply"))
+DIV_OR = (DIV_SRC.replace("ltype Count = int 1..1000", "ltype Count = int 0..1000")
+          .replace("total / n, rest: total % n", "total / n or 0, rest: total % n or total"))
+
+
+def test_変数で割れるのは_割る数が1以上と示せるか_0のときの値を書いたときだけ():
+    for src in (DIV_SRC, DIV_GUARD, DIV_OR):
+        ck = chk(src)
+        assert ck.ready, ck.diags
+    # 範囲が 0 を含み、止めも or も無ければ止まる
+    bad = mutate(DIV_SRC, "ltype Count = int 1..1000", "ltype Count = int 0..1000")
+    assert any("0 になる道" in m for m in msgs(chk(bad), ERROR))
+    # 止める条件が足りなければ止まる（n < 0 は n == 0 を除かない）
+    assert any("0 になる道" in m for m in msgs(chk(DIV_GUARD.replace("if n == 0", "if n < 0")), ERROR))
+    # 1 以上と分かる別の書き方でも通る
+    assert chk(DIV_GUARD.replace("if n == 0", "if n < 1")).ready
+    assert chk(DIV_GUARD.replace("if n == 0", "if n <= 0")).ready
+    # 割る数・0 のときの値は整数
+    assert any("0 のときの値" in m for m in msgs(chk(mutate(DIV_OR, "total / n or 0", 'total / n or (n == 1)')), ERROR))
+    # 商の範囲も求める：total / n は total 以下なので Small(0..10) には入らないが、total % n は n 未満
+    assert any("収まると示せません" in m for m in msgs(chk(mutate(DIV_SRC, "rest: Total required", "rest: Total required\n  small: Tiny required").replace(
+        "total % n }", "total % n, small: total / n }").replace("ltype Total", "ltype Tiny = int 0..10\nltype Total", 1)), ERROR))
+    assert chk(DIV_SRC.replace("ltype Total", "ltype Tiny = int 0..999\nltype Total", 1).replace(
+        "rest: Total required", "rest: Tiny required")).ready
+
+
+@needs_cargo
+def test_変数で割る割り算は_0のときの値を返し_それ以外は商と余りを返す(tmp_path):
+    ck = chk(DIV_OR)
+    assert "checked_div_euclid" in generate(ck) and "checked_rem_euclid" in generate(ck)
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    for n in [0, 1, 7, 1000] {
+        let req = format!(r#"{{"name":"save_average","ctx":{{"new_Stat_id":"A"}},"input":{{"total":100,"n":{}}},"store":{{}}}}"#, n);
+        println!("{:?}", call(&req));
+    }
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    out = r.stdout.splitlines()
+    assert len(out) == 4 and all(o.startswith("Ok(") for o in out), out
+    for o, (q, m) in zip(out, [(0, 100), (100, 0), (14, 2), (0, 100)]):
+        assert f"{q}" in o and f"{m}" in o, (o, q, m)
