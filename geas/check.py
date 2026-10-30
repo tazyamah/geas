@@ -105,7 +105,6 @@ class ProcInfo:
     effects: list = field(default_factory=list)  # (名前, 冪等キー)
     returns: set = field(default_factory=set)
     roundings: list = field(default_factory=list)  # (方式, 単位)
-    parts: set = field(default_factory=set)  # 呼んだ宣言済みの部品
     new_ids: list = field(default_factory=list)  # 採番するデータ名
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
@@ -324,6 +323,17 @@ class Checker:
             elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None or pt.ret.check is not None):
                 self.d(ERROR, "範囲", where, "長さや文字種が決まっている文字列を返す変換は、まだ静的に示せません")
             self.part_types.update(pc.info.types)
+            return
+        crate, version, expr, level, why = pt.lib
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", crate):
+            self.d(ERROR, "名前", where, f"クレートの名前「{crate}」が読めません（半角英数・_・- だけ。標準ライブラリだけなら \"std\"）")
+        elif crate != "std" and not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}([-+][0-9A-Za-z.-]+)?", version):
+            self.d(ERROR, "名前", where, f"クレート {crate} の版「{version}」が読めません（例：\"0.10\"。版は固定します）")
+        if "unsafe" in re.findall(r"[A-Za-z_]+", expr):
+            self.d(ERROR, "保証", where, "call の式に unsafe は書けません（生成物は unsafe を許していません）")
+        if pt.guarantee is None:
+            if pt.ret.kind in ("整数", "金額") and pt.ret.range is None or pt.ret.kind == "文字列" and pt.ret.range is None and pt.ret.chars is None and not pt.ret.read:
+                self.d(ERROR, "保証", where, "戻り値の範囲（型の範囲・文字種）か guarantee のどちらかで、戻り値を確かめられるようにしてください")
             return
         env = {n: tok_of(t) for n, t in [*pt.params, ("result", pt.ret)]}
         g = pc.ty(pt.guarantee, env)
@@ -1478,8 +1488,6 @@ class ProcChecker:
                     self.d(ERROR, "型", f"部品 {e.n} の引数「{n}」の型が違います（{at}）。違う型は、変換してから渡してください")
                 self.fit_unit(a, t, f"部品 {e.n} の引数「{n}」", e.line if hasattr(e, "line") else 0,
                               siblings={pn: x for (pn, _), x in zip(pt.params, e.args)})
-            if pt.external:  # convert は生成コードの中で計算するので、外の部品は要らない
-                self.info.parts.add(e.n)
             return tok_of(pt.ret)
         if isinstance(e, Call):
             if e.n != "round" or len(e.args) != 3:

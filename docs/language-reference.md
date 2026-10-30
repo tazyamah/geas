@@ -147,7 +147,7 @@ deed place_order {
 - 保存先の定義 `storage 保存先 isolation process`／`isolation store(種類) ["理由"]`：保存先を 1 回定義し、リクエストの直列を誰が保証するかを持たせる。entity は `store 名 in 保存先` で参照する（定義の漏れも、使われない定義も検査が止める）。`isolation process` は、このアプリのプロセスの中だけ geas のサーバーが直列にする（別プロセスとの関係は約束しない）。`isolation store(種類)` は保存先が直列にする。種類は引数で、サーバー実行部が契約の試験で確かめてあるもの（いまは `sqlite`）は理由が要らず、それ以外は人の保証として理由が必須。`store` の行がない entity は標準の保存先（`sqlite`）で、書かなくてよい。`process` と確かめていない種類は仕様書の「人の保証」に出ます。
 - 結果は `result 名前 { 種類(中身: 型), 種類, … }`。**すべての `return` と、フローの行き先が、結果の種類を漏れなく覆う**必要があります。
 - 外部作用 `request` には冪等キー（`idempotency_key`）が必須。`for` の中では、回す値と、外で決まる値の両方を組（`(order_id, k)`）にします。
-- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`part 名前(x: 型) -> 型 guarantee result >= x`（保証は式で書き、実装は外から足す）。
+- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`library 名前(x: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee result >= x] trust check|verify|assume "理由"`（根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。標準ライブラリだけなら `from rust "std" ""`。版は固定して `Cargo.toml` に書き出す。戻り値は呼ぶたびに、型の範囲と `guarantee` で確かめる。`verify` は検証ビルドだけ、`assume` は確かめない。理由は必須で、仕様書の「人の保証」に出る。ライブラリが panic しても `Fault` で止まり、サーバーは続く。無限ループとメモリ枯渇は防げない）。旧 `part` は廃止。
 
 ## 5. slot の値の決め方（rule）
 

@@ -25,7 +25,7 @@ pub enum Fault {
     Unproven(&'static str),
     /// 計算か物理型への変換があふれた
     Overflow(&'static str),
-    /// 外から足した部品の戻り値が、宣言の保証に違反した（部品名, 内容）
+    /// ライブラリの戻り値が、宣言の範囲か保証に違反した（部品名, 内容）。ライブラリの panic もここに入る
     Guarantee(&'static str, String),
     /// 範囲の宣言に反する値を書こうとした
     Range(String),
@@ -539,14 +539,18 @@ class Gen:
                 self.raw_convert(pt)
         if not self.p.parts:
             return
-        if not any(pt.external for pt in self.p.parts):
+        libs = [pt for pt in self.p.parts if pt.external]
+        if not libs:
             return
-        self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait Parts {")
-        for pt in self.p.parts:
-            if not pt.external:
-                continue
+        self.w("/// 根の言語のライブラリを呼ぶ関数の置き場。ここだけは、人が保証した外のコードを呼ぶので lint の禁止を外す。\n"
+               "/// 呼ぶ側（生成した処理）が、戻り値を宣言の範囲と保証で確かめる。ライブラリが panic しても Fault にして続ける\n"
+               "#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]\n"
+               "mod library {\n    #[allow(unused_imports)]\n    use super::*;")
+        for pt in libs:
+            _, _, expr, _, why = pt.lib
             ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
-            self.w(f"    fn {pt.name}(&self{', ' if ps else ''}{ps}) -> {rust_type(pt.ret)};")
+            self.w(f"    /// {why}\n    pub fn {pt.name}({ps}) -> Result<{rust_type(pt.ret)}, String> {{\n"
+                   f'        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> {rust_type(pt.ret)} {{ {expr} }})).map_err(|_| "ライブラリが panic しました".to_string())\n    }}')
         self.w("}")
 
     def raw_convert(self, pt):
@@ -735,29 +739,37 @@ class ProcGen:
             self.fills = {}
             self.scope = saved
         else:
-            call = f"parts.{e.n}({', '.join(args)})"
+            call = f'library::{e.n}({", ".join(args)}).map_err(|m| Fault::Guarantee("{e.n}", m))?'
         lines.append(f"let result: {local(pt.ret)} = {call + ' as i128' if pt.ret.kind in ('整数', '金額') else call};")
         if pt.body is not None:  # convert の範囲は検査器が静的に示してある。実行時には確かめない
             return "{ " + " ".join(lines) + " result }"
+        checks = []
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = check_range("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+            checks.append(f'if let Err(m) = check_range("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+            checks.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
-            lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+            checks.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.read:
-            lines.append(f'if let Err(m) = {pt.ret.read}(&result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+            checks.append(f'if let Err(m) = {pt.ret.read}(&result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
-            lines.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
-        saved = dict(self.scope)
-        for n, t in [*pt.params, ("result", pt.ret)]:
-            self.scope[n] = ("local", tok_of(t))
-        self.info.types.update(self.ck.part_types)
-        cond = self.rx(pt.guarantee)
-        self.scope = saved
-        lines.append(f'if !({cond}) {{ return Err(Fault::Guarantee("{e.n}", "{show(pt.guarantee)}".to_string())) }}')
+            checks.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
+        if pt.guarantee is not None:
+            saved = dict(self.scope)
+            for n, t in [*pt.params, ("result", pt.ret)]:
+                self.scope[n] = ("local", tok_of(t))
+            self.info.types.update(self.ck.part_types)
+            cond = self.rx(pt.guarantee)
+            self.scope = saved
+            checks.append(f'if !({cond}) {{ return Err(Fault::Guarantee("{e.n}", "{show(pt.guarantee)}".to_string())) }}')
+        level = pt.lib[3]  # trust：check は毎回、verify は検証ビルドだけ、assume は確かめない（人の保証）
+        if level == "verify" and checks:
+            checks = ["if cfg!(debug_assertions) { " + " ".join(checks) + " }"]
+        elif level == "assume":
+            checks = []
+        lines.extend(checks)
         return "{ " + " ".join(lines) + " result }"
 
     def src(self, e) -> str:
@@ -1058,8 +1070,7 @@ class ProcGen:
             g.w(line)
         g.w("        Ok(())\n    }\n}")
         g.w(f"pub struct {n}Output {{\n    pub result: {self.rdef.name},\n    pub Write: Vec<Write>,\n    pub effects: Vec<Effect>,\n}}")
-        extra = ", parts: &dyn Parts" if info.parts else ""
-        g.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input{extra}) -> Result<{n}Output, Fault> {{")
+        g.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> Result<{n}Output, Fault> {{")
         g.w("    let mut writes: Vec<Write> = Vec::new();\n    let mut effects: Vec<Effect> = Vec::new();")
         self.null_inputs = {name for name, t in proc.inputs if t.optional}
         for name, t in proc.inputs:
@@ -1072,7 +1083,7 @@ class ProcGen:
         g.w("}\n")
 
 
-def cargo_toml(name: str, host: bool = False) -> str:
+def cargo_toml(name: str, host: bool = False, deps: dict | None = None) -> str:
     crate_type = 'crate-type = ["cdylib", "rlib"]\n' if host else ""
     opt = 'opt-level = "s"\n' if host else ""
     return f'''[package]
@@ -1083,9 +1094,26 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 {crate_type}
-[profile.release]
+{dependencies(deps)}[profile.release]
 {opt}overflow-checks = true
 '''
+
+
+def dependencies(deps) -> str:
+    """library が呼ぶクレート。版は固定する（=）。std は依存に足さない"""
+    if not deps:
+        return ""
+    return "[dependencies]\n" + "".join(f'{c} = "={v}"\n' for c, v in sorted(deps.items())) + "\n"
+
+
+def library_deps(ck) -> dict:
+    out: dict[str, str] = {}
+    for pt in ck.p.parts:
+        if pt.external and pt.lib[0] != "std":
+            if out.get(pt.lib[0], pt.lib[1]) != pt.lib[1]:
+                raise ValueError(f"クレート {pt.lib[0]} の版が2つあります（{out[pt.lib[0]]} と {pt.lib[1]}）")
+            out[pt.lib[0]] = pt.lib[1]
+    return out
 
 
 def generate(ck: Checker) -> str:

@@ -86,20 +86,21 @@ class EffectDecl:
 
 @dataclass
 class Part:
-    """外から足す部品。保証は、呼んだ直後に戻り値（result）と引数を使って確かめる式"""
+    """部品。convert（geas の式で書いた変換）か、library（根の言語のライブラリを呼ぶ関数）。保証は、呼んだ直後に戻り値（result）と引数を使って確かめる式"""
     name: str
     params: list  # [(名前, 型)]
     ret: "Type"
-    guarantee: object
+    guarantee: object  # library の任意の保証式（無ければ None）。convert は None
     line: int = 0
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
     defaults: dict = field(default_factory=dict)  # convert の引数のデフォルト値：引数名 → 式（呼ぶとき省ける）
     requires: list = field(default_factory=list)  # raw から変換する convert の拒否の条件：[(条件の式, 理由)]。成り立たなければ入力不正
+    lib: Optional[tuple] = None  # library のとき (クレート名, 版, 呼び出す Rust の式, 確認の段階 check|verify|assume, 人の保証の理由)。クレートが std なら依存は足さない
 
     @property
     def external(self) -> bool:
-        """アプリが実装する部品（本体が無い）"""
-        return self.body is None
+        """根の言語のライブラリを呼ぶ部品（library）"""
+        return self.lib is not None
 
 
 @dataclass

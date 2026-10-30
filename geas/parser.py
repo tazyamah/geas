@@ -179,7 +179,10 @@ class Parser:
             elif kw == "effect":
                 p.effects.append(self.effect_decl(line))
             elif kw == "part":
-                p.parts.append(self.part(line))
+                raise ParseError("part は廃止しました。geas の式で書けるなら convert、根の言語（Rust）のライブラリを呼ぶなら "
+                                 'library を使います（例：library 税込(x: 金額) -> 金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"）', line)
+            elif kw == "library":
+                p.parts.append(self.library(line))
             elif kw == "convert":
                 p.parts.append(self.convert(line))
             elif kw == "invariant":
@@ -561,18 +564,45 @@ class Parser:
         self.end_line()
         return EffectDecl(name, params, line, failures, no_wait, joins, replies)
 
-    def part(self, line) -> Part:
+    def library(self, line) -> Part:
+        """library 名前(引数: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee 式] trust check|verify|assume "理由"：
+        根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。戻り値は呼ぶたびに型の範囲と guarantee で確かめる（trust で緩められる）"""
         name = self.name()
         self.expect("(")
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
         self.expect("→")
         ret = self.type()
-        if not self.accept("guarantee"):
-            raise self.err(f"部品 {name} に保証がありません（guarantee 式 を書きます。例：guarantee result >= x）")
-        g = self.expr()
+        usage = f'library {name}(引数: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee 式] trust check "理由"'
+        if not (self.accept("from") and self.accept("rust")):
+            raise self.err(f"ライブラリの呼び出し元がありません（{usage}）")
+        strs = []
+        for what in ("クレートの名前", "版（std なら空の \"\"）"):
+            t = self.peek()
+            if t.kind != "STR":
+                raise self.err(f"from rust のあとには、{what}を \"…\" で書きます（{usage}）")
+            self.i += 1
+            strs.append(t.val)
+        if not self.accept("call"):
+            raise self.err(f'呼び出す Rust の式がありません（call "式"。引数の名前を使えます。{usage}）')
+        t = self.peek()
+        if t.kind != "STR" or not t.val.strip():
+            raise self.err('call には、Rust の式を "…" で書きます')
+        self.i += 1
+        expr = t.val
+        g = self.expr() if self.accept("guarantee") else None
+        if not self.accept("trust"):
+            raise self.err(f'ライブラリには、人の保証が要ります（trust check|verify|assume "理由"）。{usage}')
+        level = self.peek().val
+        if level not in ("check", "verify", "assume"):
+            raise self.err("trust のあとには check（毎回確かめる）、verify（検証ビルドだけ確かめる）、assume（確かめない）のどれかを書きます")
+        self.i += 1
+        why = self.peek()
+        if why.kind != "STR" or not why.val.strip():
+            raise self.err('trust には、保証する理由を "…" で書いてください（そのライブラリが純粋で、panic・無限ループ・メモリ枯渇をしない根拠など）')
+        self.i += 1
         self.end_line()
-        return Part(name, params, ret, g, line)
+        return Part(name, params, ret, g, line, lib=(strs[0], strs[1], expr, level, why.val))
 
     def convert(self, line) -> Part:
         """convert 名前(引数: 型) -> 型 = 式：論理型どうしの一方通行の変換。定義が geas の式なので、外の実装も保証も要らない"""
@@ -1330,7 +1360,7 @@ class Parser:
 
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
-DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow",
+DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow",
                  "trigger", "query", "event", "screen", "resource", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 

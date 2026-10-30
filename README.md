@@ -71,7 +71,7 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 結果の中身には名前を付けます（`result 受注結果 { 受付(注文ID: id), 在庫不足(不足: ID集合), 顧客なし }`）。ネクサスで次の処理へ進むときは、結果の中身を次の処理の入力へ名前と型で渡します。過不足や型の違いはエラーです（`trigger` の引数と同じルール）。
 
-外から足す部品は、保証を geas の式で書きます（`part 税込(x: 非負金額) -> 非負金額 guarantee result >= x`）。保証が無い部品や、戻り値（`result`）を使わない保証は、検査でエラーです。呼ぶたびに、戻り値の範囲と保証を確かめる Rust の `if` を生成し、違反したときは処理を止めます（書込は適用されず、保存は変わりません）。部品の実装は、生成する `trait 部品群` をアプリが書きます。引数と戻り値の型（金額か整数か）は、検査で確かめます。`round` のような組み込みの部品は宣言しません。
+根の言語（Rust）のライブラリは `library` で呼びます（`library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"`）。戻り値の範囲か保証が無い宣言や、戻り値（`result`）を使わない保証、理由の無い `trust` は、検査でエラーです。呼ぶたびに、戻り値の範囲と保証を確かめる Rust の `if` を生成し、違反したとき（ライブラリの panic を含む）は処理を止めます（書込は適用されず、保存は変わりません）。呼ぶ先は仕様書の「人の保証」に出ます。引数と戻り値の型（金額か整数か）は、検査で確かめます。`round` のような組み込みの部品は宣言しません。
 
 論理型どうしの一方通行の変換は、`convert 税込(x: 非負金額) -> 非負金額 = x + x` と式で書きます。定義が geas の式なので、外の実装も保証も要りません。戻り値の範囲に収まることは、引数の範囲から検査器が静的に示し、示せなければ検査でエラーにします（実行時には確かめません）。生成コードの中で式を計算するだけです（外から受け取る値の `raw` からの変換は、この次に足します）。
 
@@ -99,7 +99,7 @@ trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now +
 
 問い合わせの `filter 項目 equals 入力` は、文字列・ID・整数の完全一致です（キー以外の項目で1件を引くとき。例：JANコードから価格を引く）。
 
-他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`part`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
+他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`library`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
 
 ## ライセンス
 

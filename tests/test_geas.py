@@ -1269,7 +1269,7 @@ entity 品 {
 result 置いた結果 {
   置いた(品ID: id)
 }
-part 税込(x: 非負金額) -> 非負金額 guarantee result >= x
+library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"
 deed 置く {
   input 税抜: 税抜の限り required
   writes 品
@@ -1289,8 +1289,17 @@ def test_部品の保証は_geas_の式で書き_引数と_result_だけを使�
     ck = chk(PART)
     assert ck.ready, ck.diags
     assert build(ck)["部品"] == [("税込", "x: 金額(円) 0..", "金額(円) 0..", "result >= x")]
-    with pytest.raises(ParseError, match="保証がありません"):
-        parse(PART.replace(" guarantee result >= x", ""))
+    assert any(r[0] == "（ライブラリ 税込）" and "std" in r[1] and "x + x / 10" in r[1] for r in build(ck)["人の保証"])  # 外のコードは人の保証に出る
+    with pytest.raises(ParseError, match="part は廃止"):
+        parse(PART.replace("library", "part"))
+    with pytest.raises(ParseError, match="人の保証が要ります"):
+        parse(PART.replace(' trust check "整数の計算だけで、panic も繰り返しもしない"', ""))
+    with pytest.raises(ParseError, match="理由"):
+        parse(PART.replace('trust check "整数の計算だけで、panic も繰り返しもしない"', "trust check"))
+    with pytest.raises(ParseError, match="check（毎回"):
+        parse(PART.replace("trust check", "trust never"))
+    assert any("版" in m for m in msgs(chk(PART.replace('"std" ""', '"sha2" "latest"')), ERROR))
+    assert any("unsafe" in m for m in msgs(chk(PART.replace('"x + x / 10"', '"unsafe { x }"')), ERROR))
     assert any("戻り値（result）を使っていません" in m for m in msgs(chk(PART.replace("result >= x", "x >= 0")), ERROR))
     assert any("真偽の式" in m for m in msgs(chk(PART.replace("result >= x", "result + x")), ERROR))
     assert any("定義されていません" in m for m in msgs(chk(PART.replace("result >= x", "result >= y")), ERROR))
@@ -1303,26 +1312,48 @@ def test_部品の呼び出しは宣言と型が合わないと止まる():
 
 
 @needs_cargo
-def test_部品の保証は呼ぶたびに確かめ_違反は保存を変えずに止まる(tmp_path):
-    ck = chk(PART)
-    main = """use geas_app::*;
-use geas_app::host::call;
-struct 良い;
-impl Parts for 良い { fn 税込(&self, x: i64) -> i64 { x + x / 10 } }
-struct 悪い;
-impl Parts for 悪い { fn 税込(&self, x: i64) -> i64 { x - 1 } }
+def test_ライブラリの戻り値は呼ぶたびに確かめ_違反とpanicは保存を変えずに止まる(tmp_path):
+    main = """use geas_app::host::call;
 fn main() {
     let req = r#"{"name":"置く","ctx":{"new_品_id":"A"},"input":{"税抜":1000},"store":{}}"#;
-    println!("{:?}", call(req, &良い));
-    println!("{:?}", call(req, &悪い));
+    println!("{:?}", call(req));
 }
 """
+    outs = {}
+    for label, expr, level in [("良い", "x + x / 10", "check"), ("悪い", "x - 1", "check"), ("panic", "{ let v: Vec<i64> = Vec::new(); v[0] }", "check"),
+                               ("確かめない", "x - 1", "assume")]:
+        src = PART.replace('"x + x / 10"', json.dumps(expr)).replace("trust check", f"trust {level}")
+        ck = chk(src)
+        assert ck.ready, ck.diags
+        d = tmp_path / label
+        write_crate(ck, generate(ck), main, d, host=True)
+        r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=d, capture_output=True, text=True)
+        assert r.returncode == 0, label + r.stderr[-2500:]
+        outs[label] = r.stdout.strip()
+    assert outs["良い"].startswith("Ok(") and '\\"価格\\":1100' in outs["良い"], outs["良い"]
+    assert outs["悪い"].startswith("Err(") and "税込" in outs["悪い"] and "result >= x" in outs["悪い"], outs["悪い"]
+    assert outs["panic"].startswith("Err(") and "税込" in outs["panic"] and "panic" in outs["panic"], outs["panic"]
+    assert outs["確かめない"].startswith("Ok(") and '\\"価格\\":999' in outs["確かめない"], outs["確かめない"]  # assume は人が引き受けた。確かめない
+
+
+@needs_cargo
+def test_ライブラリは版を固定した依存として書き出され_外のクレートも呼べる(tmp_path):
+    src = PART.replace('from rust "std" ""', 'from rust "serde_json" "1.0.154"').replace(
+        '"x + x / 10"', '"serde_json::from_str::<i64>(&x.to_string()).unwrap_or(0) + x / 10"')
+    ck = chk(src)
+    assert ck.ready, ck.diags
+    main = """use geas_app::host::call;
+fn main() { println!("{:?}", call(r#"{"name":"置く","ctx":{"new_品_id":"A"},"input":{"税抜":1000},"store":{}}"#)); }
+"""
     write_crate(ck, generate(ck), main, tmp_path, host=True)
+    assert '[dependencies]\nserde_json = "=1.0.154"' in (tmp_path / "Cargo.toml").read_text()
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
-    ok, ng = r.stdout.splitlines()
-    assert ok.startswith("Ok(") and '\\"価格\\":1100' in ok, ok
-    assert ng.startswith("Err(") and "税込" in ng and "result >= x" in ng, ng
+    assert r.stdout.startswith("Ok(") and '\\"価格\\":1100' in r.stdout, r.stdout
+    two = src + 'library 別(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\n'
+    with pytest.raises(ValueError, match="版が2つ"):
+        from geas.rustgen import library_deps
+        library_deps(chk(two))
 
 
 @needs_cargo
@@ -1736,14 +1767,13 @@ def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(
     assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]
 
 
-CONVERT = PART.replace("part 税込(x: 非負金額) -> 非負金額 guarantee result >= x", "convert 税込(x: 非負金額) -> 非負金額 = x + x")
+CONVERT = PART.replace('library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"', "convert 税込(x: 非負金額) -> 非負金額 = x + x")
 
 
 def test_convert_は式が定義で_外の部品も保証も要らない():
     ck = chk(CONVERT)
     assert ck.ready, ck.diags
     assert build(ck)["部品"] == [("税込", "x: 金額(円) 0..", "金額(円) 0..", "= x + x")]
-    assert not ck.infos["置く"].parts
     assert "trait Parts" not in generate(ck)
 
 

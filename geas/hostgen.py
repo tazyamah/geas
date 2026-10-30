@@ -300,16 +300,14 @@ def host_source(ck: Checker) -> str:
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
       '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}],\\"store\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
-    has_parts = any(pt.external for pt in p.parts)
-    w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n    match name {{")
+    w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store) -> Result<String, String> {{\n    match name {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("new_{d}_id")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
-        extra = ", parts" if info.parts else ""
-        w(f"            let o = {n}(&c, Store, &i{extra}).map_err(|f| f.to_string())?;\n            Store.apply(o.Write.clone()).map_err(|f| f.to_string())?;")
+        w(f"            let o = {n}(&c, Store, &i).map_err(|f| f.to_string())?;\n            Store.apply(o.Write.clone()).map_err(|f| f.to_string())?;")
         w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect(), Store))\n        }}")
     for q in p.queries:
         n = q.name
@@ -321,9 +319,9 @@ def host_source(ck: Checker) -> str:
         else:
             w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![], Store))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
-    w(f"pub fn call(request: &str{', parts: &dyn Parts' if has_parts else ''}) -> Result<String, String> {{\n"
+    w(f"pub fn call(request: &str) -> Result<String, String> {{\n"
       '    let r = parse(request)?;\n    let mut s = read_store(r.get("store")?)?;\n'
-      f'    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s{", parts" if has_parts else ""})\n}}')
+      f'    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s)\n}}')
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
     w(f'pub const DEFS_JSON: &str = r####"{defs}"####;')
     w(r'''
@@ -339,5 +337,5 @@ pub extern "C" fn alloc(n: usize) -> *mut u8 { let mut v = Vec::<u8>::with_capac
 pub extern "C" fn dealloc(p: *mut u8, n: usize) { unsafe { drop(Vec::from_raw_parts(p, 0, n)); } }
 @@CALL@@#[no_mangle]
 pub extern "C" fn geas_defs() -> u64 { ret(DEFS_JSON.to_string()) }
-'''.replace("@@CALL@@", "" if has_parts else CALL_WASM))
+'''.replace("@@CALL@@", CALL_WASM))
     return "\n".join(out) + "\n"

@@ -8,7 +8,7 @@ from pathlib import Path
 from .ast import Type
 from .check import Checker, phys
 from .plan import EXAMPLE, UNSPEC, Finding, n, split_top
-from .rustgen import cargo_toml, rust_type
+from .rustgen import cargo_toml, library_deps, rust_type
 
 
 class ExampleError(Exception):
@@ -118,8 +118,6 @@ def example_code(ck: Checker, row: dict) -> str:
         if key is None:
             raise ExampleError(f"前提に 採番「新{ck.p.show_names(d)}ID」がありません")
         fields.append(f'new_{d}_id: "{ctx[key]}".to_string()')
-    if info and info.parts:
-        raise ExampleError(f"処理 {proc.name} は部品（{', '.join(sorted(info.parts))}）を呼ぶので、具体例では動かせません（部品の実装はアプリが持つため）")
     L.append(f"        let ctx = {proc.name}Ctx {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
     given = {ck.p.resolve(k, [n for n, _ in proc.inputs]): v for k, v in given.items()}
@@ -181,7 +179,7 @@ HOST_MOD = "\n// 窓口（JSON と WASM の境界）は、外の値を読む所�
 
 def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bool = False):
     (dest / "src" / "bin").mkdir(parents=True, exist_ok=True)
-    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host))
+    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host, library_deps(ck)))
     (dest / "src" / "lib.rs").write_text(lib_src + (HOST_MOD if host else ""))
     if host:
         from .hostgen import host_source
