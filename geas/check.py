@@ -55,6 +55,8 @@ def tok_of(t: Type) -> str:
         return "Raw"
     if k == "日時":
         return "Time"
+    if k == "真偽":
+        return "Bool"
     if k == "整数":
         return "Int"
     if k == "金額":
@@ -287,8 +289,8 @@ class Checker:
             self.d(ERROR, "名前", where, "引数の名前に result は使えません（戻り値の名前です）")
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.check_type(t, f"{where} / {n}", comp_ok=pt.body is not None and n != "result")
-            if t.kind not in ("整数", "金額", "割合", "ID", "文字列", "日時") and not (pt.body is not None and t.kind == "合成" and n != "result"):
-                self.d(ERROR, "型", where, f"部品の引数と戻り値に使えるのは数・割合・ID・文字列・日時です（{n}）")
+            if t.kind not in ("整数", "金額", "割合", "ID", "文字列", "日時", "真偽") and not (pt.body is not None and t.kind == "合成" and n != "result"):
+                self.d(ERROR, "型", where, f"部品の引数と戻り値に使えるのは数・割合・ID・文字列・日時・真偽です（{n}）")
         pc = ProcChecker(self, Process(pt.name))
         pc.where = where
         if pt.body is not None:  # convert：式が定義。式の型が戻り値の型と合うことを確かめる（範囲は呼ぶたびに生成コードで確かめる）
@@ -1242,6 +1244,8 @@ def names_in(e) -> set:
         return set().union(*map(names_in, e.args)) if e.args else set()
     if isinstance(e, Bin):
         return names_in(e.l) | names_in(e.r) | (names_in(e.dflt) if e.dflt is not None else set())
+    if isinstance(e, Not):
+        return names_in(e.e)
     if isinstance(e, Tuple):
         return set().union(*map(names_in, e.items))
     if isinstance(e, Make):
@@ -1351,6 +1355,12 @@ class ProcChecker:
         ck = self.ck
         if isinstance(e, Num):
             return "Int"
+        if isinstance(e, BoolLit):
+            return "Bool"
+        if isinstance(e, Not):
+            if self.ty(e.e, env) not in ("Bool", "?"):
+                self.d(ERROR, "型", f"「{show(e)}」: not の後ろは条件（真偽）である必要があります")
+            return "Bool"
         if isinstance(e, Dur):
             return "Dur"
         if isinstance(e, Null):
@@ -1986,9 +1996,9 @@ class ProcChecker:
                 u = ul or ur
                 if num_side is not None and num_side.v != 0 and u not in (None, "JPY"):
                     self.d(ERROR, "単位", f"「{show(e)}」: {unit_label(u)}の金額と比べたり足したりする 0 以外の数字は直接書けません（money(整数, 通貨) で作ります）")
-        if e.op == "かつ":
+        if e.op in ("かつ", "または"):
             if a != "Bool" or b != "Bool":
-                self.d(ERROR, "型", f"「{show(e)}」: かつ の両側は条件である必要があります")
+                self.d(ERROR, "型", f"「{show(e)}」: {'and' if e.op == 'かつ' else 'or'} の両側は条件（真偽）である必要があります")
             return "Bool"
         if e.op in ("<", ">", "<=", ">="):
             if not ((a in num and b in num and not mixed) or (a == "Time" and b == "Time")):

@@ -30,6 +30,8 @@ def type_schema(ck, t: Type) -> dict:
         if t.chars:
             s["pattern"] = f"^{class_of(t.chars)}*$"
         return s
+    if k == "真偽":
+        return {"type": "boolean"}
     if k in ("整数", "金額", "日時"):
         s = {"type": "integer"}
         if r and r.lo is not None:

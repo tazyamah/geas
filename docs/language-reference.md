@@ -23,6 +23,7 @@
 | `text` / `text 1..80` / `text 2..2 of "A-Z"` | 文字列。長さと使える文字（`of` は `-` でつないだ範囲） |
 | `text 13..13 of "0-9" check gtin` | JAN・EAN・UPC。最後の1桁の検査数字まで境界で確かめる（長さは 8・12・13・14 のどれか1つ、文字種は `"0-9"`） |
 | `time` | 日時。`30 min`・`24 hour`・`10 sec` の期間を足し引きでき、時刻どうしの引き算は秒数。`day` `week` `month` `year` は書けない |
+| `bool` | 真偽。値は `true` `false`。範囲は無い。項目・入力・slot・`library` の引数と戻り値に書ける。JSON も `true` / `false`（`"yes"` や `1` は入力不正）。画面ではチェックボックス |
 | `bytes` | バイト列 |
 | `set of id` | 集合 |
 | `ref Customer` | データへの参照 |
@@ -140,14 +141,14 @@ deed place_order {
 
 - 宣言（`input slot reads writes transition result effects`）が先、本体の文があと。宣言と本体のずれは検査器が見つけます。
 - 文：`let 名前 = 式 [else { return … }]`、`let 名前 = create エンティティ { 項目: 式, … }`、`x.f = 式`、`x.f += 式`、`update { 対象 -= 式 | (k, v) in 集まり }`、`if 条件 { … }`、`for 要素 in 集まり { … }`、`request 名前空間.操作(引数, idempotency_key = 式)`、`delete 変数`、`return 結果の種類(中身)`。
-- 式：`==` `!=` `<` `<=` `>` `>=`、`and`、`+ - *`、`/` `%`（整数の割り算と余り。下の説明）、`D[k]`（キーで引く）、`x is null|absent|present|empty|nonempty`、`{ k | (k, v) in 集まり, 条件 }`（集合の内包表記）、`sum { 式 | (k, v) in 集まり }`、`round(値, floor, 通貨)`、`now`、`tz_offset`。
+- 式：`==` `!=` `<` `<=` `>` `>=`、`and` `or` `not`（両側と後ろは真偽。`not` が最も強く、次に `and`、`or`）、`true` `false`、`+ - *`、`/` `%`（整数の割り算と余り。下の説明）、`D[k]`（キーで引く）、`x is null|absent|present|empty|nonempty`、`{ k | (k, v) in 集まり, 条件 }`（集合の内包表記）、`sum { 式 | (k, v) in 集まり }`、`round(値, floor, 通貨)`、`now`、`tz_offset`。
 - 文字列の長さ：`text` に長さの範囲を書かないと、外から入る値は既定の上限（1,048,576 文字）で境界に止めます。大きくしたいときは `ltype` に長さを書きます（緩めるのは書いた人の責任）。サーバーは、リクエストの本文が 16 MiB を超えると 413 で断ります。JSON の入れ子は 64 段までです。
 - 割り算 `x / d`・余り `x % d`（整数。切り捨ては負の無限大へ、余りは 0 以上）：`d` が定数なら正の整数。`d` が変数なら、検査器が **1 以上と示せる**ときだけ通ります（`ltype` の範囲が 1 以上、または `if n == 0 { return … }`・`if n < 1 { return … }` のように、先へ進む道で 0 を除いてある）。示せないときは、`x / d or 0` のように **0 のときの値**（`or` のあとは整数）を書きます。`or` があれば `d` は 0 でも負でもよく、結果の範囲は商（または余り）と `or` の値の合流です。生成物は `checked_div_euclid` を使い、`i64::MIN / -1` のようなあふれは `Fault::Overflow` になります。
 - 足し引き `x.f += 式`・`x.f -= 式` の範囲：書く値が項目の範囲に収まると示せなければ検査が止まります（`if x.f > 999900 { return Full }` のように確かめる）。示せなくても人が引き受けるときは、**理由つき**で文の末尾に書きます。`x.f += 式 saturating "理由"` は範囲の端（上限・下限）で止まります。`x.f += 式 trust assume "理由"` は届かないと承知する書き方で、検査器は範囲に収まるものとして先へ進み、届いたら実行時に範囲の確認で異常（Fault）になって止まります。どちらも整数・金額で null にならない項目だけで、仕様書の「人の保証」に出ます。
 - 保存先の定義 `storage 保存先 isolation process`／`isolation store(種類) ["理由"]`：保存先を 1 回定義し、リクエストの直列を誰が保証するかを持たせる。entity は `store 名 in 保存先` で参照する（定義の漏れも、使われない定義も検査が止める）。`isolation process` は、このアプリのプロセスの中だけ geas のサーバーが直列にする（別プロセスとの関係は約束しない）。`isolation store(種類)` は保存先が直列にする。種類は引数で、サーバー実行部が契約の試験で確かめてあるもの（いまは `sqlite`）は理由が要らず、それ以外は人の保証として理由が必須。`store` の行がない entity は標準の保存先（`sqlite`）で、書かなくてよい。`process` と確かめていない種類は仕様書の「人の保証」に出ます。
 - 結果は `result 名前 { 種類(中身: 型), 種類, … }`。**すべての `return` と、フローの行き先が、結果の種類を漏れなく覆う**必要があります。
 - 外部作用 `request` には冪等キー（`idempotency_key`）が必須。`for` の中では、回す値と、外で決まる値の両方を組（`(order_id, k)`）にします。
-- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`library 名前(x: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee result >= x] trust check|verify|assume "理由"`（根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。標準ライブラリだけなら `from rust "std" ""`。版は固定して `Cargo.toml` に書き出す。戻り値は呼ぶたびに、型の範囲と `guarantee` で確かめる。`verify` は検証ビルドだけ、`assume` は確かめない。理由は必須で、仕様書の「人の保証」に出る。ライブラリが panic しても `Fault` で止まり、サーバーは続く。無限ループとメモリ枯渇は防げない）。旧 `part` は廃止。標準部品は、Rust の公開 API（rustdoc の JSON）から `python -m geas.stdgen` で機械で作った `library` の束 [geas/std/num.geas](../geas/std/num.geas)（モジュール `Num`、`use "…/num.geas"` で取り込み、`Num.u8_wrapping_add(a, b)` の形で呼ぶ）。いまは整数型（i8 i16 i32 i64 u8 u16 u32）の、宣言から panic しないと言えるメソッドだけ（Panics の記述・unsafe・オーバーフロー検査の付くもの・bool/Option を返すものは除く）。範囲は Rust の型から決まり、引数の範囲に収まると示せない値は渡せない。呼んだものだけが生成物と仕様書の「人の保証」に出る。
+- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`library 名前(x: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee result >= x] trust check|verify|assume "理由"`（根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。標準ライブラリだけなら `from rust "std" ""`。版は固定して `Cargo.toml` に書き出す。戻り値は呼ぶたびに、型の範囲と `guarantee` で確かめる。`verify` は検証ビルドだけ、`assume` は確かめない。理由は必須で、仕様書の「人の保証」に出る。ライブラリが panic しても `Fault` で止まり、サーバーは続く。無限ループとメモリ枯渇は防げない）。旧 `part` は廃止。標準部品は、Rust の公開 API（rustdoc の JSON）から `python -m geas.stdgen` で機械で作った `library` の束 [geas/std/num.geas](../geas/std/num.geas)（モジュール `Num`、`use "…/num.geas"` で取り込み、`Num.u8_wrapping_add(a, b)` の形で呼ぶ）。いまは整数型（i8 i16 i32 i64 u8 u16 u32）の、宣言から panic しないと言えるメソッドだけ（Panics の記述・unsafe・オーバーフロー検査の付くもの・Option を返すものは除く。bool を返すものは bool 型）。範囲は Rust の型から決まり、引数の範囲に収まると示せない値は渡せない。呼んだものだけが生成物と仕様書の「人の保証」に出る。
 
 ## 5. slot の値の決め方（rule）
 

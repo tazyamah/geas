@@ -467,3 +467,75 @@ def test_within_は_current_time_から1時間以内のものだけ返す(tmp_pa
     assert check(parse(WITHIN), strict_names=True).ok
     got = run_app(WITHIN, MAIN_WITHIN, tmp_path)
     assert got == ["edge,future,new"], got  # 現在 − 3600 以降（境界を含む）。未来の時刻も条件を満たす
+
+
+# ---- bool（真偽）：項目・入力・条件・not/and/or・JSON の true/false ----
+BOOLS = """ltype Qty = int 0..100
+
+entity Item {
+  item_id: id unique
+  stock: Qty required
+  active: bool required
+  note: bool
+}
+result Res {
+  Done(item_id: id)
+  Off
+}
+deed toggle {
+  input item_id: id required, force: bool required
+  reads Item.item_id, Item.active
+  writes Item.active
+  result Res
+  effects none
+
+  let item = Item[item_id] else { return Off }
+  if item.active == false and force == false { return Off }
+  item.active = if force == true then false else true
+  return Done(item.item_id)
+}
+deed guard {
+  input item_id: id required, force: bool required
+  reads Item.item_id, Item.active
+  writes Item.note
+  result Res
+  effects none
+
+  let item = Item[item_id] else { return Off }
+  if not item.active or not force { return Off }
+  item.note = item.active and force
+  return Done(item.item_id)
+}
+nexus Flow {
+  toggle: Done → reply, Off → reply
+  guard: Done → reply, Off → reply
+}
+"""
+
+
+def test_bool_は項目と入力と条件で使え_JSON_では_true_false(tmp_path):
+    main = r'''use geas_app::host::call;
+fn run(name: &str, active: bool, force: bool) {
+    let req = format!(r#"{{"name":"{}","ctx":{{}},"input":{{"item_id":"A","force":{}}},"store":{{"Item":{{"A":{{"item_id":"A","stock":5,"active":{},"note":null}}}}}}}}"#, name, force, active);
+    match call(&req) {
+        Ok(s) => println!("{}", s.replace("\\\"", "\"")),
+        Err(e) => println!("ERR {}", e),
+    }
+}
+fn main() {
+    run("toggle", true, false);
+    run("toggle", false, false);
+    run("toggle", false, true);
+    run("guard", true, true);
+    run("guard", false, true);
+    run("guard", true, false);
+    println!("{}", call(r#"{"name":"toggle","ctx":{},"input":{"item_id":"A","force":"yes"},"store":{}}"#).unwrap_err());
+}
+'''
+    out = run_app(BOOLS, main, tmp_path, host=True)
+    assert '"result":"Done"' in out[0] and '"active":true' in out[0]  # force=false なら true にする
+    assert '"result":"Off"' in out[1]  # active=false かつ force=false
+    assert '"result":"Done"' in out[2] and '"active":false' in out[2]  # force=true なら false にする
+    assert '"result":"Done"' in out[3] and '"note":true' in out[3]  # active and force
+    assert '"result":"Off"' in out[4] and '"result":"Off"' in out[5]  # not active、not force
+    assert "true か false のはず" in out[6]  # JSON の真偽以外は入力不正

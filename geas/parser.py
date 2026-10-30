@@ -34,7 +34,7 @@ def virtual_datetime() -> Type:
 
 
 # 合成型の成分に使える型の種類（値の型）
-COMPONENT_KINDS = ("ID", "整数", "金額", "割合", "文字列", "日時", "バイト列", "合成")
+COMPONENT_KINDS = ("ID", "整数", "金額", "割合", "文字列", "日時", "バイト列", "真偽", "合成")
 
 
 class ParseError(Exception):
@@ -49,7 +49,7 @@ CAL_MSG = "「{}」は暦で数え方が変わる（夏時間・月の長さ・�
 CALENDAR_UNITS = ("day", "week", "month", "year")
 MAX_DUR = 10**10  # 期間の上限（約317年）。時刻の足し引きがあふれないようにする
 UNIT_WORDS = "sec・min・hour"
-SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
+SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bool": "真偽", "bytes": "バイト列", "int": "整数", "ratio": "割合", "money": "金額"}
 PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
 
 
@@ -454,7 +454,7 @@ class Parser:
         if tok == "text":  # 範囲は長さ（文字数）。of "a-z0-9_" は使える文字
             rng, chars = self.range_opt(), self.chars_opt()
             return Type("文字列", range=rng, chars=chars, check=self.check_opt(rng, chars))
-        if tok == "time":
+        if tok in ("time", "bool"):
             return Type(SIMPLE_TYPES[tok])
         if tok == "raw":  # 未検査の生データ（外から来たままの文字列）。convert の引数にだけ書ける
             return Type("生")
@@ -863,10 +863,21 @@ class Parser:
 
     # ---- 式 ----
     def expr(self):
-        l = self.cmp_expr()
-        while self.accept("and"):
-            l = Bin("かつ", l, self.cmp_expr())
+        l = self.and_expr()
+        while self.accept("or"):
+            l = Bin("または", l, self.and_expr())
         return l
+
+    def and_expr(self):
+        l = self.not_expr()
+        while self.accept("and"):
+            l = Bin("かつ", l, self.not_expr())
+        return l
+
+    def not_expr(self):
+        if self.accept("not"):
+            return Not(self.not_expr())
+        return self.cmp_expr()
 
     def cmp_expr(self):
         l = self.add()
@@ -959,6 +970,9 @@ class Parser:
         if t.kind == "STR":
             self.next()
             return StrLit(t.val)
+        if t.kind == "NAME" and t.val in ("true", "false"):
+            self.next()
+            return BoolLit(t.val == "true")
         if self.is_("if"):  # 条件の式：if 条件 then 式 else 式
             self.next()
             c = self.expr()

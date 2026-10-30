@@ -40,6 +40,7 @@ function fmt(col, row) {
     try { return new Intl.NumberFormat("ja-JP", { style: "currency", currency: cur, minimumFractionDigits: m, maximumFractionDigits: m }).format(v / 10 ** m); } catch { return String(v); }
   }
   if (col.kind === "enum") return col.values.find((x) => x.value === v)?.label ?? v;
+  if (col.kind === "bool") return v ? "✓" : "—";
   return v;
 }
 const mainCol = (qd) => qd.columns.find((c) => c.kind === "text") || qd.columns[0];
@@ -78,6 +79,7 @@ function fieldValue(sc, f) {
   const el = $(`[data-field="${f.name}"]`);
   if (f.type.kind === "map") return Object.fromEntries(Object.entries(qty[f.name] || {}).filter(([, n]) => n > 0));
   if (f.type.kind === "group") return Object.fromEntries(f.type.parts.map((p) => [p.name, $(`[data-field="${f.name}.${p.name}"]`).value]));
+  if (f.type.kind === "bool") return el ? el.checked : Boolean(cur.params[f.name]);  // 真偽の欄は true／false で送る
   return el ? el.value : (cur.params[f.name] ?? "");
 }
 function showArgs(sc, qname) {
@@ -143,6 +145,7 @@ function fieldHtml(sc, f) {
   return inputHtml(f.name, f.label, t);
 }
 function inputHtml(name, label, t) {
+  if (t.kind === "bool") return `<label class="f check"><input data-field="${esc(name)}" type="checkbox"> ${esc(label)}</label>`;
   const attrs = t.kind === "int" ? `type="number" ${t.lo != null ? `min="${Number(t.lo)}"` : ""} ${t.hi != null ? `max="${Number(t.hi)}"` : ""}` : `type="text" ${t.max ? `maxlength="${Number(t.max)}"` : ""}`;
   return `<label class="f">${esc(label)}<input data-field="${esc(name)}" ${attrs} autocomplete="off"></label>`;
 }

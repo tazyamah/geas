@@ -20,6 +20,10 @@ def lit(t: Type, text: str, ck: Checker) -> str:
     k = t.kind
     if k in ("ID", "参照", "文字列"):
         return f'"{text}".to_string()'
+    if k == "真偽":
+        if text not in ("true", "false"):
+            raise ExampleError(f"真偽は true か false で書きます（「{text}」）")
+        return text
     if k == "バイト列":
         h = text[2:] if text.startswith("0x") else None
         if h is None or len(h) % 2 or any(c not in "0123456789abcdefABCDEF" for c in h):
