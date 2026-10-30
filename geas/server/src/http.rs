@@ -128,7 +128,7 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
         if parsed.is_null() {
             json_resp(400, json!({ "error": "本文が JSON ではありません" }))
         } else {
-            let mut en = engine.lock().unwrap();
+            let mut en = crate::engine::lock(engine);
             let r = route(&mut en, &method, rest, query, &parsed);
             match r {
                 Ok(v) => json_resp(200, v),
@@ -165,7 +165,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -
         _ => return None,
     };
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
-    let mut en = engine.lock().unwrap();
+    let mut en = crate::engine::lock(engine);
     let routes = en.defs["routes"].as_array().cloned().unwrap_or_default();
     for r in routes {
         if r["method"] != verb {

@@ -274,3 +274,24 @@ def test_画面と_API_の応答には_CSP_が付き_生成した_HTML_にイン
         assert 'style="' not in text, html
     manifest = json.loads((built / "ext" / "manifest.json").read_text())
     assert manifest["content_security_policy"]["extension_pages"] == "script-src 'self'; object-src 'self'"
+
+
+def test_同時に来たリクエストは直列に並べた場合と同じ結果になる(server):
+    from concurrent.futures import ThreadPoolExecutor
+
+    # 同じ小包を同時に取り消す：状態が Waiting のうちに通るのは 1 件だけで、残りは WrongStatus（409）
+    pid, _ = server.accept()
+    with ThreadPoolExecutor(8) as ex:
+        codes = sorted(ex.map(lambda _: server.call("POST", "/cancellations", {"parcel_id": pid})[0], range(8)))
+    assert codes == [201] + [409] * 7, codes
+    assert server.parcels()[pid]["status"] == "Canceled"
+    # 同時に受け付けても、採番は重ならず、全件が保存される
+    with ThreadPoolExecutor(8) as ex:
+        ids = list(ex.map(lambda _: server.accept()[0], range(24)))
+    assert len(set(ids)) == 24, ids
+    assert set(ids) <= set(server.parcels())
+
+
+def test_サーバーの単体テストが通る_汚れた_Mutex_でも続けて動く(built):
+    r = subprocess.run(["cargo", "test", "--offline", "--quiet"], cwd=built / "server", capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
