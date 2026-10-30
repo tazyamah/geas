@@ -57,7 +57,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 
 - 何も付けない：Rust の crate（検査済みの処理の本体）だけ。
 - `--host`：画面（PWA）・開発用の模擬パネル・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。AI から使う口として、MCP のツール定義（`mcp/tools.json`、URL の定義から機械的に作る）と、サーバーへ中継する汎用の橋渡し `mcp/bridge.py`・登録例 `mcp/mcp.json` も作る。
-- `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
+- `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。動かし方・引数・公開するときの前置き（nginx など）は [docs/server.md](server.md)。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
 - `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `tests/test_url_examples.py` 、計画書の「画面の具体例」（下）から画面の通しテスト `tests/test_screen_examples.py` も作る（サーバーをビルドしてから `python -m pytest 出力先/tests`）。
 
 検査にエラーか「問い」が残っていると、`rust` と `compare` は先へ進みません。

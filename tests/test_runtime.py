@@ -32,8 +32,8 @@ def built(tmp_path_factory):
 
 
 class Server:
-    def __init__(self, built, db):
-        self.built, self.db, self.proc, self.base = built, db, None, None
+    def __init__(self, built, db, extra=()):
+        self.built, self.db, self.proc, self.base, self.extra = built, db, None, None, list(extra)
 
     def start(self):
         s = socket.socket()
@@ -42,7 +42,7 @@ class Server:
         s.close()
         self.proc = subprocess.Popen(
             [str(self.built / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(self.db),
-             "--pwa", str(self.built / "ui"), "--dev", str(self.built / "dev")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             "--pwa", str(self.built / "ui"), "--dev", str(self.built / "dev"), *self.extra], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.base = f"http://127.0.0.1:{port}"
         for _ in range(100):
             try:
@@ -322,3 +322,17 @@ def test_大きすぎる本文は読み込まずに413で断り_上限ちょう�
         urllib.request.urlopen(req, timeout=30)
     assert e.value.code == 413
     assert server.call("POST", "/parcels", {"kind": "light"})[0] == 201  # そのあとも普通に動く
+
+
+def test_workerの本数を指定でき_範囲外の指定は起動前に断る(built, tmp_path):
+    one = Server(built, tmp_path / "one.sqlite", ["--workers", "1"])
+    one.start()
+    try:
+        for _ in range(3):  # worker が 1 本でも、続けて処理できる
+            assert one.call("POST", "/parcels", {"kind": "light"})[0] == 201
+    finally:
+        one.stop()
+    exe = str(built / "server" / "target" / "release" / "geas_server")
+    for bad in ("0", "257", "many"):
+        r = subprocess.run([exe, "--workers", bad, "--db", str(tmp_path / "bad.sqlite")], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 2 and "--workers" in r.stderr, (bad, r.returncode, r.stderr)
