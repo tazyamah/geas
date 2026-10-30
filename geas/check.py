@@ -214,6 +214,7 @@ class Checker:
         self.check_screens()
         self.check_resources()
         self.check_deletes()
+        self.check_isolations()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -899,6 +900,20 @@ class Checker:
 
     DESIGN_KEYS = {"layout": {"stack", "list", "grid", "form"}, "mode": {"light", "dark"}, "accent": None}
 
+    def check_isolations(self):
+        """名前のある保存先（store 名 in 保存先）は、直列を誰が保証するか isolation で宣言する。geas は中身を知らないので、書き忘れは止める"""
+        used = {d.store: d for d in self.p.data if d.store}
+        for where, d in used.items():
+            if where not in self.p.isolations:
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"保存先「{where}」にリクエストの直列を誰が保証するか分かりません。"
+                                       f"`isolation {where} by process`（geas のサーバーがプロセスの中で直列にする）か `isolation {where} by store(種類)`（保存先が直列にする）を書いてください"))
+        for where, (who, kind, why, line) in self.p.isolations.items():
+            if where not in used:
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"isolation の保存先「{where}」は、どの entity の store にも使われていません"))
+            elif who == "store" and kind not in VERIFIED_STORES and not why.strip():
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f'保存先の種類「{kind}」は geas が確かめていないので、人の保証として理由を "…" で書いてください'
+                                       f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）"))
+
     def check_deletes(self):
         """削除の検査。on delete の宣言先が実在し、keep と removable が食い違わず、消されるデータを参照している項目は、扱い（detach・cascade・leave）が決まっていること（決まっていなければ問い）。
         detach は項目が無いかもしれない（optional）ときだけ。cascade で消える参照元も、消されるものとして同じ検査をする"""
@@ -1269,6 +1284,7 @@ def iv_show(a):
 
 TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足し引きであふれないため境界で確かめる
 UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
+VERIFIED_STORES = ("sqlite",)  # サーバー実行部が持つ保存先の種類のうち、契約の試験（同時リクエストが直列と同じ結果になる）で確かめてあるもの
 NAMED = "#名"  # facts のキーの先頭がこれなら、束縛でなく入力や let の変数の範囲
 
 

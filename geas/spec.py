@@ -2,7 +2,7 @@
 """コードから「検査可能な仕様書」（③）を生成する。突合では構造のまま使い、人向けには Markdown にする。"""
 from .rest import screen_url
 from .ast import *  # noqa: F401,F403
-from .check import Checker, phys, tok_of
+from .check import Checker, VERIFIED_STORES, phys, tok_of
 
 
 def ja_dest(d: str) -> str:
@@ -158,6 +158,11 @@ def build_raw(ck: Checker) -> dict:
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
+    for where, (who, kind, why, _) in p.isolations.items():  # 直列の担い手。geas が契約の試験で確かめてある種類の保存先は、人の保証ではない
+        if who == "process":
+            spec["人の保証"].append((f"（保存先 {where}）", "リクエストの直列化", "このアプリのプロセスの中だけ", "geas のサーバーが直列にする（別プロセスとの関係は約束しない）", "プロセスの外は保証の対象外"))
+        elif kind not in VERIFIED_STORES:
+            spec["人の保証"].append((f"（保存先 {where}）", "リクエストの直列化", f"保存先 {kind} に任せる", "保存先が、1 リクエストを直列に並べた場合と同じ結果にする", why))
     for x in p.processes:  # 足し引きの範囲を人が引き受けた文
         for target, op, mode, why in ck.infos[x.name].guards:
             d, f = target.split(".")

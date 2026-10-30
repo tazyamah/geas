@@ -13,7 +13,7 @@ from .lexer import Tok, lex
 MODULE_DECLS = {"ltype", "convert", "part", "result", "deed"}
 # 宣言を始めるキーワード（モジュールには書けないものを見つけるため）
 ALL_DECLS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger",
-             "query", "event", "data", "timezone"}
+             "query", "event", "data", "timezone", "isolation"}
 
 
 class ModuleError(Exception):
