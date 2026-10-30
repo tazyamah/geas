@@ -1,16 +1,36 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない（コードから geas が毎回生成する）。
+// 生成規則の束縛：panic も未定義動作も起こしうる構文を使わない（cargo clippy で強制される）。起きうる異常は Fault で返す。
+#![deny(unsafe_code, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, dead_code, unused_variables, unused_mut)]
 #![allow(uncommon_codepoints, mixed_script_confusables, unused_parens)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 
-/// 検査器が「必ずある」と示した所の取り出し。通常のビルドは確かめずに借りる。
-/// `--features verify` のビルドでは通常の確認に変わり、検査器の抜けがあればここで panic して見つかる。
-#[cfg(feature = "verify")]
-macro_rules! proven { ($e:expr, $what:expr) => { $e.expect($what) }; }
-#[cfg(not(feature = "verify"))]
-macro_rules! proven { ($e:expr, $what:expr) => { unsafe { $e.unwrap_unchecked() } }; }
+/// 生成した処理が、panic も未定義動作も起こさずに返す異常。検査器が「起きない」と示した所で起きたら、検査器の抜けの報せになる。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// 検査器が「必ずある」と示した値（書込先・null でない値）が無かった
+    Unproven(&'static str),
+    /// 計算か物理型への変換があふれた
+    Overflow(&'static str),
+    /// 外から足した部品の戻り値が、宣言の保証に違反した（部品名, 内容）
+    Guarantee(&'static str, String),
+    /// 範囲の宣言に反する値を書こうとした
+    Range(String),
+}
+impl Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Fault::Unproven(w) => write!(f, "検査で示したはずの前提が成り立ちませんでした: {}", w),
+            Fault::Overflow(w) => write!(f, "計算か変換があふれました: {}", w),
+            Fault::Guarantee(p, m) => write!(f, "部品「{}」が保証に違反しました: {}", p, m),
+            Fault::Range(m) => write!(f, "範囲の宣言に反する値を書こうとしました: {}", m),
+        }
+    }
+}
+/// 検査器が「必ずある」と示した所の取り出し。panic も unsafe も使わず、無ければ Fault を返す。
+macro_rules! proven { ($e:expr, $what:expr) => { $e.ok_or(Fault::Unproven($what))? }; }
 
 /// 端数の出る値（分子/分母）。丸めの指定が無いと整数にできない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,17 +43,24 @@ impl Display for Ratio {
         write!(f, "{}/{}", self.num, self.den)
     }
 }
-pub fn scale(x: i128, r: Ratio) -> Ratio {
-    Ratio { num: x * r.num, den: r.den }
+pub fn scale(x: i128, r: Ratio) -> Result<Ratio, Fault> {
+    Ok(Ratio { num: x.checked_mul(r.num).ok_or(Fault::Overflow("割合の掛け算"))?, den: r.den })
 }
-pub fn floor(x: Ratio) -> i128 {
-    x.num.div_euclid(x.den)
+fn positive_den(x: Ratio) -> Result<(), Fault> {
+    if x.den > 0 { Ok(()) } else { Err(Fault::Overflow("割合の分母が 0 以下")) }
 }
-pub fn ceil(x: Ratio) -> i128 {
-    -((-x.num).div_euclid(x.den))
+pub fn floor(x: Ratio) -> Result<i128, Fault> {
+    positive_den(x)?;
+    Ok(x.num.div_euclid(x.den))
 }
-pub fn half_up(x: Ratio) -> i128 {
-    (2 * x.num + x.den).div_euclid(2 * x.den)
+pub fn ceil(x: Ratio) -> Result<i128, Fault> {
+    let q = floor(x)?;
+    if x.num.rem_euclid(x.den) == 0 { Ok(q) } else { q.checked_add(1).ok_or(Fault::Overflow("切り上げ")) }
+}
+pub fn half_up(x: Ratio) -> Result<i128, Fault> {
+    positive_den(x)?;
+    let n = x.num.checked_mul(2).and_then(|n| n.checked_add(x.den)).ok_or(Fault::Overflow("四捨五入"))?;
+    Ok(n.div_euclid(x.den.checked_mul(2).ok_or(Fault::Overflow("四捨五入"))?))
 }
 pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
     if lo.map_or(false, |l| x < l) || hi.map_or(false, |h| x > h) {
@@ -52,7 +79,7 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
 /// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
 pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
     let ds: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
-    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d * 3 } else { *d }).sum();
+    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d.saturating_mul(3) } else { *d }).sum();
     if ds.len() != s.chars().count() || sum % 10 != 0 {
         return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
     }
@@ -64,22 +91,22 @@ pub fn join_idem_key(xs: &[String]) -> String {
     format!("[{}]", q.join(","))
 }
 pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if x.den <= 0 || lo.map_or(false, |l| x.num < l * x.den) || hi.map_or(false, |h| x.num > h * x.den) {
+    if x.den <= 0 || lo.map_or(false, |l| x.num < l.saturating_mul(x.den)) || hi.map_or(false, |h| x.num > h.saturating_mul(x.den)) {
         return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())
 }
-pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
-    check_range(name, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
-    x
+pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<i128, Fault> {
+    check_range(name, x, lo, hi).map_err(Fault::Range)?;
+    Ok(x)
 }
 pub fn show_bytes(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
 /// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
 pub fn fold_text(s: &str, fold_case: bool, fold_kana: bool, fold_width: bool) -> String {
     s.chars().flat_map(|c| {
         let mut c = c;
-        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
-        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
+        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0xFEE0)).unwrap_or(c); }
+        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0x60)).unwrap_or(c); }
         if fold_case { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
     }).collect()
 }
@@ -158,7 +185,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn apply(&mut self, writes: Vec<Write>) {
+    pub fn apply(&mut self, writes: Vec<Write>) -> Result<(), Fault> {
         for w in writes {
             match w {
                 Write::Order_New(r) => { self.Order.insert(r.order_id.clone(), r); }
@@ -166,6 +193,7 @@ impl Store {
                 Write::Order_status(id, v) => { proven!(self.Order.get_mut(&id), "検査で示した書込先が無い: Order").status = v; }
             }
         }
+        Ok(())
     }
     pub fn diff(&self, after: &Store) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -329,6 +357,7 @@ pub struct place_orderInput {
 impl place_orderInput {
     /// 外部から取り込むときの、範囲の宣言の検査
     pub fn validate(&self) -> Result<(), String> {
+        check_range("itemsの要素数", self.items.len() as i128, Some(0), Some(100))?;
         for v in self.items.values() { check_range("items", *v as i128, Some(1), Some(99))?; }
         Ok(())
     }
@@ -350,31 +379,31 @@ pub struct place_orderOutput {
     pub Write: Vec<Write>,
     pub effects: Vec<Effect>,
 }
-pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput) -> place_orderOutput {
+pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput) -> Result<place_orderOutput, Fault> {
     let mut writes: Vec<Write> = Vec::new();
     let mut effects: Vec<Effect> = Vec::new();
     let customer = match Store.Customer.get(&(Input.customer_id.clone())) {
         Some(r) => r,
-        None => return place_orderOutput { result: PlaceOrderResult::NoSuchCustomer, Write: writes, effects: effects },
+        None => return Ok(place_orderOutput { result: PlaceOrderResult::NoSuchCustomer, Write: writes, effects: effects }),
     };
     let unregistered: BTreeSet<String> = { let mut acc: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if !Store.Product.contains_key(&(k.clone())) { acc.insert(k.clone()); } } acc };
     if !unregistered.is_empty() {
-        return place_orderOutput { result: PlaceOrderResult::NoSuchProduct(unregistered.clone()), Write: writes, effects: effects };
+        return Ok(place_orderOutput { result: PlaceOrderResult::NoSuchProduct(unregistered.clone()), Write: writes, effects: effects });
     }
-    let short: BTreeSet<String> = { let mut acc: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if ((Store.Product[&(k.clone())].stock as i128) < v) { acc.insert(k.clone()); } } acc };
+    let short: BTreeSet<String> = { let mut acc: BTreeSet<String> = BTreeSet::new(); for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; if ((Store.Product.get(&(k.clone())).ok_or(Fault::Unproven("検査で示した参照先が無い: Product"))?.stock as i128) < v) { acc.insert(k.clone()); } } acc };
     if !short.is_empty() {
-        return place_orderOutput { result: PlaceOrderResult::OutOfStock(short.clone()), Write: writes, effects: effects };
+        return Ok(place_orderOutput { result: PlaceOrderResult::OutOfStock(short.clone()), Write: writes, effects: effects });
     }
     for (k_, v_) in Input.items.iter() {
         let k: String = k_.clone();
         let v: i128 = *v_ as i128;
         {
-            let new_value: i128 = (Store.Product[&(k.clone())].stock as i128) - v;
+            let new_value: i128 = ((Store.Product.get(&(k.clone())).ok_or(Fault::Unproven("検査で示した参照先が無い: Product"))?.stock as i128)).checked_sub(v).ok_or(Fault::Overflow("Product.stock"))?;
             writes.push(Write::Product_stock(k.clone(), ((new_value) as u32)));
         }
     }
-    let subtotal: i128 = { let mut acc: i128 = 0; for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; acc += ((Store.Product[&(k.clone())].unit_price as i128) * v); } acc };
-    let total: i128 = (subtotal + floor(scale(subtotal, ctx.tax_rate)));
+    let subtotal: i128 = { let mut acc: i128 = 0; for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; acc = acc.checked_add((((Store.Product.get(&(k.clone())).ok_or(Fault::Unproven("検査で示した参照先が無い: Product"))?.unit_price as i128)).checked_mul(v).ok_or(Fault::Overflow("Product[k].unit_price * v"))?)).ok_or(Fault::Overflow("合計"))?; } acc };
+    let total: i128 = ((subtotal).checked_add(floor(scale(subtotal, ctx.tax_rate)?)?).ok_or(Fault::Overflow("subtotal + round(subtotal * tax_rate, floor, JPY)"))?);
     let order = Order {
         order_id: ctx.new_Order_id.clone(),
         customer: Input.customer_id.clone(),
@@ -383,7 +412,7 @@ pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput
         status: OrderStatus::Received,
     };
     writes.push(Write::Order_New(order.clone()));
-    return place_orderOutput { result: PlaceOrderResult::Received(order.order_id.clone()), Write: writes, effects: effects };
+    return Ok(place_orderOutput { result: PlaceOrderResult::Received(order.order_id.clone()), Write: writes, effects: effects });
 }
 
 // ---- 処理 request_payment ----
@@ -410,22 +439,22 @@ pub struct request_paymentOutput {
     pub Write: Vec<Write>,
     pub effects: Vec<Effect>,
 }
-pub fn request_payment(ctx: &request_paymentCtx, Store: &Store, Input: &request_paymentInput) -> request_paymentOutput {
+pub fn request_payment(ctx: &request_paymentCtx, Store: &Store, Input: &request_paymentInput) -> Result<request_paymentOutput, Fault> {
     let mut writes: Vec<Write> = Vec::new();
     let mut effects: Vec<Effect> = Vec::new();
     let order = match Store.Order.get(&(Input.order_id.clone())) {
         Some(r) => r,
-        None => return request_paymentOutput { result: RequestPaymentResult::NoSuchOrder, Write: writes, effects: effects },
+        None => return Ok(request_paymentOutput { result: RequestPaymentResult::NoSuchOrder, Write: writes, effects: effects }),
     };
     if (order.status != OrderStatus::Received) {
-        return request_paymentOutput { result: RequestPaymentResult::WrongStatus, Write: writes, effects: effects };
+        return Ok(request_paymentOutput { result: RequestPaymentResult::WrongStatus, Write: writes, effects: effects });
     }
     if ((order.total as i128) <= 0i128) {
-        return request_paymentOutput { result: RequestPaymentResult::ZeroTotal, Write: writes, effects: effects };
+        return Ok(request_paymentOutput { result: RequestPaymentResult::ZeroTotal, Write: writes, effects: effects });
     }
     writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));
-    effects.push(Effect::Payment_charge { order_id: Input.order_id.clone(), amount: i64::try_from(in_range("amount", (order.total as i128), None, None)).expect("物理数に収まらない"), idem_key: Input.order_id.clone() });
-    return request_paymentOutput { result: RequestPaymentResult::Requested, Write: writes, effects: effects };
+    effects.push(Effect::Payment_charge { order_id: Input.order_id.clone(), amount: i64::try_from(in_range("amount", (order.total as i128), None, None)?).map_err(|_| Fault::Overflow("amount"))?, idem_key: Input.order_id.clone() });
+    return Ok(request_paymentOutput { result: RequestPaymentResult::Requested, Write: writes, effects: effects });
 }
 
 // ---- 処理 apply_payment_result ----
@@ -452,18 +481,18 @@ pub struct apply_payment_resultOutput {
     pub Write: Vec<Write>,
     pub effects: Vec<Effect>,
 }
-pub fn apply_payment_result(ctx: &apply_payment_resultCtx, Store: &Store, Input: &apply_payment_resultInput) -> apply_payment_resultOutput {
+pub fn apply_payment_result(ctx: &apply_payment_resultCtx, Store: &Store, Input: &apply_payment_resultInput) -> Result<apply_payment_resultOutput, Fault> {
     let mut writes: Vec<Write> = Vec::new();
     let mut effects: Vec<Effect> = Vec::new();
     let order = match Store.Order.get(&(Input.order_id.clone())) {
         Some(r) => r,
-        None => return apply_payment_resultOutput { result: ReleaseResult::NoSuchOrder, Write: writes, effects: effects },
+        None => return Ok(apply_payment_resultOutput { result: ReleaseResult::NoSuchOrder, Write: writes, effects: effects }),
     };
     if (order.status != OrderStatus::PaymentRequested) {
-        return apply_payment_resultOutput { result: ReleaseResult::WrongStatus, Write: writes, effects: effects };
+        return Ok(apply_payment_resultOutput { result: ReleaseResult::WrongStatus, Write: writes, effects: effects });
     }
     writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::Completed));
-    return apply_payment_resultOutput { result: ReleaseResult::Applied, Write: writes, effects: effects };
+    return Ok(apply_payment_resultOutput { result: ReleaseResult::Applied, Write: writes, effects: effects });
 }
 
 // ---- 処理 expire_payment ----
@@ -490,18 +519,18 @@ pub struct expire_paymentOutput {
     pub Write: Vec<Write>,
     pub effects: Vec<Effect>,
 }
-pub fn expire_payment(ctx: &expire_paymentCtx, Store: &Store, Input: &expire_paymentInput) -> expire_paymentOutput {
+pub fn expire_payment(ctx: &expire_paymentCtx, Store: &Store, Input: &expire_paymentInput) -> Result<expire_paymentOutput, Fault> {
     let mut writes: Vec<Write> = Vec::new();
     let mut effects: Vec<Effect> = Vec::new();
     let order = match Store.Order.get(&(Input.order_id.clone())) {
         Some(r) => r,
-        None => return expire_paymentOutput { result: ReleaseResult::NoSuchOrder, Write: writes, effects: effects },
+        None => return Ok(expire_paymentOutput { result: ReleaseResult::NoSuchOrder, Write: writes, effects: effects }),
     };
     if (order.status != OrderStatus::PaymentRequested) {
-        return expire_paymentOutput { result: ReleaseResult::WrongStatus, Write: writes, effects: effects };
+        return Ok(expire_paymentOutput { result: ReleaseResult::WrongStatus, Write: writes, effects: effects });
     }
     writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::Canceled));
-    return expire_paymentOutput { result: ReleaseResult::Applied, Write: writes, effects: effects };
+    return Ok(expire_paymentOutput { result: ReleaseResult::Applied, Write: writes, effects: effects });
 }
 
 // ---- 問い合わせ order_list（読むだけ） ----

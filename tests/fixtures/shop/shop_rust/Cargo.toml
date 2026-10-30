@@ -6,8 +6,5 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 
-[features]
-verify = []
-
 [profile.release]
 overflow-checks = true

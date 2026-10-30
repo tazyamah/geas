@@ -9,17 +9,37 @@ from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 // 自動生成。手で編集しない（コードから geas が毎回生成する）。
+// 生成規則の束縛：panic も未定義動作も起こしうる構文を使わない（cargo clippy で強制される）。起きうる異常は Fault で返す。
+#![deny(unsafe_code, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, dead_code, unused_variables, unused_mut)]
 #![allow(uncommon_codepoints, mixed_script_confusables, unused_parens)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 
-/// 検査器が「必ずある」と示した所の取り出し。通常のビルドは確かめずに借りる。
-/// `--features verify` のビルドでは通常の確認に変わり、検査器の抜けがあればここで panic して見つかる。
-#[cfg(feature = "verify")]
-macro_rules! proven { ($e:expr, $what:expr) => { $e.expect($what) }; }
-#[cfg(not(feature = "verify"))]
-macro_rules! proven { ($e:expr, $what:expr) => { unsafe { $e.unwrap_unchecked() } }; }
+/// 生成した処理が、panic も未定義動作も起こさずに返す異常。検査器が「起きない」と示した所で起きたら、検査器の抜けの報せになる。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// 検査器が「必ずある」と示した値（書込先・null でない値）が無かった
+    Unproven(&'static str),
+    /// 計算か物理型への変換があふれた
+    Overflow(&'static str),
+    /// 外から足した部品の戻り値が、宣言の保証に違反した（部品名, 内容）
+    Guarantee(&'static str, String),
+    /// 範囲の宣言に反する値を書こうとした
+    Range(String),
+}
+impl Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Fault::Unproven(w) => write!(f, "検査で示したはずの前提が成り立ちませんでした: {}", w),
+            Fault::Overflow(w) => write!(f, "計算か変換があふれました: {}", w),
+            Fault::Guarantee(p, m) => write!(f, "部品「{}」が保証に違反しました: {}", p, m),
+            Fault::Range(m) => write!(f, "範囲の宣言に反する値を書こうとしました: {}", m),
+        }
+    }
+}
+/// 検査器が「必ずある」と示した所の取り出し。panic も unsafe も使わず、無ければ Fault を返す。
+macro_rules! proven { ($e:expr, $what:expr) => { $e.ok_or(Fault::Unproven($what))? }; }
 
 /// 端数の出る値（分子/分母）。丸めの指定が無いと整数にできない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,17 +52,24 @@ impl Display for Ratio {
         write!(f, "{}/{}", self.num, self.den)
     }
 }
-pub fn scale(x: i128, r: Ratio) -> Ratio {
-    Ratio { num: x * r.num, den: r.den }
+pub fn scale(x: i128, r: Ratio) -> Result<Ratio, Fault> {
+    Ok(Ratio { num: x.checked_mul(r.num).ok_or(Fault::Overflow("割合の掛け算"))?, den: r.den })
 }
-pub fn floor(x: Ratio) -> i128 {
-    x.num.div_euclid(x.den)
+fn positive_den(x: Ratio) -> Result<(), Fault> {
+    if x.den > 0 { Ok(()) } else { Err(Fault::Overflow("割合の分母が 0 以下")) }
 }
-pub fn ceil(x: Ratio) -> i128 {
-    -((-x.num).div_euclid(x.den))
+pub fn floor(x: Ratio) -> Result<i128, Fault> {
+    positive_den(x)?;
+    Ok(x.num.div_euclid(x.den))
 }
-pub fn half_up(x: Ratio) -> i128 {
-    (2 * x.num + x.den).div_euclid(2 * x.den)
+pub fn ceil(x: Ratio) -> Result<i128, Fault> {
+    let q = floor(x)?;
+    if x.num.rem_euclid(x.den) == 0 { Ok(q) } else { q.checked_add(1).ok_or(Fault::Overflow("切り上げ")) }
+}
+pub fn half_up(x: Ratio) -> Result<i128, Fault> {
+    positive_den(x)?;
+    let n = x.num.checked_mul(2).and_then(|n| n.checked_add(x.den)).ok_or(Fault::Overflow("四捨五入"))?;
+    Ok(n.div_euclid(x.den.checked_mul(2).ok_or(Fault::Overflow("四捨五入"))?))
 }
 pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
     if lo.map_or(false, |l| x < l) || hi.map_or(false, |h| x > h) {
@@ -61,7 +88,7 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
 /// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
 pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
     let ds: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
-    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d * 3 } else { *d }).sum();
+    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d.saturating_mul(3) } else { *d }).sum();
     if ds.len() != s.chars().count() || sum % 10 != 0 {
         return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
     }
@@ -73,22 +100,22 @@ pub fn join_idem_key(xs: &[String]) -> String {
     format!("[{}]", q.join(","))
 }
 pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if x.den <= 0 || lo.map_or(false, |l| x.num < l * x.den) || hi.map_or(false, |h| x.num > h * x.den) {
+    if x.den <= 0 || lo.map_or(false, |l| x.num < l.saturating_mul(x.den)) || hi.map_or(false, |h| x.num > h.saturating_mul(x.den)) {
         return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())
 }
-pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> i128 {
-    check_range(name, x, lo, hi).expect("範囲の宣言に反する値を書こうとした");
-    x
+pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<i128, Fault> {
+    check_range(name, x, lo, hi).map_err(Fault::Range)?;
+    Ok(x)
 }
 pub fn show_bytes(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
 /// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
 pub fn fold_text(s: &str, fold_case: bool, fold_kana: bool, fold_width: bool) -> String {
     s.chars().flat_map(|c| {
         let mut c = c;
-        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32(c as u32 - 0xFEE0).unwrap_or(c); }
-        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32(c as u32 - 0x60).unwrap_or(c); }
+        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0xFEE0)).unwrap_or(c); }
+        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0x60)).unwrap_or(c); }
         if fold_case { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
     }).collect()
 }
@@ -162,6 +189,8 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'check_range("{label}", {num} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "割合" and t.range:
         chk.append(f'check_ratio("{label}", {ref}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind == "写像" and t.maxn is not None:  # 検査器は max N を前提に合計の範囲を示すので、外から来る写像は境界で要素数を止める
+        chk.append(f'check_range("{label}の要素数", {x}.len() as i128, Some(0), Some({t.maxn}))?;')
     if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
         r = t.value.range
         chk.append(f'for v in {x}.values() {{ check_range("{label}", *v as i128, {opt(r.lo)}, {opt(r.hi)})?; }}')
@@ -402,7 +431,7 @@ class Gen:
         self.w("}\n")
         # 書込の適用と差分
         self.w("impl Store {")
-        self.w("    pub fn apply(&mut self, writes: Vec<Write>) {\n        for w in writes {\n            match w {")
+        self.w("    pub fn apply(&mut self, writes: Vec<Write>) -> Result<(), Fault> {\n        for w in writes {\n            match w {")
         for kind, d, f in self.write_kinds():
             if f is None:
                 self.w(f"                Write::{d}_New(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
@@ -411,7 +440,7 @@ class Gen:
             else:
                 # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
                 self.w(f"                Write::{d}_{f}(id, v) => {{ proven!(self.{d}.get_mut(&id), \"検査で示した書込先が無い: {d}\").{f} = v; }}")
-        self.w("            }\n        }\n    }")
+        self.w("            }\n        }\n        Ok(())\n    }")
         self.delete_methods()
         self.w("    pub fn diff(&self, after: &Store) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
         for d in self.p.data:
@@ -482,9 +511,6 @@ class Gen:
         """外から足す部品。保証は呼んだ直後に確かめる（ProcGen.rx）。違反は、保存へ書く前に処理を止める"""
         if not self.p.parts:
             return
-        self.w("/// 部品の保証に違反した。処理は書込を返す前に止まり、保存は変わらない\n"
-               "pub fn guarantee_violated(part: &str, guarantee: &str) -> ! {\n"
-               '    panic!("部品「{}」が保証に違反しました: {}", part, guarantee)\n}')
         if not any(pt.external for pt in self.p.parts):
             return
         self.w("/// アプリが実装する部品。戻り値は、呼ぶたびに宣言の保証で確かめられる\npub trait Parts {")
@@ -614,7 +640,7 @@ class ProcGen:
         if isinstance(e, Attr):
             return f"{self.place(e.e)}.{e.n}"
         if isinstance(e, Index):
-            return f"Store.{e.d}[&({self.rx(e.e)})]"
+            return f'Store.{e.d}.get(&({self.rx(e.e)})).ok_or(Fault::Unproven("検査で示した参照先が無い: {e.d}"))?'
         raise ValueError(e)
 
     def part_call(self, e: Call) -> str:
@@ -641,21 +667,21 @@ class ProcGen:
             return "{ " + " ".join(lines) + " result }"
         if pt.ret.kind in ("整数", "金額") and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = check_range("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ guarantee_violated("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_range("result", result, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.range:
             r = pt.ret.range
-            lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ guarantee_violated("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_range("result", result.chars().count() as i128, {opt(r.lo)}, {opt(r.hi)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.chars is not None:
-            lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ guarantee_violated("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
-            lines.append(f'if let Err(m) = check_gtin("result", &result) {{ guarantee_violated("{e.n}", &m) }}')
+            lines.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         saved = dict(self.scope)
         for n, t in [*pt.params, ("result", pt.ret)]:
             self.scope[n] = ("local", tok_of(t))
         self.info.types.update(self.ck.part_types)
         cond = self.rx(pt.guarantee)
         self.scope = saved
-        lines.append(f'if !({cond}) {{ guarantee_violated("{e.n}", "{show(pt.guarantee)}") }}')
+        lines.append(f'if !({cond}) {{ return Err(Fault::Guarantee("{e.n}", "{show(pt.guarantee)}".to_string())) }}')
         return "{ " + " ".join(lines) + " result }"
 
     def src(self, e) -> str:
@@ -720,16 +746,18 @@ class ProcGen:
                 return f"(({self.rx(e.args[0])}) as i64)" if e.n == "time" else self.rx(e.args[0])
             if e.n in self.ck.parts:
                 return self.part_call(e)
-            return f"{e.args[1].n}({self.rx(e.args[0])})"
+            return f"{e.args[1].n}({self.rx(e.args[0])})?"
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
             l, r = self.rx(e.l), self.rx(e.r)
             if e.op in ("/", "%"):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
             if e.op == "*" and "Ratio" in (lt, rt):
-                return f"scale({r}, {l})" if lt == "Ratio" else f"scale({l}, {r})"
+                return f"scale({r}, {l})?" if lt == "Ratio" else f"scale({l}, {r})?"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
-                return f"(({l} as i128) - ({r} as i128))"
+                return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
+            if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）
+                return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow("{show(e)}"))?)'
             op = {"かつ": "&&"}.get(e.op, e.op)
             return f"({l} {op} {r})"
         if isinstance(e, (SetB, SumE)):
@@ -766,7 +794,7 @@ class ProcGen:
         self.scope = saved
         is_set = isinstance(e, SetB)
         init = "let mut acc: BTreeSet<String> = BTreeSet::new();" if is_set else "let mut acc: i128 = 0;"
-        add = f"acc.insert({elem});" if is_set else f"acc += {elem};"
+        add = f"acc.insert({elem});" if is_set else f'acc = acc.checked_add({elem}).ok_or(Fault::Overflow("合計"))?;'
         inner = " ".join(body) + (f" if {cond} {{ {add} }}" if cond else f" {add}")
         return f"{{ {init} {head} {inner} }} acc }}"
 
@@ -774,7 +802,7 @@ class ProcGen:
     def ret_expr(self, r: Return) -> str:
         args = ", ".join(self.rx(a) for a in r.args)
         v = f"{self.rdef.name}::{r.variant}" + (f"({args})" if r.args else "")
-        return f"{self.proc.name}Output {{ result: {v}, Write: writes, effects: effects }}"
+        return f"Ok({self.proc.name}Output {{ result: {v}, Write: writes, effects: effects }})"
 
     def conv(self, t: Type, x: str, name: str, proven: bool = False) -> str:
         """i128 の式を、項目の物理数へ。proven なら、範囲は検査で示してある（実行時には確かめない）。
@@ -783,11 +811,11 @@ class ProcGen:
             r = t.range
             if r and r.lo is not None and r.hi is not None:
                 return f"(({x}) as {phys(t)})"  # 範囲は検査で示した。範囲から選んだ物理数には必ず収まる
-            return f'{phys(t)}::try_from({x}).expect("物理数に収まらない")'
+            return f'{phys(t)}::try_from({x}).map_err(|_| Fault::Overflow("{name}"))?'
         r = t.range
         lo = r.lo if r else None
         hi = r.hi if r else None
-        return f'{phys(t)}::try_from(in_range("{name}", {x}, {opt(lo) if lo is None else f"Some({lo})"}, {"None" if hi is None else f"Some({hi})"})).expect("物理数に収まらない")'
+        return f'{phys(t)}::try_from(in_range("{name}", {x}, {opt(lo) if lo is None else f"Some({lo})"}, {"None" if hi is None else f"Some({hi})"})?).map_err(|_| Fault::Overflow("{name}"))?'
 
     def field_value(self, t: Type, e, name: str) -> str:
         """項目へ書く値。null になりうる項目は Option で、無いかもしれない入力はそのまま渡す"""
@@ -796,7 +824,7 @@ class ProcGen:
             return "None"
         if t.optional and isinstance(e, Name) and e.n in self.null_inputs and self.scope[e.n][0] == "input":
             x = self.place(e)
-            return f"{x}.map(|v| {self.conv(t, '(v as i128)', name, proven=True)})" if num else f"{x}.clone()"
+            return f"match {x} {{ Some(v) => Some({self.conv(t, '(v as i128)', name, proven=True)}), None => None }}" if num else f"{x}.clone()"
         v = self.conv(t, self.rx(e), name, proven=True) if num else self.rx(e)
         return f"Some({v})" if t.optional else v
 
@@ -846,7 +874,8 @@ class ProcGen:
                 self.L("    " + b)
             val = self.rx(st.value)
             cur = self.rx(tgt)
-            new = {"-=": f"{cur} - {val}", "+=": f"{cur} + {val}", "=": val}[st.op]
+            new = {"-=": f'({cur}).checked_sub({val}).ok_or(Fault::Overflow("{d}.{f}"))?',
+                   "+=": f'({cur}).checked_add({val}).ok_or(Fault::Overflow("{d}.{f}"))?', "=": val}[st.op]
             pre = f"if {self.rx(st.cond)} " if st.cond is not None else ""
             ft = self.field_type(d, f)
             self.L(f"    {pre}{{")
@@ -932,7 +961,7 @@ class ProcGen:
         g.w("        Ok(())\n    }\n}")
         g.w(f"pub struct {n}Output {{\n    pub result: {self.rdef.name},\n    pub Write: Vec<Write>,\n    pub effects: Vec<Effect>,\n}}")
         extra = ", parts: &dyn Parts" if info.parts else ""
-        g.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input{extra}) -> {n}Output {{")
+        g.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input{extra}) -> Result<{n}Output, Fault> {{")
         g.w("    let mut writes: Vec<Write> = Vec::new();\n    let mut effects: Vec<Effect> = Vec::new();")
         self.null_inputs = {name for name, t in proc.inputs if t.optional}
         for name, t in proc.inputs:
@@ -956,9 +985,6 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 {crate_type}
-[features]
-verify = []
-
 [profile.release]
 {opt}overflow-checks = true
 '''

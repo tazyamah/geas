@@ -20,7 +20,7 @@ def run_app(src, main, tmp_path, host=False):
     ck = check(parse(src))
     assert ck.ok and not [d for d in ck.diags if d.level == "問い"], ck.diags
     write_crate(ck, generate(ck), main, tmp_path, host=host)
-    r = subprocess.run(["cargo", "run", "--quiet", "--offline", "--features", "verify"], cwd=tmp_path, capture_output=True, text=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     return r.stdout.splitlines()
 
@@ -126,40 +126,40 @@ fn main() {
     s.Item.insert("cup".into(), Item { item_id: "cup".into(), stock: 1, price: 1200 });
     let ctx = placeCtx { new_Order_id: "O1".into() };
     // 在庫が足りないと、何も書かずに止まる
-    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("tea", 2), ("cup", 2)]) });
+    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("tea", 2), ("cup", 2)]) }).unwrap();
     println!("{}|{}", o.result.show(), o.Write.len());
     // 知らない商品
-    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("none", 1)]) });
+    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("none", 1)]) }).unwrap();
     println!("{}|{}", o.result.show(), o.Write.len());
     // 受注できると、合計は 数量×単価 の和、在庫はその分だけ減る
-    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("tea", 2), ("cup", 1)]) });
+    let o = place(&ctx, &s, &placeInput { order_id: "O1".into(), items: items(&[("tea", 2), ("cup", 1)]) }).unwrap();
     println!("{}", o.result.show());
-    s.apply(o.Write);
+    s.apply(o.Write).unwrap();
     println!("total={} stock={},{} status={}", s.Order["O1"].total, s.Item["tea"].stock, s.Item["cup"].stock, s.Order["O1"].status.name());
     // 残りの在庫を超える注文は、もう通らない（在庫は 0 を下回らない）
-    let o = place(&ctx, &s, &placeInput { order_id: "O2".into(), items: items(&[("cup", 1)]) });
+    let o = place(&ctx, &s, &placeInput { order_id: "O2".into(), items: items(&[("cup", 1)]) }).unwrap();
     println!("{}", o.result.show());
     // 状態は 受付 → 支払済 → 完了 の順にしか進めない。順を飛ばす・戻す・繰り返す操作は、何も書かずに断る
-    let o = complete(&completeCtx {}, &s, &completeInput { order_id: "O1".into() });
+    let o = complete(&completeCtx {}, &s, &completeInput { order_id: "O1".into() }).unwrap();
     println!("先に完了 {}|{}", o.result.show(), o.Write.len());
-    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() });
+    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() }).unwrap();
     println!("支払い {}", o.result.show());
-    s.apply(o.Write);
-    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() });
+    s.apply(o.Write).unwrap();
+    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() }).unwrap();
     println!("二重の支払い {}|{}", o.result.show(), o.Write.len());
-    let o = complete(&completeCtx {}, &s, &completeInput { order_id: "O1".into() });
+    let o = complete(&completeCtx {}, &s, &completeInput { order_id: "O1".into() }).unwrap();
     println!("完了 {}", o.result.show());
-    s.apply(o.Write);
-    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() });
+    s.apply(o.Write).unwrap();
+    let o = pay(&payCtx {}, &s, &payInput { order_id: "O1".into() }).unwrap();
     println!("完了後の支払い {}|{}", o.result.show(), o.Write.len());
     println!("最後 {}", s.Order["O1"].status.name());
-    let o = pay(&payCtx {}, &s, &payInput { order_id: "O9".into() });
+    let o = pay(&payCtx {}, &s, &payInput { order_id: "O9".into() }).unwrap();
     println!("{}", o.result.show());
     // 項目への加算
-    let o = restock(&restockCtx {}, &s, &restockInput { item_id: "cup".into(), amount: 4 });
-    s.apply(o.Write);
+    let o = restock(&restockCtx {}, &s, &restockInput { item_id: "cup".into(), amount: 4 }).unwrap();
+    s.apply(o.Write).unwrap();
     println!("{} stock={}", o.result.show(), s.Item["cup"].stock);
-    println!("{}", restock(&restockCtx {}, &s, &restockInput { item_id: "none".into(), amount: 1 }).result.show());
+    println!("{}", restock(&restockCtx {}, &s, &restockInput { item_id: "none".into(), amount: 1 }).unwrap().result.show());
 }
 """
 
@@ -211,17 +211,17 @@ fn main() {
     // 割合 × 金額 の端数は、切り捨て・切り上げ・四捨五入で別々の値になる
     for (base, num, den) in [(1000i64, 1i128, 3i128), (1000, 2, 3), (105, 1, 10), (100, 1, 10), (0, 1, 3), (7, 1, 2)] {
         let ctx = billCtx { rate: Ratio { num, den }, new_Bill_id: "B".into() };
-        let o = bill(&ctx, &s, &billInput { bill_id: "B".into(), base, parts: ["x".to_string()].into() });
+        let o = bill(&ctx, &s, &billInput { bill_id: "B".into(), base, parts: ["x".to_string()].into() }).unwrap();
         let mut t = Store::default();
-        t.apply(o.Write);
+        t.apply(o.Write).unwrap();
         let b = &t.Bill["B"];
         println!("{} {}/{} -> {} {} {}", base, num, den, b.floored, b.ceiled, b.rounded);
     }
     // for の中の外部作用は、回した値ごとに 1 回出て、冪等キーは (注文ID, 回した値) の組になる
     let ctx = billCtx { rate: Ratio { num: 1, den: 2 }, new_Bill_id: "B".into() };
-    let o = bill(&ctx, &s, &billInput { bill_id: "B1".into(), base: 10, parts: ["p1".to_string(), "p2".to_string()].into() });
+    let o = bill(&ctx, &s, &billInput { bill_id: "B1".into(), base: 10, parts: ["p1".to_string(), "p2".to_string()].into() }).unwrap();
     for e in &o.effects { println!("{}", e.show()); }
-    let o = bill(&ctx, &s, &billInput { bill_id: "B1".into(), base: 10, parts: Default::default() });
+    let o = bill(&ctx, &s, &billInput { bill_id: "B1".into(), base: 10, parts: Default::default() }).unwrap();
     println!("{}", o.effects.len());
 }
 """
@@ -274,12 +274,12 @@ fn main() {
     s.Receipt.insert("r1".into(), Receipt { receipt_id: "r1".into(), owner: "o1".into() });
     s.Receipt.insert("r2".into(), Receipt { receipt_id: "r2".into(), owner: "o2".into() });
     s.Log.insert("l1".into(), Log { log_id: "l1".into(), owner: "o1".into() });
-    let o = drop_owner(&drop_ownerCtx {}, &s, &drop_ownerInput { owner_id: "o1".into() });
+    let o = drop_owner(&drop_ownerCtx {}, &s, &drop_ownerInput { owner_id: "o1".into() }).unwrap();
     println!("{}", o.result.show());
-    s.apply(o.Write);
+    s.apply(o.Write).unwrap();
     // cascade は参照元も消し、leave は参照元をそのまま残す。関係のない行は触らない
     println!("owners={:?} receipts={:?} logs={:?}", s.Owner.keys().collect::<Vec<_>>(), s.Receipt.keys().collect::<Vec<_>>(), s.Log.keys().collect::<Vec<_>>());
-    let o = drop_owner(&drop_ownerCtx {}, &s, &drop_ownerInput { owner_id: "o1".into() });
+    let o = drop_owner(&drop_ownerCtx {}, &s, &drop_ownerInput { owner_id: "o1".into() }).unwrap();
     println!("{}|{}", o.result.show(), o.Write.len());
 }
 """
@@ -418,15 +418,15 @@ fn main() {
     let r = |num, den| touchCtx { rate: Ratio { num, den } }.validate().is_ok();
     println!("{} {} {}", r(1, 4), r(1, 1), r(5, 4));
     // 書いたバイト列と割合がそのまま入る。終わりのない状態は、進んだあとは同じ操作を断る
-    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 4 } }, &s, &touchInput { note_id: "n1".into(), data: vec![1, 2, 3] });
+    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 4 } }, &s, &touchInput { note_id: "n1".into(), data: vec![1, 2, 3] }).unwrap();
     println!("{}", o.result.show());
-    s.apply(o.Write);
+    s.apply(o.Write).unwrap();
     println!("{:?} {}/{} {}", s.Note["n1"].data, s.Note["n1"].share.num, s.Note["n1"].share.den, s.Note["n1"].phase.name());
-    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "n1".into(), data: vec![9] });
+    let o = touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "n1".into(), data: vec![9] }).unwrap();
     println!("{}|{}", o.result.show(), o.Write.len());
-    println!("{}", touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "zz".into(), data: vec![9] }).result.show());
+    println!("{}", touch(&touchCtx { rate: Ratio { num: 1, den: 2 } }, &s, &touchInput { note_id: "zz".into(), data: vec![9] }).unwrap().result.show());
     // 「無い」の確認
-    println!("{} {}", peek(&peekCtx {}, &s, &peekInput { note_id: "n1".into() }).result.show(), peek(&peekCtx {}, &s, &peekInput { note_id: "zz".into() }).result.show());
+    println!("{} {}", peek(&peekCtx {}, &s, &peekInput { note_id: "n1".into() }).unwrap().result.show(), peek(&peekCtx {}, &s, &peekInput { note_id: "zz".into() }).unwrap().result.show());
 }
 """
 

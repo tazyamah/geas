@@ -72,19 +72,19 @@ fn main() {
     s.Note.insert("n1".into(), Note { note_id: "n1".into(), author: Some("c1".into()), body: "x".into(), status: NoteStatus::Draft });
     s.Note.insert("n2".into(), Note { note_id: "n2".into(), author: Some("c1".into()), body: "y".into(), status: NoteStatus::Archived });
     // 下書きのメモは、保管していないので消せない。保管済みは消せる
-    let o = delete_note(&delete_noteCtx {}, &s, &delete_noteInput { note_id: "n1".into() });
+    let o = delete_note(&delete_noteCtx {}, &s, &delete_noteInput { note_id: "n1".into() }).unwrap();
     assert_eq!(o.result, DeleteNoteResult::NotArchived);
     assert!(o.Write.is_empty());
-    let o = delete_note(&delete_noteCtx {}, &s, &delete_noteInput { note_id: "n2".into() });
+    let o = delete_note(&delete_noteCtx {}, &s, &delete_noteInput { note_id: "n2".into() }).unwrap();
     assert_eq!(o.result, DeleteNoteResult::Deleted);
-    s.apply(o.Write);
+    s.apply(o.Write).unwrap();
     assert!(!s.Note.contains_key("n2"));
     // ユーザーを消すと、メモは残り、書き手だけ空になる
-    let o = delete_customer(&delete_customerCtx {}, &s, &delete_customerInput { customer_id: "c1".into() });
-    s.apply(o.Write);
+    let o = delete_customer(&delete_customerCtx {}, &s, &delete_customerInput { customer_id: "c1".into() }).unwrap();
+    s.apply(o.Write).unwrap();
     assert!(s.Customer.is_empty());
     assert_eq!(s.Note["n1"].author, None);
-    let o = delete_customer(&delete_customerCtx {}, &s, &delete_customerInput { customer_id: "c1".into() });
+    let o = delete_customer(&delete_customerCtx {}, &s, &delete_customerInput { customer_id: "c1".into() }).unwrap();
     assert_eq!(o.result, DeleteResult::NotFound);
     println!("ok");
 }

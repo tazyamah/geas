@@ -1335,7 +1335,7 @@ fn main() {
     for a in -50i128..50 {
         for b in 1i128..13 {
             let x = Ratio { num: a, den: b };
-            let (lo, up, rn) = (floor(x), ceil(x), half_up(x));
+            let (lo, up, rn) = (floor(x).unwrap(), ceil(x).unwrap(), half_up(x).unwrap());
             if !(lo * b <= a && a < (lo + 1) * b) { bad += 1; }
             if !((up - 1) * b < a && a <= up * b) { bad += 1; }
             if !(2 * (rn * b - a).abs() <= b) { bad += 1; }
@@ -1854,7 +1854,7 @@ def test_vtimeの変換は暦どおりの秒になり_未指定は補うルー�
     main = """use geas_app::*;
 fn t(日時: vtime) -> i64 {
     let ctx = 予約Ctx { new_予定_id: "e1".to_string() };
-    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 });
+    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 }).unwrap();
     match &o.Write[0] { Write::予定_New(r) => r.時刻 }
 }
 fn main() {
@@ -1916,7 +1916,7 @@ def test_標準のタイムゾーンで暦の秒がずれ_引数で上書きで�
     main = """use geas_app::*;
 fn t(日時: vtime) -> i64 {
     let ctx = 予約Ctx { new_予定_id: "e1".to_string() };
-    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 });
+    let o = 予約(&ctx, &Store::default(), &予約Input { 日時 }).unwrap();
     match &o.Write[0] { Write::予定_New(r) => r.時刻 }
 }
 fn main() {
@@ -2620,12 +2620,13 @@ def test_問い合わせの_equals_は参照の項目をIDの入力で絞れる(
     assert any("equals" in m for m in msgs(chk(bad), ERROR))
 
 
-def test_生成した_unsafe_は_proven_マクロの中だけで_verify_で通常の確認になる():
+def test_生成した処理に_panic_できる構文が無い():
     lib = generate(chk(CODE))
-    assert "proven!(" in lib
     body = lib.split("/// 端数の出る値")[1]  # マクロ定義より後ろ（生成した処理の本体）
-    assert "unsafe" not in body and "unwrap_unchecked" not in body
-    assert '#[cfg(feature = "verify")]' in lib and ".expect($what)" in lib
+    for bad in ("unsafe", "unwrap_unchecked", ".expect(", ".unwrap()", "panic!"):
+        assert bad not in body, bad
+    assert "Result<place_orderOutput, Fault>" in lib
+    assert "#![deny(unsafe_code, clippy::unwrap_used" in lib
 
 
 # ---- 書く値が物理型・ltype の範囲に収まることを示す ----
@@ -2682,3 +2683,46 @@ def test_上限を書かない整数は物理型の最大までとして扱う()
     assert ck.ok, ck.diags  # 減らすだけの更新は、物理型の最大までの範囲で収まる
     src = (COUNTER % "").replace("ltype Count = int 0..1000", "ltype Count = int 0..")
     assert any("収まると示せません" in m for m in msgs(chk(src), ERROR))
+
+
+# ---- 生成規則の束縛：panic できる構文を clippy で強制する ----
+needs_clippy = pytest.mark.skipif(shutil.which("cargo") is None or subprocess.run(["cargo", "clippy", "--version"], capture_output=True).returncode != 0,
+                                  reason="cargo clippy が無い")
+
+
+def clippy(crate):
+    return subprocess.run(["cargo", "clippy", "--offline", "--lib", "--quiet"], cwd=crate, capture_output=True, text=True)
+
+
+@needs_clippy
+def test_生成した処理は_clippy_の_panic_禁止を通り_禁止を破ると落ちる(tmp_path):
+    big = tmp_path / "overseas"
+    ck = check(parse((ROOT / "tests" / "fixtures" / "overseas_shop" / "overseas_shop.geas").read_text()))
+    write_crate(ck, generate(ck), "fn main() {}\n", big, host=True)
+    r = clippy(big)  # 画面・REST・par・待ち合わせ・合成型・部品まで使う大きい例
+    assert r.returncode == 0, r.stderr[-2500:]
+    ck = chk(CODE)
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path, host=True)
+    r = clippy(tmp_path)
+    assert r.returncode == 0, r.stderr[-2500:]
+    lib = tmp_path / "src" / "lib.rs"
+    lib.write_text(lib.read_text().replace("let mut writes: Vec<Write> = Vec::new();", 'let mut writes: Vec<Write> = Vec::new(); let _boom: Option<u8> = None; let _ = _boom.unwrap();', 1))
+    bad = clippy(tmp_path)
+    assert bad.returncode != 0 and "unwrap" in bad.stderr
+
+
+@needs_cargo
+def test_写像は_max_N_を超える要素数を境界で止める(tmp_path):
+    ck = chk(CODE)
+    main = """use geas_app::*;
+use std::collections::BTreeMap;
+fn main() {
+    let ok: BTreeMap<String, u8> = (0..100).map(|i| (format!("p{}", i), 1u8)).collect();
+    let big: BTreeMap<String, u8> = (0..101).map(|i| (format!("p{}", i), 1u8)).collect();
+    println!("{} {}", place_orderInput { customer_id: "c".into(), items: ok }.validate().is_ok(), place_orderInput { customer_id: "c".into(), items: big }.validate().is_ok());
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert r.stdout.strip() == "true false"
