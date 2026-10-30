@@ -291,12 +291,8 @@ def host_source(ck: Checker) -> str:
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("new_{d}_id")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
-        if info.parts:  # 部品の保証違反は panic で処理を止める。書込を適用する前なので、保存は変わらない
-            w(f"            let o = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {n}(&c, Store, &i, parts))).map_err(|e| {{\n"
-              '                e.downcast_ref::<String>().cloned().unwrap_or_else(|| "部品の保証に違反しました".to_string())\n            })?;\n'
-              "            Store.apply(o.Write.clone());")
-        else:
-            w(f"            let o = {n}(&c, Store, &i);\n            Store.apply(o.Write.clone());")
+        extra = ", parts" if info.parts else ""
+        w(f"            let o = {n}(&c, Store, &i{extra}).map_err(|f| f.to_string())?;\n            Store.apply(o.Write.clone()).map_err(|f| f.to_string())?;")
         w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect(), Store))\n        }}")
     for q in p.queries:
         n = q.name

@@ -11,12 +11,14 @@ fn main() {
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 2u8)]) };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX1\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = place_order(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX1\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match place_order(&ctx, &Store, &Input) {
+                Err(f) => println!("EX1\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX1\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -27,12 +29,14 @@ fn main() {
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 6u8)]) };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX2\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = place_order(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX2\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match place_order(&ctx, &Store, &Input) {
+                Err(f) => println!("EX2\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX2\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -43,12 +47,14 @@ fn main() {
         let Input = place_orderInput { customer_id: "C9".to_string(), items: BTreeMap::from([("A".to_string(), 2u8)]) };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX3\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = place_order(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX3\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match place_order(&ctx, &Store, &Input) {
+                Err(f) => println!("EX3\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX3\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -59,12 +65,14 @@ fn main() {
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("Z".to_string(), 1u8)]) };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX5\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = place_order(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX5\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match place_order(&ctx, &Store, &Input) {
+                Err(f) => println!("EX5\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX5\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -75,12 +83,14 @@ fn main() {
         let Input = place_orderInput { customer_id: "C1".to_string(), items: BTreeMap::from([("A".to_string(), 1u8)]) };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX6\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = place_order(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX6\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match place_order(&ctx, &Store, &Input) {
+                Err(f) => println!("EX6\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX6\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -90,12 +100,14 @@ fn main() {
         let Input = request_paymentInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX7\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = request_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX7\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match request_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX7\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX7\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -105,12 +117,14 @@ fn main() {
         let Input = request_paymentInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX8\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = request_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX8\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match request_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX8\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX8\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -120,12 +134,14 @@ fn main() {
         let Input = request_paymentInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX9\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = request_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX9\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match request_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX9\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX9\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -135,12 +151,14 @@ fn main() {
         let Input = request_paymentInput { order_id: "N9".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX10\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = request_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX10\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match request_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX10\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX10\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -150,12 +168,14 @@ fn main() {
         let Input = apply_payment_resultInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX11\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = apply_payment_result(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX11\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match apply_payment_result(&ctx, &Store, &Input) {
+                Err(f) => println!("EX11\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX11\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -165,12 +185,14 @@ fn main() {
         let Input = expire_paymentInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX12\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = expire_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX12\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match expire_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX12\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX12\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {
@@ -180,12 +202,14 @@ fn main() {
         let Input = expire_paymentInput { order_id: "N1".to_string() };
         match ctx.validate().and_then(|_| Input.validate()) {
             Err(e) => println!("EX13\t入力不正({})\t\t", e),
-            Ok(()) => {
-                let Output = expire_payment(&ctx, &Store, &Input);
-                let 前 = Store.clone();
-                Store.apply(Output.Write.clone());
-                println!("EX13\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
-            }
+            Ok(()) => match expire_payment(&ctx, &Store, &Input) {
+                Err(f) => println!("EX13\t異常({})\t\t", f),
+                Ok(Output) => {
+                    let 前 = Store.clone();
+                    Store.apply(Output.Write.clone()).expect("書込の適用");
+                    println!("EX13\t{}\t{}\t{}", Output.result.show(), 前.diff(&Store).join(";"), Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));
+                }
+            },
         }
     }
     {

@@ -26,7 +26,7 @@
 | `bytes` | バイト列 |
 | `set of id` | 集合 |
 | `ref Customer` | データへの参照 |
-| `Product → Quantity` / `Product → Quantity max 100` | 写像（キーは entity、値は型）。キーが `id` の写像は保存しない入れ物。`max N` は要素数の上限（`sum` の合計が範囲に収まると示すのに使う） |
+| `Product → Quantity` / `Product → Quantity max 100` | 写像（キーは entity、値は型）。キーが `id` の写像は保存しない入れ物。`max N` は要素数の上限（`sum` の合計が範囲に収まると示すのに使い、外から来る写像は境界で要素数も確かめる） |
 | 状態の名前 | 下の `state` |
 
 範囲・組み合わせは、`ltype` で**名前を付けてから**使います（直に項目へ書けません）。

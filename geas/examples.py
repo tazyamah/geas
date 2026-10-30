@@ -146,13 +146,15 @@ def example_code(ck: Checker, row: dict) -> str:
     L += [
         "        match ctx.validate().and_then(|_| Input.validate()) {",  # slot も入力も、境界で範囲を確かめる
         f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
-        "            Ok(()) => {",
-        f"                let Output = {proc.name}(&ctx, &Store, &Input);",
-        "                let 前 = Store.clone();",
-        "                Store.apply(Output.Write.clone());",
-        f'                println!("{eid}\\t{{}}\\t{{}}\\t{{}}", Output.result.show(), 前.diff(&Store).join(";"), '
+        "            Ok(()) => match "+proc.name+"(&ctx, &Store, &Input) {",
+        f'                Err(f) => println!("{eid}\\t異常({{}})\\t\\t", f),',
+        "                Ok(Output) => {",
+        "                    let 前 = Store.clone();",
+        '                    Store.apply(Output.Write.clone()).expect("書込の適用");',
+        f'                    println!("{eid}\\t{{}}\\t{{}}\\t{{}}", Output.result.show(), 前.diff(&Store).join(";"), '
         'Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));',
-        "            }",
+        "                }",
+        "            },",
         "        }",
         "    }",
     ]
@@ -174,7 +176,7 @@ def runner_source(ck: Checker, rows: list[dict]) -> tuple[str, list[Finding]]:
     return src + "\n".join(blocks) + "\n}\n", problems
 
 
-HOST_MOD = "\npub mod host;\n"
+HOST_MOD = "\n// 窓口（JSON と WASM の境界）は、外の値を読む所なので、生成規則の束縛の外に置く\n#[allow(unsafe_code, clippy::not_unsafe_ptr_arg_deref, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::arithmetic_side_effects)]\npub mod host;\n"
 
 
 def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bool = False):
