@@ -608,6 +608,15 @@ class Parser:
         if self.is_("optional"):
             raise self.err("入力は、書かなければ「無いかもしれない」扱いです。optional は要りません（必ず要るなら required と書きます）")
         t.optional = not self.accept("required")
+        if self.accept("trust"):  # trust verify|assume "理由"：人が危険を承知で、範囲の確認を省く（既定は毎回確かめる）
+            level = self.peek().val if self.peek().kind == "NAME" else ""
+            if level not in ("verify", "assume"):
+                raise self.err("trust のあとには verify（検証ビルドだけ確かめる）か assume（確かめない）を書きます")
+            self.i += 1
+            why = self.next()
+            if why.kind != "STR" or not why.val.strip():
+                raise self.err('trust には、保証する理由を "…" で書いてください')
+            t.trust = (level, why.val)
         return n, t
 
     def decl(self, p: Process):

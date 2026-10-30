@@ -222,6 +222,12 @@ def range_checks(items) -> list[str]:
     for name, t in items:
         opt_ = getattr(t, "optional", False)
         chk = value_checks(name, t, "x" if opt_ else f"self.{name}", opt_)
+        trust = getattr(t, "trust", None)
+        if trust is not None:  # 人の保証：verify はデバッグ／検証ビルドだけ、assume はどこでも範囲の確認を省く（割合の分母の物理上限は残す）
+            if trust[0] == "assume":
+                chk = value_checks(name, replace(t, range=None), "x" if opt_ else f"self.{name}", opt_) if t.kind == "割合" else []
+            else:
+                chk = [f"if cfg!(debug_assertions) {{ {c} }}" for c in chk]
         out += [f"        if let Some(x) = &self.{name} {{ {c} }}" if opt_ else f"        {c}" for c in chk]
     return out
 
