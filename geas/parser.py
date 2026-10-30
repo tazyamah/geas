@@ -892,6 +892,13 @@ class Parser:
         if t.kind == "STR":
             self.next()
             return StrLit(t.val)
+        if self.is_("if"):  # 条件の式：if 条件 then 式 else 式
+            self.next()
+            c = self.expr()
+            self.expect("then")
+            a = self.expr()
+            self.expect("else")
+            return Cond(c, a, self.expr())
         if self.accept("("):
             e = self.expr()
             self.expect(")")

@@ -2899,3 +2899,40 @@ fn main() {
     assert a.startswith("Ok(") and "12345678" in a, a
     assert b.startswith("Err(") and "8桁" in b, b
     assert c.startswith("Err(") and "数字だけ" in c, c
+
+
+# ---- raw の文字位置を回る sum と、条件の式（検査数字を geas の式で書く） ----
+JAN_SRC = RAW_SRC.replace('''ltype 品番型 = text 8..8 of "0-9"''', '''ltype 品番型 = text 13..13 of "0-9"''').replace('''convert 品番読み(r: raw) -> 品番型 {
+  require len(r) == 8 "8桁にしてください"
+  require only(r, "0-9") "数字だけにしてください"
+  return text(r)
+}''', '''convert 品番読み(r: raw) -> 品番型 {
+  require len(r) == 13 "13桁にしてください"
+  require only(r, "0-9") "数字だけにしてください"
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "検査数字が合いません"
+  return text(r)
+}''')
+
+
+def test_検査数字は_convert_の式で書け_型と引数の誤りは検査で止まる():
+    ck = chk(JAN_SRC)
+    assert ck.ready, ck.diags
+    assert "checked_mul" in generate(ck) and "rem_euclid(10i128)" in generate(ck)
+    assert any("then と else の型" in m for m in msgs(chk(JAN_SRC.replace("then 3 else 1", "then 3 else len(r)").replace("else len(r)", 'else text(r)')), ERROR))
+    assert any("真偽" in m for m in msgs(chk(JAN_SRC.replace("if (len(r) - 1 - i) % 2 == 1 then", "if len(r) then")), ERROR))
+    assert any("digit( ) の位置は整数" in m for m in msgs(chk(JAN_SRC.replace("digit(r, i)", "digit(r, r)")), ERROR))
+
+
+@needs_cargo
+def test_convert_で書いた検査数字は組み込みの_check_gtin_と同じ判定をする(tmp_path):
+    from geas.check import valid_gtin
+
+    ck = chk(JAN_SRC)
+    cases = ["4901234567894", "4901234567895", "4006381333931", "4006381333932", "0000000000000", "0000000000001",
+             "490123456789a", "490123456789", "49012345678945"]
+    main = "use geas_app::*;\nfn main() {\n" + "".join(f'    println!("{{}}", 品番読み("{c}").is_ok());\n' for c in cases) + "}\n"
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    want = [str(len(c) == 13 and c.isdigit() and valid_gtin(c)).lower() for c in cases]
+    assert r.stdout.split() == want, (r.stdout, want)

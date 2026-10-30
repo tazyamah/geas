@@ -312,6 +312,14 @@ class StrLit:
 
 
 @dataclass
+class Cond:
+    """条件の式：if 条件 then 式 else 式"""
+    c: object
+    a: object
+    b: object
+
+
+@dataclass
 class Null:
     """無いかもしれない項目が、実際に無いこと（null の値）。1件や項目そのものが無いこと（undefined）とは別"""
 
@@ -522,6 +530,8 @@ def show(e) -> str:
         return "null"
     if isinstance(e, StrLit):
         return '"' + e.s + '"'
+    if isinstance(e, Cond):
+        return f"if {show(e.c)} then {show(e.a)} else {show(e.b)}"
     if isinstance(e, Dur):
         return e.text or f"{e.secs} sec"
     if isinstance(e, Tuple):
