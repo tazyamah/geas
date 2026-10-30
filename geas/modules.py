@@ -10,9 +10,9 @@ from pathlib import Path
 from .lexer import Tok, lex
 
 # モジュールに書ける宣言（状態を持たないもの）
-MODULE_DECLS = {"ltype", "convert", "part", "result", "deed"}
+MODULE_DECLS = {"ltype", "convert", "library", "result", "deed"}
 # 宣言を始めるキーワード（モジュールには書けないものを見つけるため）
-ALL_DECLS = {"entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger",
+ALL_DECLS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow", "trigger",
              "query", "event", "data", "timezone", "storage"}
 
 

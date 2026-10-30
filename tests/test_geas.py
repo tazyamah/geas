@@ -3280,3 +3280,111 @@ def test_処理の定義に_触れる_entity_が出る_サーバーはそれだ�
     for name, info in ck.infos.items():
         want = {r.split(".")[0] for r in info.reads} | {w.split(".")[0] for w in info.writes} | set(info.new_ids)
         assert want <= set(d[name]["touches"]), (name, want, d[name]["touches"])
+
+
+STD_APP = """use "num.geas"
+
+ltype Small = int 0..255
+ltype Qty = int 0..1000000
+
+entity Item {
+  item_id: id unique
+  stock: Qty required
+}
+result PutResult {
+  Put(item_id: id)
+}
+deed put_item {
+  input a: Small required, b: Small required
+  writes Item
+  result PutResult
+  effects none
+
+  let item = create Item { stock: Num.u8_wrapping_add(a, b) }
+  return Put(item.item_id)
+}
+nexus Flow {
+  put_item: Put → reply
+}
+"""
+
+
+def std_app(tmp_path, src=STD_APP):
+    shutil.copy(Path(__file__).parent.parent / "geas" / "std" / "num.geas", tmp_path / "num.geas")
+    f = tmp_path / "app.geas"
+    f.write_text(src)
+    return check(parse(src, str(f)))
+
+
+def test_標準部品の束を取り込んで呼べ_呼んだものだけが人の保証に出る(tmp_path):
+    ck = std_app(tmp_path)
+    assert not msgs(ck, ERROR), msgs(ck, ERROR)
+    rows = build(ck)["人の保証"]
+    assert [r[0] for r in rows] == ["（ライブラリ Num.u8_wrapping_add）"], rows  # 束に 200 以上あっても、呼んだ1つだけ
+    assert "std" in rows[0][1] and "wrapping_add" in rows[0][1]
+    assert len(build(ck)["部品"]) == 1
+    assert "u8_wrapping_mul" not in generate(ck)
+
+
+def test_標準部品は_Rust_の型の範囲を引数に課し_戻り値の範囲も_Rust_の型から決まる(tmp_path):
+    wide = STD_APP.replace("ltype Small = int 0..255", "ltype Small = int 0..256")
+    assert any("範囲" in m for m in msgs(std_app(tmp_path, wide), ERROR))  # u8 に収まると示せない値は渡せない
+    big = STD_APP.replace("ltype Qty = int 0..1000000", "ltype Qty = int 0..100")
+    assert any("収まると示せません" in m for m in msgs(std_app(tmp_path, big), ERROR))  # 戻り値 0..255 は 0..100 に収まらない
+
+
+@needs_cargo
+def test_標準部品は生成物の中で実際に動く(tmp_path):
+    ck = std_app(tmp_path)
+    main = """use geas_app::host::call;
+fn main() { println!("{:?}", call(r#"{"name":"put_item","ctx":{"new_Item_id":"A"},"input":{"a":200,"b":100},"store":{}}"#)); }
+"""
+    write_crate(ck, generate(ck), main, tmp_path / "crate", host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path / "crate", capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout.startswith("Ok(") and '\\"stock\\":44' in r.stdout, r.stdout  # 200u8 の wrapping_add(100) は 44
+
+
+def _fn(name, inputs, output, docs="", attrs=(), unsafe=False, stable=True, deprecated=False, generics=False):
+    return {"name": name, "visibility": "public", "docs": docs, "attrs": [{"other": a} for a in attrs],
+            "deprecation": {"since": "1"} if deprecated else None,
+            "stability": {"level": {"stable": {"since": "1"}} if stable else {"unstable": {}}},
+            "inner": {"function": {"sig": {"inputs": inputs, "output": output}, "generics": {"params": [{}] if generics else [], "where_predicates": []},
+                                   "header": {"is_unsafe": unsafe, "is_async": False}}}}
+
+
+def test_標準部品の生成は_宣言から止まらないと言える整数のメソッドだけを選ぶ():
+    from geas import stdgen
+    S, U, B = {"generic": "Self"}, {"primitive": "u32"}, {"primitive": "bool"}
+    items = [
+        _fn("good", [["self", S], ["rhs", S]], S),
+        _fn("count", [["self", S]], U),
+        _fn("pow", [["self", S], ["exp", U]], S, attrs=["#[attr = RustcInheritOverflowChecks]"]),  # オーバーフローで panic する印
+        _fn("div", [["self", S], ["rhs", S]], S, docs="Foo.\n\n# Panics\n\nThis function will panic if `rhs` is zero."),
+        _fn("lowercase", [["self", S]], S, docs="This will panic when x."),
+        _fn("strict_add", [["self", S], ["rhs", S]], S),
+        _fn("unsafe_add", [["self", S], ["rhs", S]], S, unsafe=True),
+        _fn("new_api", [["self", S]], S, stable=False),
+        _fn("old_api", [["self", S]], S, deprecated=True),
+        _fn("generic", [["self", S]], S, generics=True),
+        _fn("is_zero", [["self", S]], B),  # bool は写せない
+        _fn("assoc", [["rhs", S]], S),  # self を受けない
+        _fn("wide", [["self", S], ["rhs", {"primitive": "u64"}]], S),  # 範囲が i64 に収まらない型
+    ]
+    doc = {"index": {"0": {"inner": {"impl": {"trait": None, "for": {"primitive": "i8"}, "items": list(range(1, len(items) + 1))}}},
+                     **{str(i + 1): it for i, it in enumerate(items)}}}
+    rows = stdgen.collect(doc)
+    assert [(r[0], r[1], r[2], r[3]) for r in rows] == [("i8", "count", ("i8",), "u32"), ("i8", "good", ("i8", "i8"), "i8")]
+    out = stdgen.render(rows)
+    assert "ltype I8 = int -128..127" in out and "ltype U32 = int 0..4294967295" in out
+    assert 'library i8_good(a: I8, b: I8) -> I8 from rust "std" "" call "((a as i8).good((b as i8))) as i8" trust check' in out
+
+
+def test_標準部品の束はコミットした生成物と一致する():
+    from geas import stdgen
+    try:
+        doc = json.loads(stdgen.default_json().read_text())
+    except (OSError, ValueError):
+        pytest.skip("rustdoc の JSON（nightly の rust-docs-json）が無い")
+    committed = Path(__file__).parent.parent / "geas" / "std" / "num.geas"
+    assert committed.read_text() == stdgen.render(stdgen.collect(doc)), "python -m geas.stdgen > geas/std/num.geas で作り直してください"
