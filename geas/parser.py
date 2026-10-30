@@ -53,6 +53,42 @@ SIMPLE_TYPES = {"text": "文字列", "time": "日時", "bytes": "バイト列", 
 PRED = {"empty": "空", "nonempty": "空でない", "present": "ある", "absent": "ない", "null": "null"}
 
 
+
+def parse_chars(s: str) -> tuple:
+    """文字種の書き方 "a-z0-9_"（- でつないだ範囲と、\\ で逃がした文字）を、小さい順につないだ (下限, 上限) の組にする"""
+    out, i = [], 0
+
+    def one():
+        nonlocal i
+        if s[i] == "\\":
+            i += 1
+            if i >= len(s):
+                raise ValueError("文字種の末尾の「\\」のあとに文字がありません")
+        c = ord(s[i])
+        i += 1
+        if 0xD800 <= c <= 0xDFFF:
+            raise ValueError("文字種に使えない文字です")
+        return c
+    while i < len(s):
+        a = one()
+        b = a
+        if i + 1 < len(s) and s[i] == "-":
+            i += 1
+            b = one()
+            if b < a:
+                raise ValueError(f"文字種の範囲の向きが逆です（{chr(a)}-{chr(b)}）")
+        out.append((a, b))
+    if not out:
+        raise ValueError("文字種が空です")
+    out.sort()
+    merged = [out[0]]
+    for a, b in out[1:]:
+        if a <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return tuple(merged)
+
 class Parser:
     def __init__(self, toks: list[Tok]):
         self.t = toks
@@ -345,35 +381,10 @@ class Parser:
         t = self.next()
         if t.kind != "STR" or not t.val:
             raise self.err('of のあとには、使える文字を "a-z0-9_" の形で書きます')
-        s, out, i = t.val, [], 0
-        def one():
-            nonlocal i
-            if s[i] == "\\":
-                i += 1
-                if i >= len(s):
-                    raise self.err("文字種の末尾の「\\」のあとに文字がありません")
-            c = ord(s[i])
-            i += 1
-            if 0xD800 <= c <= 0xDFFF:
-                raise self.err("文字種に使えない文字です")
-            return c
-        while i < len(s):
-            a = one()
-            b = a
-            if i + 1 < len(s) and s[i] == "-":
-                i += 1
-                b = one()
-                if b < a:
-                    raise self.err(f"文字種の範囲の向きが逆です（{chr(a)}-{chr(b)}）")
-            out.append((a, b))
-        out.sort()
-        merged = [out[0]]
-        for a, b in out[1:]:
-            if a <= merged[-1][1] + 1:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
-            else:
-                merged.append((a, b))
-        return tuple(merged)
+        try:
+            return parse_chars(t.val)
+        except ValueError as e:
+            raise self.err(str(e))
 
     def check_opt(self, rng, chars):
         """check gtin：JAN・EAN・UPC の最後の1桁（チェックディジット）が合っている文字列。長さは8・12・13・14桁、文字は数字だけ"""
@@ -420,6 +431,8 @@ class Parser:
             return Type("文字列", range=rng, chars=chars, check=self.check_opt(rng, chars))
         if tok == "time":
             return Type(SIMPLE_TYPES[tok])
+        if tok == "raw":  # 未検査の生データ（外から来たままの文字列）。convert の引数にだけ書ける
+            return Type("生")
         if tok == "bytes":  # 範囲は長さ（バイト数）
             return Type("バイト列", range=self.range_opt())
         if tok in ("int", "ratio"):
@@ -563,6 +576,26 @@ class Parser:
         self.expect(")")
         self.expect("→")
         ret = self.type()
+        if self.is_("{"):  # 生データから変換する convert：require 条件 "理由" を並べ、return 式 で値を返す
+            self.next()
+            self.skip_nl()
+            requires, body = [], None
+            while not self.accept("}"):
+                if self.accept("require"):
+                    cond = self.expr()
+                    why = self.next()
+                    if why.kind != "STR" or not why.val.strip():
+                        raise self.err('require には、拒否する理由を "…" で書いてください')
+                    requires.append((cond, why.val))
+                elif self.accept("return"):
+                    body = self.expr()
+                else:
+                    raise self.err("この中には require 条件 \"理由\" と return 式 だけ書けます")
+                self.skip_nl()
+            if body is None:
+                raise self.err("return 式 が必要です")
+            self.end_line()
+            return Part(name, params, ret, None, line, body, defaults, requires=requires)
         self.expect("=")
         body = self.expr()
         self.end_line()
@@ -608,6 +641,8 @@ class Parser:
         if self.is_("optional"):
             raise self.err("入力は、書かなければ「無いかもしれない」扱いです。optional は要りません（必ず要るなら required と書きます）")
         t.optional = not self.accept("required")
+        if self.accept("via"):  # via 変換名：受けた raw を、この convert で論理型にする（拒否は入力不正）
+            t.via = self.name()
         if self.accept("trust"):  # trust verify|assume "理由"：人が危険を承知で、範囲の確認を省く（既定は毎回確かめる）
             level = self.peek().val if self.peek().kind == "NAME" else ""
             if level not in ("verify", "assume"):
@@ -854,6 +889,9 @@ class Parser:
                     raise self.err(f"期間が長すぎます（{t.val} {nxt.val}。{MAX_DUR} 秒まで）")
                 return Dur(secs, f"{t.val} {nxt.val}")
             return Num(int(t.val))
+        if t.kind == "STR":
+            self.next()
+            return StrLit(t.val)
         if self.accept("("):
             e = self.expr()
             self.expect(")")

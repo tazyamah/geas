@@ -28,6 +28,7 @@ class Type:
     check: Optional[str] = None  # 文字列の検査数字の種類（gtin＝JAN/EAN/UPC のチェックディジット）
     fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     maxn: Optional[int] = None  # 写像の要素数の上限（K → V max N）。sum の範囲を示すのに使う
+    via: Optional[str] = None  # 入力の型：受けた raw を、この名前の変換（convert）で論理型にする（Strong Parameters 的な境界）
     trust: Optional[tuple] = None  # 入力の範囲の確認を省く、人の保証。(段階 "verify"|"assume", 理由)。検査器は範囲を事実として使う
     parts: Optional[tuple] = None  # 合成型の成分。((名前, 型), …)。target は論理型の名前
 
@@ -93,6 +94,7 @@ class Part:
     line: int = 0
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
     defaults: dict = field(default_factory=dict)  # convert の引数のデフォルト値：引数名 → 式（呼ぶとき省ける）
+    requires: list = field(default_factory=list)  # raw から変換する convert の拒否の条件：[(条件の式, 理由)]。成り立たなければ入力不正
 
     @property
     def external(self) -> bool:
@@ -304,6 +306,12 @@ class Tuple:
 
 
 @dataclass
+class StrLit:
+    """文字列の書き込み。raw の only( ) の文字種にだけ使える"""
+    s: str
+
+
+@dataclass
 class Null:
     """無いかもしれない項目が、実際に無いこと（null の値）。1件や項目そのものが無いこと（undefined）とは別"""
 
@@ -485,6 +493,8 @@ def show_type(t: Type) -> str:
         return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.check is None else f" 検査数字 {t.check}")
     if k == "バイト列":
         return "バイト列" + show_range(t.range)
+    if k == "生":
+        return "raw（未検査の生データ）"
     if k == "整数":
         return "整数" + show_range(t.range)
     if k == "割合":
@@ -510,6 +520,8 @@ def show(e) -> str:
         return str(e.v)
     if isinstance(e, Null):
         return "null"
+    if isinstance(e, StrLit):
+        return '"' + e.s + '"'
     if isinstance(e, Dur):
         return e.text or f"{e.secs} sec"
     if isinstance(e, Tuple):
