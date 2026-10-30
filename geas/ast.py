@@ -28,6 +28,7 @@ class Type:
     check: Optional[str] = None  # 文字列の検査数字の種類（gtin＝JAN/EAN/UPC のチェックディジット）
     fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     maxn: Optional[int] = None  # 写像の要素数の上限（K → V max N）。sum の範囲を示すのに使う
+    trust: Optional[tuple] = None  # 入力の範囲の確認を省く、人の保証。(段階 "verify"|"assume", 理由)。検査器は範囲を事実として使う
     parts: Optional[tuple] = None  # 合成型の成分。((名前, 型), …)。target は論理型の名前
 
 

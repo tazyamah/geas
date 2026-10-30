@@ -2783,3 +2783,51 @@ fn main() {
     assert b.startswith("Err(") and "分母" in b, b
     assert c.startswith("Err(") and "分母" in c, c
     assert d.startswith("Err(") and "範囲" in d, d
+
+
+# ---- 人の保証（trust）：入力の範囲の確認を、人が危険を承知で省く ----
+def trust_src(level: str) -> str:
+    return RATIO_SRC.replace("税率: 率 required,", f"税率: 率 required{level},")
+
+
+def test_trust_は理由が必須で_段階は_verify_か_assume():
+    assert chk(trust_src(' trust assume "契約 §4"')).ready
+    with pytest.raises(ParseError, match="理由"):
+        parse(trust_src(" trust assume"))
+    with pytest.raises(ParseError, match="verify"):
+        parse(trust_src(' trust check "x"'))
+
+
+def test_trust_の段階に応じて境界の確認が変わり_仕様書に人の保証として出る():
+    base = generate(chk(trust_src("")))
+    ver = generate(chk(trust_src(' trust verify "仕入れ先が保証"')))
+    asm = generate(chk(trust_src(' trust assume "契約 §4"')))
+    line = 'check_ratio("税率", &self.税率, Some(0), Some(1))?;'
+    assert line in base and f"if cfg!(debug_assertions) {{ {line} }}" in ver
+    assert line not in asm and 'check_ratio("税率", &self.税率, None, None)?;' in asm  # 分母の物理上限は残る
+    sp = build(chk(trust_src(' trust assume "契約 §4"')))
+    assert sp["人の保証"] == [("置く", "税率", "割合 0..1", "確かめない", "契約 §4")]
+    assert "## 人の保証" in render(chk(trust_src(' trust assume "契約 §4"')), sp)
+    assert build(chk(trust_src("")))["人の保証"] == []
+
+
+@needs_cargo
+def test_trust_assume_は範囲外を通し_既定は止める(tmp_path):
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    let req = r#"{"name":"置く","ctx":{"new_品_id":"A"},"input":{"元":1000,"税率":"3/2","割引":"1/2"},"store":{}}"#;
+    println!("{:?}", call(req));
+}
+"""
+    outs = {}
+    for lv in ("", ' trust assume "契約 §4"'):
+        ck = chk(trust_src(lv))
+        d = tmp_path / ("assume" if lv else "check")
+        d.mkdir()
+        write_crate(ck, generate(ck), main, d, host=True)
+        r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=d, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-2500:]
+        outs[lv] = r.stdout.strip()
+    assert outs[""].startswith("Err(") and "範囲外" in outs[""], outs
+    assert outs[' trust assume "契約 §4"'].startswith("Ok("), outs  # 1000 × 3/2 × 1/2 = 750。範囲外の税率がそのまま通る

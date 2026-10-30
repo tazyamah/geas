@@ -140,7 +140,7 @@ def from_j(t: Type, j: str) -> str:
     if k == "日時":
         return f"({j}.as_int()? as i64)"
     if k == "割合":
-        r = t.range
+        r = None if t.trust else t.range  # 人の保証つきの入力は、範囲の確認を validate に任せる（verify／assume の段階に従う）
         return f'read_ratio({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
     if k == "バイト列":
         return f"b64_decode({j}.as_str()?)?"
