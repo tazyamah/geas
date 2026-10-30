@@ -457,6 +457,7 @@ class SetField:
     e: object
     line: int = 0
     op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印
+    guard: Optional[tuple] = None  # 範囲の確認を人が引き受ける印。("saturating"|"assume", 理由)。+= と -= だけ
 
 
 @dataclass

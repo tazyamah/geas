@@ -6,7 +6,7 @@ from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .parser import parse_chars
-from .check import Checker, ProcInfo, column_type, phys, tok_of
+from .check import Checker, ProcInfo, column_type, phys, tok_of, iv_of
 from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -980,7 +980,14 @@ class ProcGen:
         elif isinstance(st, SetField):
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
-            v = self.field_value(self.field_type(d, st.f), st.e, f"{d}.{st.f}")
+            ft = self.field_type(d, st.f)
+            if st.guard is not None and st.guard[0] == "saturating":  # 範囲の端で止める。端の内側に収めてから物理数へ
+                lo, hi = iv_of(ft)
+                v = self.conv(ft, f"({self.rx(st.e)}).clamp({lo}i128, {hi}i128)", f"{d}.{st.f}", proven=True)
+            elif st.guard is not None:  # 届かないと人が承知している。届いたら範囲の確認で異常にして止める
+                v = self.conv(ft, self.rx(st.e), f"{d}.{st.f}")
+            else:
+                v = self.field_value(ft, st.e, f"{d}.{st.f}")
             self.L(f"writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Delete):
             d = self.info.lookup_vars[st.var]

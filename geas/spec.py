@@ -158,6 +158,12 @@ def build_raw(ck: Checker) -> dict:
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
+    for x in p.processes:  # 足し引きの範囲を人が引き受けた文
+        for target, op, mode, why in ck.infos[x.name].guards:
+            d, f = target.split(".")
+            ft = next(y.type for y in ck.data[d].fields if y.name == f)
+            spec["人の保証"].append((x.name, f"{target} {op}", show_type(ft),
+                                  "範囲の端で止まる" if mode == "saturating" else "確かめない（届くと異常で止まる）", why))
     spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs), read_text(sc.read)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
@@ -258,7 +264,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## 画面デザイン（突合しない。配置と色）", "", "| 画面 | 指定 | 値 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["画面デザイン"]]
     if spec["人の保証"]:
-        out += ["", "## 人の保証（入力の範囲の確認を、人が危険を承知で省いたもの。検査器は宣言した範囲を事実として使う）", "", "| 処理 | 入力 | 型・範囲 | 実行時の確認 | 理由 |", "|---|---|---|---|---|"]
+        out += ["", "## 人の保証（範囲の確認を、人が危険を承知で省いたもの。検査器は宣言した範囲を事実として使う）", "", "| 処理 | 入力 | 型・範囲 | 実行時の確認 | 理由 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["人の保証"]]
     if spec["削除"]:
         out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]

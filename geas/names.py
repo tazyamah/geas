@@ -18,7 +18,7 @@ RESERVED = {
     "let", "return", "if", "else", "for", "in", "create", "update", "request", "reply", "wait", "par",
     "entity", "ltype", "store", "state", "result", "effect", "part", "convert", "invariant", "deed", "nexus", "flow", "trigger", "query", "event", "screen", "resource",
     "tz_offset", "timezone", "all", "input", "slot", "reads", "writes", "transition", "effects", "initial", "middle", "final", "reject", "required", "unique", "optional",
-    "raw", "require", "read", "trust", "verify", "assume", "then", "len", "only", "digit", "positions", "dangerous", "to_raw", "raw_cat", "or",
+    "raw", "require", "read", "trust", "verify", "assume", "then", "len", "only", "digit", "positions", "dangerous", "to_raw", "raw_cat", "or", "saturating",
 }
 
 
