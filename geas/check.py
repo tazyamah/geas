@@ -156,6 +156,7 @@ class Checker:
         self.results = {r.name: r for r in prog.results}
         self.effects = {e.name: e for e in prog.effects}
         self.parts = {x.name: x for x in prog.parts}
+        self.read_checked: set = set()
         self.comps = {c.target: c for c in prog.composites}
         self.part_types: dict[int, str] = {}  # 保証の式 → 型トークン（生成で使う）
         self.procs = {x.name: x for x in prog.processes}
@@ -248,7 +249,10 @@ class Checker:
     def check_type(self, t: Type, where: str, comp_ok: bool = False):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
         if t.kind == "生":
-            self.d(ERROR, "型", where, "raw（未検査の生データ）は、raw から変換する convert の引数にだけ書けます。入力には、via 変換名 で変換を結びます")
+            self.d(ERROR, "型", where, "raw（未検査の生データ）は、raw から変換する convert の引数にだけ書けます。型に read 変換名 で変換を結びます")
+        if t.read is not None and t.read not in self.read_checked:
+            self.read_checked.add(t.read)
+            self.check_type_read(where, t)
         if t.kind == "合成" and not comp_ok:
             self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目・処理の入力と slot・結果の中身・外部作用の引数・応答の中身・トリガの引数にだけ使えます")
         if t.kind == "参照" and t.target not in self.data:
@@ -326,13 +330,15 @@ class Checker:
             self.d(ERROR, "保証", where, "保証が戻り値（result）を使っていません。何も確かめない保証は書けません")
         self.part_types.update(pc.info.types)
 
-    def check_via(self, where: str, t: Type):
-        """入力の via：raw から変換する convert で、戻り値の型が入力の型と同じこと"""
-        pt = self.parts.get(t.via)
+    def check_type_read(self, where: str, t: Type):
+        """型の read：raw から変換する convert で、戻り値の型が、その型と同じこと"""
+        pt = self.parts.get(t.read)
         if pt is None or not any(pt_.kind == "生" for _, pt_ in pt.params):
-            self.d(ERROR, "名前", where, f"via の「{t.via}」は、raw から変換する convert ではありません")
-        elif show_type(replace(pt.ret, optional=False, via=None, trust=None)) != show_type(replace(t, optional=False, via=None, trust=None)):
-            self.d(ERROR, "型", where, f"入力の型（{show_type(replace(t, optional=False, via=None, trust=None))}）と、変換 {t.via} の戻り値の型（{show_type(pt.ret)}）が違います")
+            self.d(ERROR, "名前", where, f"read の「{t.read}」は、raw から変換する convert ではありません")
+            return
+        plain = lambda x: show_type(replace(x, optional=False, read=None, trust=None))
+        if plain(pt.ret) != plain(t):
+            self.d(ERROR, "型", where, f"型（{plain(t)}）と、変換 {t.read} の戻り値の型（{plain(pt.ret)}）が違います")
 
     def check_raw_convert(self, pt: Part, where: str):
         """raw から論理型への変換。require の条件が成り立たなければ入力不正。結果の型の範囲・長さ・文字種は、取り込むときに宣言どおり確かめる"""
@@ -399,9 +405,6 @@ class Checker:
             self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
             for n, t in [*x.inputs, *x.refs]:
                 self.check_type(t, f"{kind} {x.name} / {n}", comp_ok=isinstance(x, Process))
-            for n, t in x.inputs:
-                if t.via is not None:
-                    self.check_via(f"{kind} {x.name} / {n}", t)
         for tg in p.triggers:
             for n, t in tg.params:
                 self.check_type(t, f"トリガ {tg.name} / {n}", comp_ok=True)
@@ -1437,7 +1440,7 @@ class ProcChecker:
         if isinstance(e, Call) and e.n in ck.parts:
             pt = ck.parts[e.n]
             if any(t_.kind == "生" for _, t_ in pt.params):
-                self.d(ERROR, "型", f"「{show(e)}」: raw から変換する convert は、式の中では呼べません（入力に via {e.n} と書いて結びます）")
+                self.d(ERROR, "型", f"「{show(e)}」: raw から変換する convert は、式の中では呼べません（型に read {e.n} と書いて結びます）")
                 return tok_of(pt.ret)
             if len(e.args) < len(pt.params) and all(n in pt.defaults for n, _ in pt.params[len(e.args):]):
                 e.args = [*e.args, *(pt.defaults[n] for n, _ in pt.params[len(e.args):])]  # 省いた引数は、デフォルト値で補う
@@ -2234,7 +2237,7 @@ class ProcChecker:
     def check_text_fit(self, e, dst: Type, where: str, line: int):
         """長さか使える文字が決まっている文字列の項目へ書くとき、書く値の長さと文字が収まると示せるか。
         示せるのは、宣言のある入力・項目・slot と、部品の戻り値を、そのまま書く場合だけ（外から来る値は、境界で確かめてある）"""
-        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.check is None) or isinstance(e, Null):
+        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.check is None and dst.read is None) or isinstance(e, Null):
             return
         if isinstance(e, Call) and e.n in self.ck.parts:
             src = self.ck.parts[e.n].ret
@@ -2251,6 +2254,9 @@ class ProcChecker:
         if dst.chars is not None and (src.chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in src.chars)):
             self.d(ERROR, "文字種", f"{where} に書く文字列の文字が、項目の使える文字に収まると示せません"
                    f"（書く値{'の文字は制限なし' if src.chars is None else ' [' + show_chars(src.chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
+        if dst.read is not None and src.read != dst.read:
+            self.d(ERROR, "検査", f"{where} に書く文字列が、変換 {dst.read} を通った値と示せません"
+                   f"（書く値{'は変換を通っていない' if src.read is None else 'の変換は ' + src.read} ／ 項目は {dst.read}）。型に read {dst.read} が結ばれた入力・項目・部品の戻り値を、そのまま書いてください", line)
         if dst.check is not None and src.check != dst.check:
             self.d(ERROR, "検査数字", f"{where} に書く文字列が、検査数字（{dst.check}）を満たすと示せません"
                    f"（書く値{'は検査数字なし' if src.check is None else 'の検査数字は ' + src.check} ／ 項目は {dst.check}）", line)

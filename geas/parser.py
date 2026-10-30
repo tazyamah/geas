@@ -272,6 +272,10 @@ class Parser:
         self.in_ltype = True
         t = self.type()
         self.in_ltype = False
+        if self.accept("read"):  # read 変換名：この型の値が境界で通る、raw から変換する convert
+            if t.kind != "文字列":
+                raise ParseError("read を結べるのは、いまは文字列（text）の型だけです", line)
+            t.read = self.name()
         self.end_line()
         self.ltypes[name] = t
 
@@ -641,8 +645,6 @@ class Parser:
         if self.is_("optional"):
             raise self.err("入力は、書かなければ「無いかもしれない」扱いです。optional は要りません（必ず要るなら required と書きます）")
         t.optional = not self.accept("required")
-        if self.accept("via"):  # via 変換名：受けた raw を、この convert で論理型にする（拒否は入力不正）
-            t.via = self.name()
         if self.accept("trust"):  # trust verify|assume "理由"：人が危険を承知で、範囲の確認を省く（既定は毎回確かめる）
             level = self.peek().val if self.peek().kind == "NAME" else ""
             if level not in ("verify", "assume"):

@@ -2729,26 +2729,26 @@ fn main() {
 
 
 # ---- 割合の物理上限と、割合どうしの掛け算 ----
-RATIO_SRC = """ltype 非負金額 = money(JPY) 0..
-ltype 率 = ratio 0..1
-entity 品 {
-  品ID: id unique
-  価格: 非負金額 required
+RATIO_SRC = """ltype NonNegMoney = money(JPY) 0..
+ltype Rate = ratio 0..1
+entity Item {
+  item_id: id unique
+  price: NonNegMoney required
 }
-result 置いた結果 {
-  置いた(品ID: id)
+result PutResult {
+  Put(item_id: id)
 }
-deed 置く {
-  input 元: 非負金額 required, 税率: 率 required, 割引: 率 required
-  writes 品
-  result 置いた結果
+deed put_item {
+  input base: NonNegMoney required, tax_rate: Rate required, discount: Rate required
+  writes Item
+  result PutResult
   effects none
 
-  let 品 = create 品 { 価格: round(元 * 税率 * 割引, half_up, JPY) }
-  return 置いた(品.品ID)
+  let item = create Item { price: round(base * tax_rate * discount, half_up, JPY) }
+  return Put(item.item_id)
 }
-nexus 流れ {
-  置く: 置いた → reply
+nexus Flow {
+  put_item: Put → reply
 }
 """
 
@@ -2757,10 +2757,10 @@ def test_割合どうしの掛け算は丸めの対象で_途中の桁が収ま�
     ck = chk(RATIO_SRC)
     assert ck.ready, ck.diags
     # 範囲を書かない割合にも物理上限（分母 10^9・値 ±10^9）があり、掛けた途中の分子が i128 に収まらない組み合わせは検査で止まる
-    wide = chk(mutate(RATIO_SRC, "ltype 率 = ratio 0..1\n", "ltype 率 = ratio 0..1000000000\n"))
+    wide = chk(mutate(RATIO_SRC, "ltype Rate = ratio 0..1\n", "ltype Rate = ratio 0..1000000000\n"))
     assert any("途中の分子" in m for m in msgs(wide, ERROR)), wide.diags
     # 丸めずに書くと問いになる
-    assert any(d.code == "丸め" for d in chk(mutate(RATIO_SRC, "round(元 * 税率 * 割引, half_up, JPY)", "元 * 税率 * 割引")).diags)
+    assert any(d.code == "丸め" for d in chk(mutate(RATIO_SRC, "round(base * tax_rate * discount, half_up, JPY)", "base * tax_rate * discount")).diags)
 
 
 @needs_cargo
@@ -2770,7 +2770,7 @@ def test_割合は分母の上限を境界で確かめ_割合どうしの掛け�
 use geas_app::host::call;
 fn main() {
     for (r1, r2) in [("1/2", "1/2"), ("1/2", "1000000001/1000000001"), ("1/0", "1/2"), ("2/1", "1/2")] {
-        let req = format!(r#"{{"name":"置く","ctx":{{"new_品_id":"A"}},"input":{{"元":1000,"税率":"{}","割引":"{}"}},"store":{{}}}}"#, r1, r2);
+        let req = format!(r#"{{"name":"put_item","ctx":{{"new_Item_id":"A"}},"input":{{"base":1000,"tax_rate":"{}","discount":"{}"}},"store":{{}}}}"#, r1, r2);
         println!("{:?}", call(&req));
     }
 }
@@ -2779,7 +2779,7 @@ fn main() {
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     a, b, c, d = r.stdout.splitlines()
-    assert a.startswith("Ok(") and '\\"価格\\":250' in a, a
+    assert a.startswith("Ok(") and '\\"price\\":250' in a, a
     assert b.startswith("Err(") and "分母" in b, b
     assert c.startswith("Err(") and "分母" in c, c
     assert d.startswith("Err(") and "範囲" in d, d
@@ -2787,7 +2787,7 @@ fn main() {
 
 # ---- 人の保証（trust）：入力の範囲の確認を、人が危険を承知で省く ----
 def trust_src(level: str) -> str:
-    return RATIO_SRC.replace("税率: 率 required,", f"税率: 率 required{level},")
+    return RATIO_SRC.replace("tax_rate: Rate required,", f"tax_rate: Rate required{level},")
 
 
 def test_trust_は理由が必須で_段階は_verify_か_assume():
@@ -2802,11 +2802,11 @@ def test_trust_の段階に応じて境界の確認が変わり_仕様書に人�
     base = generate(chk(trust_src("")))
     ver = generate(chk(trust_src(' trust verify "仕入れ先が保証"')))
     asm = generate(chk(trust_src(' trust assume "契約 §4"')))
-    line = 'check_ratio("税率", &self.税率, Some(0), Some(1))?;'
+    line = 'check_ratio("tax_rate", &self.tax_rate, Some(0), Some(1))?;'
     assert line in base and f"if cfg!(debug_assertions) {{ {line} }}" in ver
-    assert line not in asm and 'check_ratio("税率", &self.税率, None, None)?;' in asm  # 分母の物理上限は残る
+    assert line not in asm and 'check_ratio("tax_rate", &self.tax_rate, None, None)?;' in asm  # 分母の物理上限は残る
     sp = build(chk(trust_src(' trust assume "契約 §4"')))
-    assert sp["人の保証"] == [("置く", "税率", "割合 0..1", "確かめない", "契約 §4")]
+    assert sp["人の保証"] == [("put_item", "tax_rate", "割合 0..1", "確かめない", "契約 §4")]
     assert "## 人の保証" in render(chk(trust_src(' trust assume "契約 §4"')), sp)
     assert build(chk(trust_src("")))["人の保証"] == []
 
@@ -2816,7 +2816,7 @@ def test_trust_assume_は範囲外を通し_既定は止める(tmp_path):
     main = """use geas_app::*;
 use geas_app::host::call;
 fn main() {
-    let req = r#"{"name":"置く","ctx":{"new_品_id":"A"},"input":{"元":1000,"税率":"3/2","割引":"1/2"},"store":{}}"#;
+    let req = r#"{"name":"put_item","ctx":{"new_Item_id":"A"},"input":{"base":1000,"tax_rate":"3/2","discount":"1/2"},"store":{}}"#;
     println!("{:?}", call(req));
 }
 """
@@ -2833,47 +2833,53 @@ fn main() {
     assert outs[' trust assume "契約 §4"'].startswith("Ok("), outs  # 1000 × 3/2 × 1/2 = 750。範囲外の税率がそのまま通る
 
 
-# ---- raw と、raw から変換する convert（Strong Parameters 的な境界） ----
-RAW_SRC = """ltype 品番型 = text 8..8 of "0-9"
-entity 品 {
-  品ID: id unique
-  品番: 品番型 required
+# ---- raw と、型に結んだ raw から変換する convert（Strong Parameters 的な境界） ----
+RAW_SRC = """ltype PartNo = text 8..8 of "0-9" read part_no_reader
+ltype Plain = text 8..8 of "0-9"
+entity Item {
+  item_id: id unique
+  part_no: PartNo required
 }
-result 置いた結果 {
-  置いた(品ID: id)
+result PutResult {
+  Put(item_id: id)
 }
-convert 品番読み(r: raw) -> 品番型 {
+convert part_no_reader(r: raw) -> PartNo {
   require len(r) == 8 "8桁にしてください"
   require only(r, "0-9") "数字だけにしてください"
   return text(r)
 }
-deed 置く {
-  input 品番: 品番型 required via 品番読み
-  writes 品
-  result 置いた結果
+deed put_item {
+  input part_no: PartNo required
+  writes Item
+  result PutResult
   effects none
 
-  let 品 = create 品 { 品番: 品番 }
-  return 置いた(品.品ID)
+  let item = create Item { part_no: part_no }
+  return Put(item.item_id)
 }
-nexus 流れ {
-  置く: 置いた → reply
+nexus Flow {
+  put_item: Put → reply
 }
 """
 
 
-def test_raw_から変換する_convert_は_via_で入力に結ぶ():
+def test_型に結んだ_raw_の_convert_は入力と項目の両方に働く():
     ck = chk(RAW_SRC)
     assert ck.ready, ck.diags
     out = generate(ck)
-    assert 'pub fn 品番読み(r: &str) -> Result<String, String>' in out and '"8桁にしてください"' in out
+    assert "pub fn part_no_reader(r: &str) -> Result<String, String>" in out and '"8桁にしてください"' in out
+    assert "part_no_reader(&self.part_no).map(|_| ())?;" in out  # 入力の取り込みで、型の変換が働く
     # raw は convert の引数にだけ書ける
-    assert any("raw" in m for m in msgs(chk(mutate(RAW_SRC, "品番: 品番型 required\n}", "品番: raw required\n}")), ERROR))
-    # via は raw から変換する convert で、戻り値の型が入力の型と同じこと
-    assert any("via" in m for m in msgs(chk(mutate(RAW_SRC, "via 品番読み", "via 無い変換")), ERROR))
-    assert any("戻り値の型" in m for m in msgs(chk(mutate(RAW_SRC, "ltype 品番型 = text 8..8 of \"0-9\"\n", "ltype 品番型 = text 8..8 of \"0-9\"\nltype 別型 = text 1..3\n").replace("input 品番: 品番型 required via", "input 品番: 別型 required via").replace("品番: 品番", "品番: 品番")), ERROR))
+    assert any("raw" in m for m in msgs(chk(mutate(RAW_SRC, "part_no: PartNo required\n}", "part_no: raw required\n}")), ERROR))
+    # read は raw から変換する convert で、戻り値の型が同じこと
+    assert any("read" in m for m in msgs(chk(mutate(RAW_SRC, "read part_no_reader", "read missing_reader")), ERROR))
+    other = mutate(RAW_SRC, "ltype Plain", "ltype Other = text 1..3\nltype Plain")
+    assert any("戻り値の型" in m for m in msgs(chk(mutate(other, "-> PartNo {", "-> Other {")), ERROR))
+    # 変換を通っていない文字列は、変換つきの型の項目に書けない（型が事実を運ぶ）
+    other_input = mutate(mutate(RAW_SRC, "input part_no: PartNo required", "input part_no: PartNo required, plain: Plain required"), "{ part_no: part_no }", "{ part_no: plain }")
+    assert any("変換 part_no_reader を通った値と示せません" in m for m in msgs(chk(other_input), ERROR))
     # 式の中では呼べない／require は真偽の式／raw の操作は raw にだけ
-    assert any("式の中では呼べません" in m for m in msgs(chk(mutate(RAW_SRC, "create 品 { 品番: 品番 }", 'create 品 { 品番: 品番読み(品番) }')), ERROR))
+    assert any("式の中では呼べません" in m for m in msgs(chk(mutate(RAW_SRC, "{ part_no: part_no }", "{ part_no: part_no_reader(part_no) }")), ERROR))
     assert any("真偽" in m for m in msgs(chk(mutate(RAW_SRC, "require len(r) == 8", "require len(r)")), ERROR))
     assert any("raw です" in m for m in msgs(chk(mutate(RAW_SRC, "require len(r) == 8", "require len(1) == 8")), ERROR))
     with pytest.raises(ParseError, match="理由"):
@@ -2881,13 +2887,13 @@ def test_raw_から変換する_convert_は_via_で入力に結ぶ():
 
 
 @needs_cargo
-def test_raw_の_convert_は拒否を入力不正にし_通った値だけが処理に入る(tmp_path):
+def test_型に結んだ変換は拒否を入力不正にし_通った値だけが処理に入る(tmp_path):
     ck = chk(RAW_SRC)
     main = """use geas_app::*;
 use geas_app::host::call;
 fn main() {
     for v in ["12345678", "1234567", "1234567a"] {
-        let req = format!(r#"{{"name":"置く","ctx":{{"new_品_id":"A"}},"input":{{"品番":"{}"}},"store":{{}}}}"#, v);
+        let req = format!(r#"{{"name":"put_item","ctx":{{"new_Item_id":"A"}},"input":{{"part_no":"{}"}},"store":{{}}}}"#, v);
         println!("{:?}", call(&req));
     }
 }
@@ -2902,23 +2908,18 @@ fn main() {
 
 
 # ---- raw の文字位置を回る sum と、条件の式（検査数字を geas の式で書く） ----
-JAN_SRC = RAW_SRC.replace('''ltype 品番型 = text 8..8 of "0-9"''', '''ltype 品番型 = text 13..13 of "0-9"''').replace('''convert 品番読み(r: raw) -> 品番型 {
-  require len(r) == 8 "8桁にしてください"
+JAN_SRC = RAW_SRC.replace('ltype PartNo = text 8..8 of "0-9" read part_no_reader', 'ltype PartNo = text 13..13 of "0-9" read jan_reader').replace("part_no_reader", "jan_reader").replace(
+    '''  require len(r) == 8 "8桁にしてください"
+  require only(r, "0-9") "数字だけにしてください"''', '''  require len(r) == 13 "13桁にしてください"
   require only(r, "0-9") "数字だけにしてください"
-  return text(r)
-}''', '''convert 品番読み(r: raw) -> 品番型 {
-  require len(r) == 13 "13桁にしてください"
-  require only(r, "0-9") "数字だけにしてください"
-  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "検査数字が合いません"
-  return text(r)
-}''')
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "検査数字が合いません"''')
 
 
 def test_検査数字は_convert_の式で書け_型と引数の誤りは検査で止まる():
     ck = chk(JAN_SRC)
     assert ck.ready, ck.diags
     assert "checked_mul" in generate(ck) and "rem_euclid(10i128)" in generate(ck)
-    assert any("then と else の型" in m for m in msgs(chk(JAN_SRC.replace("then 3 else 1", "then 3 else len(r)").replace("else len(r)", 'else text(r)')), ERROR))
+    assert any("then と else の型" in m for m in msgs(chk(JAN_SRC.replace("then 3 else 1", "then 3 else text(r)")), ERROR))
     assert any("真偽" in m for m in msgs(chk(JAN_SRC.replace("if (len(r) - 1 - i) % 2 == 1 then", "if len(r) then")), ERROR))
     assert any("digit( ) の位置は整数" in m for m in msgs(chk(JAN_SRC.replace("digit(r, i)", "digit(r, r)")), ERROR))
 
@@ -2930,7 +2931,7 @@ def test_convert_で書いた検査数字は組み込みの_check_gtin_と同じ
     ck = chk(JAN_SRC)
     cases = ["4901234567894", "4901234567895", "4006381333931", "4006381333932", "0000000000000", "0000000000001",
              "490123456789a", "490123456789", "49012345678945"]
-    main = "use geas_app::*;\nfn main() {\n" + "".join(f'    println!("{{}}", 品番読み("{c}").is_ok());\n' for c in cases) + "}\n"
+    main = "use geas_app::*;\nfn main() {\n" + "".join(f'    println!("{{}}", jan_reader("{c}").is_ok());\n' for c in cases) + "}\n"
     write_crate(ck, generate(ck), main, tmp_path, host=True)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
