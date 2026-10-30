@@ -3367,17 +3367,19 @@ def test_標準部品の生成は_宣言から止まらないと言える整数�
         _fn("new_api", [["self", S]], S, stable=False),
         _fn("old_api", [["self", S]], S, deprecated=True),
         _fn("generic", [["self", S]], S, generics=True),
-        _fn("is_zero", [["self", S]], B),  # bool は写せない
+        _fn("is_zero", [["self", S]], B),  # bool は bool 型に写す
+        _fn("opt", [["self", S]], {"resolved_path": {"path": "Option"}}),  # Option は写せない
         _fn("assoc", [["rhs", S]], S),  # self を受けない
         _fn("wide", [["self", S], ["rhs", {"primitive": "u64"}]], S),  # 範囲が i64 に収まらない型
     ]
     doc = {"index": {"0": {"inner": {"impl": {"trait": None, "for": {"primitive": "i8"}, "items": list(range(1, len(items) + 1))}}},
                      **{str(i + 1): it for i, it in enumerate(items)}}}
     rows = stdgen.collect(doc)
-    assert [(r[0], r[1], r[2], r[3]) for r in rows] == [("i8", "count", ("i8",), "u32"), ("i8", "good", ("i8", "i8"), "i8")]
+    assert [(r[0], r[1], r[2], r[3]) for r in rows] == [("i8", "count", ("i8",), "u32"), ("i8", "good", ("i8", "i8"), "i8"), ("i8", "is_zero", ("i8",), "bool")]
     out = stdgen.render(rows)
     assert "ltype I8 = int -128..127" in out and "ltype U32 = int 0..4294967295" in out
     assert 'library i8_good(a: I8, b: I8) -> I8 from rust "std" "" call "((a as i8).good((b as i8))) as i8" trust check' in out
+    assert 'library i8_is_zero(a: I8) -> bool from rust "std" "" call "(a as i8).is_zero()" trust check' in out
 
 
 def test_標準部品の束はコミットした生成物と一致する():
@@ -3388,3 +3390,75 @@ def test_標準部品の束はコミットした生成物と一致する():
         pytest.skip("rustdoc の JSON（nightly の rust-docs-json）が無い")
     committed = Path(__file__).parent.parent / "geas" / "std" / "num.geas"
     assert committed.read_text() == stdgen.render(stdgen.collect(doc)), "python -m geas.stdgen > geas/std/num.geas で作り直してください"
+
+
+BOOL_SRC = """ltype Qty = int 0..100
+
+entity Item {
+  item_id: id unique
+  stock: Qty required
+  active: bool required
+}
+result Res {
+  Done(item_id: id)
+  Off
+}
+deed set_active {
+  input item_id: id required, on: bool required
+  reads Item.item_id
+  writes Item.active
+  result Res
+  effects none
+
+  let item = Item[item_id] else { return Off }
+  item.active = on
+  return Done(item.item_id)
+}
+nexus Flow {
+  set_active: Done → reply, Off → reply
+}
+"""
+
+
+def test_bool_の型と式の検査():
+    ck = chk(BOOL_SRC)
+    assert ck.ready, ck.diags
+    assert show_type(ck.data["Item"].fields[2].type) == "真偽"
+    ng = lambda old, new: any(d.level == ERROR for d in chk(BOOL_SRC.replace(old, new)).diags)
+    assert ng("item.active = on", "item.active = 1")  # 整数は bool の項目に書けない
+    assert ng("item.active = on", "item.active = item.stock")
+    assert ng("let item = Item[item_id] else { return Off }", "let item = Item[item_id] else { return Off }\n  if not item.stock { return Off }")  # not は真偽だけ
+    assert ng("let item = Item[item_id] else { return Off }", "let item = Item[item_id] else { return Off }\n  if item.stock and on { return Off }")
+    assert ng("let item = Item[item_id] else { return Off }", "let item = Item[item_id] else { return Off }\n  if item.active == 1 { return Off }")  # 違う型どうしの比較
+    with pytest.raises(ParseError):
+        parse(BOOL_SRC.replace("on: bool required", "on: bool 0..1 required"))  # bool に範囲は無い
+    assert not [d for d in chk(BOOL_SRC.replace("item.active = on", "item.active = not on or true")).diags if d.level == ERROR]
+
+
+def test_標準部品の_bool_を返す関数は条件に使える(tmp_path):
+    src = STD_APP.replace("  return Put(item.item_id)", "  if not Num.u8_is_power_of_two(a) { return Put(item.item_id) }\n  return Put(item.item_id)")
+    ck = std_app(tmp_path, src)
+    assert not msgs(ck, ERROR), msgs(ck, ERROR)
+    rows = build(ck)["人の保証"]
+    assert any("u8_is_power_of_two" in r[0] for r in rows), rows
+    assert "-> bool" in (Path(__file__).parent.parent / "geas" / "std" / "num.geas").read_text()
+
+
+@needs_cargo
+def test_標準部品の_bool_を返す関数は生成物の中で動く(tmp_path):
+    src = STD_APP.replace("let item = create Item { stock: Num.u8_wrapping_add(a, b) }",
+                          "let item = create Item { stock: if Num.u8_is_power_of_two(a) then 1 else Num.u8_wrapping_add(a, b) }")
+    ck = std_app(tmp_path, src)
+    assert not msgs(ck, ERROR), msgs(ck, ERROR)
+    main = """use geas_app::host::call;
+fn main() {
+    for a in [200, 64] {
+        println!("{:?}", call(&format!(r#"{{"name":"put_item","ctx":{{"new_Item_id":"A"}},"input":{{"a":{},"b":100}},"store":{{}}}}"#, a)));
+    }
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path / "crate", host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path / "crate", capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    lines = r.stdout.splitlines()
+    assert '\\"stock\\":44' in lines[0] and '\\"stock\\":1' in lines[1], lines  # 200 は 2 の冪でない（200+100 は 44）。64 は 2 の冪（1）

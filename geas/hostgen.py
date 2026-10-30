@@ -29,6 +29,7 @@ impl J {
     pub fn get_opt(&self, k: &str) -> Option<&J> {
         match self { J::Obj(m) => match m.get(k) { Some(J::Null) | None => None, Some(x) => Some(x) }, _ => None }
     }
+    pub fn as_bool(&self) -> Result<bool, String> { match self { J::Bool(b) => Ok(*b), _ => Err("true か false のはずです".into()) } }
     pub fn as_str(&self) -> Result<&str, String> { match self { J::Str(s) => Ok(s), _ => Err("文字列のはずです".into()) } }
     pub fn as_int(&self) -> Result<i128, String> { match self { J::Num(n) => Ok(*n), _ => Err("整数のはずです".into()) } }
     pub fn as_obj(&self) -> Result<&BTreeMap<String, J>, String> { match self { J::Obj(m) => Ok(m), _ => Err("オブジェクトのはずです".into()) } }
@@ -147,6 +148,8 @@ def from_j(t: Type, j: str) -> str:
         return f'{phys(t)}::try_from({j}.as_int()?).map_err(|_| "範囲外の数です".to_string())?'
     if k == "日時":
         return f"({j}.as_int()? as i64)"
+    if k == "真偽":
+        return f"{j}.as_bool()?"
     if k == "割合":
         r = None if t.trust else t.range  # 人の保証つきの入力は、範囲の確認を validate に任せる（verify／assume の段階に従う）
         return f'read_ratio({j}.as_str()?, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?'
@@ -176,6 +179,8 @@ def to_j(t: Type, x: str) -> str:
         return f"js_str(&{x})"
     if k in ("整数", "金額", "日時"):
         return f"{x}.to_string()"
+    if k == "真偽":
+        return f'format!("{{}}", {x})'
     if k == "バイト列":
         return f"js_str(&b64_encode(&{x}))"
     if k == "割合":
@@ -211,7 +216,7 @@ def mock_def(ck: Checker) -> dict:
     """開発用の模擬：外部作用ごとに返る応答と、応答の結果の種類（outcome）。模擬と操作パネルが、これだけで動く"""
     p, show = ck.p, ck.p.show_names
     reps = {r.name: r for r in p.replies}
-    kinds = {"ID": "id", "参照": "id", "文字列": "text", "生": "text", "整数": "int", "集合": "set"}
+    kinds = {"ID": "id", "参照": "id", "文字列": "text", "生": "text", "整数": "int", "真偽": "bool", "集合": "set"}
     return {
         "effects": {e.name: {"label": show(e.name), "reply": e.replies} for e in p.effects if e.replies in reps},
         "replies": {r.name: {"label": show(r.name), "fields": [{"name": n, "kind": kinds.get(t.kind, "text")} for n, t in r.params],

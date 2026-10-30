@@ -308,6 +308,18 @@ class Tuple:
 
 
 @dataclass
+class Not:
+    """否定：not 条件"""
+    e: object
+
+
+@dataclass
+class BoolLit:
+    """真偽の値 true／false"""
+    v: bool
+
+
+@dataclass
 class StrLit:
     """文字列の書き込み。raw の only( ) の文字種にだけ使える"""
     s: str
@@ -499,7 +511,7 @@ def show_chars(cs: tuple) -> str:
 
 def show_type(t: Type) -> str:
     k = t.kind
-    if k in ("ID", "日時"):
+    if k in ("ID", "日時", "真偽"):
         return k
     if k == "文字列":
         return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.check is None else f" 検査数字 {t.check}")
@@ -534,6 +546,10 @@ def show(e) -> str:
         return "null"
     if isinstance(e, StrLit):
         return '"' + e.s + '"'
+    if isinstance(e, BoolLit):
+        return "true" if e.v else "false"
+    if isinstance(e, Not):
+        return f"not {show(e.e)}"
     if isinstance(e, Cond):
         return f"if {show(e.c)} then {show(e.a)} else {show(e.b)}"
     if isinstance(e, Dur):

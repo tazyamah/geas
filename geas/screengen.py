@@ -29,6 +29,8 @@ def type_def(ck, t, show) -> dict:
         st = ck.states.get(t.target)
         values = ([st.initial] if st and st.initial else []) + (st.middle if st else []) + (st.final if st else [])
         return {"kind": "enum", "values": [{"value": v, "label": show(v)} for v in values]}
+    if k == "真偽":
+        return {"kind": "bool"}
     if k == "文字列":
         return {"kind": "text", "min": t.range.lo if t.range else None, "max": t.range.hi if t.range else None}
     if k == "合成":

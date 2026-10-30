@@ -6,7 +6,7 @@
 
 - **geas 本体の Rust 化**（検査器・生成器・CLI。いまは Python で約 9,300 行）。「ちゃんと動くのが先」で、いまは Python のまま進める。生成アプリとサーバー実行部は既に Rust。README の Rust 化予告は残す。
 - **raw から convert で境界の値を変換する書き方**。第 1 段（`raw` 型、`require` つきの `convert`、型の `read`、文字位置の `sum`、式の `if`）は実装済み。`check gtin` は、`convert` で同じ判定が書けると確かめたが、組み込みはまだ残している。消すには、画面の固定値の静的確認とブラウザ拡張の事前検査を `read` の変換で動かす必要がある。`trust dangerous`（未検査の `raw` を受けて外へ中継）は実装済み。残り：入れ子の形、`dangerous` の画面でのエスケープ省略（画面に `raw` を出す書き方が決まってから）、`unsafe` を使う場面（いまの生成物には無い）。
-- **言語側の標準部品**（ハッシュなど、geas の式で書けない純粋な計算）。`library` の上に、Rust の公開 API から機械で作って載せる（`geas/stdgen.py`）。整数型は済み（`geas/std/num.geas`）。未着手：文字列（str・String）、char、他のクレート、bool／Option を返す関数の扱い。`part` の外部実装は廃止し、`library`（根の言語のライブラリ呼び出し）に置き換えた。
+- **言語側の標準部品**（ハッシュなど、geas の式で書けない純粋な計算）。`library` の上に、Rust の公開 API から機械で作って載せる（`geas/stdgen.py`）。整数型は済み（`geas/std/num.geas`）。bool を返す関数は済み（`bool` 型）。未着手：文字列（str・String）、char、他のクレート、Option を返す関数の扱い。`part` の外部実装は廃止し、`library`（根の言語のライブラリ呼び出し）に置き換えた。
 
 ## 「生成時の書き方で保証し、実行時の損失をゼロにする」の議論
 

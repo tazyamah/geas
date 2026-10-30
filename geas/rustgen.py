@@ -165,6 +165,8 @@ def rust_type(t: Type) -> str:
         return "String"
     if k == "日時":
         return "i64"
+    if k == "真偽":
+        return "bool"
     if k == "バイト列":
         return "Vec<u8>"
     if k in ("整数", "金額"):
@@ -596,7 +598,11 @@ class Gen:
                     return f'({l}).{f}({rr}).ok_or_else(|| "0 では割れません".to_string())?'
                 return (f'{{ let d_ = {rr}; if d_ == 0 {{ {self.raw_rx(e.dflt, r)} }} '
                         f'else {{ ({l}).{f}(d_).ok_or_else(|| "計算があふれました".to_string())? }} }}')
-            return f"({l} {'&&' if e.op == 'かつ' else e.op} {rr})"
+            return f"({l} {'&&' if e.op == 'かつ' else '||' if e.op == 'または' else e.op} {rr})"
+        if isinstance(e, Not):
+            return f"(!{self.raw_rx(e.e, r)})"
+        if isinstance(e, BoolLit):
+            return "true" if e.v else "false"
         raise ValueError(f"raw の変換の式に使えません: {show(e)}")
 
     def effects(self):
@@ -823,6 +829,12 @@ class ProcGen:
             return f"{self.place(e.e)}.is_none()"
         if isinstance(e, Null):
             return "None"
+        if isinstance(e, BoolLit):
+            return "true" if e.v else "false"
+        if isinstance(e, Not):
+            return f"(!{self.rx(e.e)})"
+        if isinstance(e, Cond):
+            return f"(if {self.rx(e.c)} {{ {self.rx(e.a)} }} else {{ {self.rx(e.b)} }})"
         if isinstance(e, Pred):
             if e.kind in ("ある", "ない"):
                 c = f"Store.{e.e.d}.contains_key(&({self.rx(e.e.e)}))"
@@ -861,7 +873,7 @@ class ProcGen:
                 return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
             if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）
                 return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow("{show(e)}"))?)'
-            op = {"かつ": "&&"}.get(e.op, e.op)
+            op = {"かつ": "&&", "または": "||"}.get(e.op, e.op)
             return f"({l} {op} {r})"
         if isinstance(e, (SetB, SumE)):
             return self.builder(e)
