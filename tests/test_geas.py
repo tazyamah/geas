@@ -3146,3 +3146,32 @@ fn main() {
         outs[name] = r.stdout.splitlines()
     assert "999960" in outs["sat"][0] and "1000000" in outs["sat"][1], outs
     assert "999960" in outs["assume"][0] and outs["assume"][1].startswith("Err("), outs
+
+
+# ---- storage：保存先の定義。保存先ごとに、リクエストの直列を誰が保証するか ----
+ISO_SRC = DIV_SRC + "store Stat in ExternalDb\n"
+
+
+def iso_errors(src):
+    """直列（isolation）に関する誤りだけ。同期の状態「記録」の扱いは、この試験の対象外"""
+    return [d.msg for d in chk(src).diags if d.code == "直列"]
+
+
+def test_storage_は保存先を定義し_直列の担い手を持ち_人の保証の一覧に出る():
+    assert "ExternalDb" in "".join(iso_errors(ISO_SRC))  # 定義の漏れは止まる
+    assert build(chk(DIV_SRC))["人の保証"] == []  # store が無ければ標準の保存先（確かめてある）で、書かなくてよい
+    ok = chk(ISO_SRC + "storage ExternalDb isolation store(sqlite)\n")  # 確かめてある種類は理由が要らず、人の保証でもない
+    assert not iso_errors(ISO_SRC + "storage ExternalDb isolation store(sqlite)\n")
+    assert build(ok)["人の保証"] == []
+    rows = build(chk(ISO_SRC + "storage ExternalDb isolation process\n"))["人の保証"]
+    assert rows[0][:2] == ("（保存先 ExternalDb）", "リクエストの直列化") and "プロセスの中だけ" in rows[0][2]
+    other = ISO_SRC + 'storage ExternalDb isolation store(corp_db) "社内の DB サーバー。serializable で動かす"\n'
+    rows = build(chk(other))["人の保証"]
+    assert rows[0][2] == "保存先 corp_db に任せる" and rows[0][4] == "社内の DB サーバー。serializable で動かす"
+    # 確かめていない種類は理由が必須。使われていない保存先の宣言も止まる
+    assert any("理由" in m for m in iso_errors(ISO_SRC + "storage ExternalDb isolation store(corp_db)\n"))
+    assert any("どの entity" in m for m in iso_errors(ISO_SRC + "storage ExternalDb isolation process\nstorage Other isolation process\n"))
+    for bad, pat in (("storage ExternalDb isolation redis", "process"), ("storage ExternalDb process", "storage は"),
+                     ("storage ExternalDb isolation store", r"\("), ("storage ExternalDb isolation process\nstorage ExternalDb isolation process", "2つ以上")):
+        with pytest.raises(ParseError, match=pat):
+            parse(ISO_SRC + bad + "\n")

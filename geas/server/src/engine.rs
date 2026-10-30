@@ -44,14 +44,19 @@ impl Engine {
 
     fn atomic<T>(&mut self, f: impl FnOnce(&mut Engine) -> R<T>) -> R<T> {
         self.db.begin()?;
-        match f(self) {
-            Ok(x) => {
+        // 想定外の panic があっても、書きかけを巻き戻して異常として返す（Mutex を汚さず、以後のリクエストも動く）
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))) {
+            Ok(Ok(x)) => {
                 self.db.commit()?;
                 Ok(x)
             }
-            Err(x) => {
+            Ok(Err(x)) => {
                 self.db.rollback();
                 Err(x)
+            }
+            Err(_) => {
+                self.db.rollback();
+                Err("内部の異常でこのリクエストを取り消しました".into())
             }
         }
     }
@@ -258,4 +263,30 @@ fn merge(a: &Value, b: &Value) -> Value {
         }
     }
     Value::Object(m)
+}
+
+/// Mutex を取る。別のリクエストが panic して汚れていても、続けて使う（書きかけはトランザクションの巻き戻しで消えている）
+pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    // 汚れた Mutex でも続けて取れる
+    fn poisoned_mutex_is_still_usable() {
+        let m = Arc::new(Mutex::new(1));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("別のリクエストの異常");
+        })
+        .join();
+        assert!(m.lock().is_err());
+        *lock(&m) += 1;
+        assert_eq!(*lock(&m), 2);
+    }
 }

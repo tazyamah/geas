@@ -37,7 +37,7 @@ fn main() {
     let ticker = engine.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        if let Err(e) = ticker.lock().unwrap().tick() {
+        if let Err(e) = engine::lock(&ticker).tick() {
             eprintln!("tick: {}", e);
         }
     });
@@ -53,7 +53,8 @@ fn main() {
         let dev = dev.clone();
         workers.push(std::thread::spawn(move || {
             for req in server.incoming_requests() {
-                http::handle(req, &engine, &pwa, &dev);
+                // 1 件の panic でワーカーを失わない（応答は返らず接続が切れるが、次のリクエストは受けられる）
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| http::handle(req, &engine, &pwa, &dev)));
             }
         }));
     }

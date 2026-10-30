@@ -209,6 +209,24 @@ class Parser:
                 self.i += 1
                 p.title = t.val
                 self.end_line()
+            elif kw == "storage":  # storage 保存先 isolation process | store(種類) ["理由"]：保存先の定義。リクエストの直列を誰が保証するかを持つ
+                where = self.name()
+                if where in p.isolations:
+                    raise ParseError(f"保存先「{where}」の storage が2つ以上あります", line)
+                if not self.accept("isolation"):
+                    raise ParseError('storage は `storage 保存先 isolation process` か `storage 保存先 isolation store(種類) "理由"` と書きます', line)
+                who = self.name()
+                if who not in ("process", "store"):
+                    raise ParseError("isolation のあとには process（このアプリのプロセスの中だけ geas が直列にする）か store(種類)（保存先が直列にする）を書きます", line)
+                kind = why = ""
+                if who == "store":
+                    self.expect("(")
+                    kind = self.name()
+                    self.expect(")")
+                    if self.peek().kind == "STR":
+                        why = self.next().val
+                p.isolations[where] = (who, kind, why, line)
+                self.end_line()
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
