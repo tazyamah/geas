@@ -159,7 +159,7 @@ pub struct TriggerDef {
 
 def rust_type(t: Type) -> str:
     k = t.kind
-    if k in ("ID", "参照", "文字列"):
+    if k in ("ID", "参照", "文字列", "生"):
         return "String"
     if k == "日時":
         return "i64"
@@ -685,7 +685,7 @@ class ProcGen:
     def wrap(self, tok, x):
         if tok in ("Int", "Money"):
             return f"({x} as i128)"
-        if tok in ("ID", "Str", "Bytes") or tok.startswith("Map:") or tok.startswith("Comp:") or tok == "Set":
+        if tok in ("ID", "Str", "Bytes", "Raw") or tok.startswith("Map:") or tok.startswith("Comp:") or tok == "Set":
             return f"{x}.clone()"
         return x
 
@@ -808,6 +808,12 @@ class ProcGen:
             c = f"{self.src(e.e)}.is_empty()"
             return c if e.kind == "空" else f"!{c}"
         if isinstance(e, Call):
+            if e.n == "len":  # 処理の中の raw：文字数
+                return f"({self.rx(e.args[0])}.chars().count() as i128)"
+            if e.n == "to_raw":
+                return self.rx(e.args[0])
+            if e.n == "raw_cat":  # 検査していない値を、そのまま・または情報を付けてつなぐ
+                return f'format!("{{}}{{}}", {self.rx(e.args[0])}, {self.rx(e.args[1])})'
             if e.n in CONVERSIONS:  # 整数 ⇄ 金額 の変換は、意味の型を変えるだけ（物理の値はそのまま）
                 return f"(({self.rx(e.args[0])}) as i64)" if e.n == "time" else self.rx(e.args[0])
             if e.n in self.ck.parts:

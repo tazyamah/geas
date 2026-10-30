@@ -156,7 +156,7 @@ def build_raw(ck: Checker) -> dict:
     spec["削除"] = [(d.name, "削除させない" if d.keep else (", ".join(d.removable) or ("消せる" if d.name in deleted else "")),
                    ", ".join(f"{s}.{f}→{ {'detach': '参照を空に', 'cascade': '参照元も消す', 'leave': 'そのまま残す'}[pol] }" for s, f, pol in d.on_delete))
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
-    spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない"}[t.trust[0]], t.trust[1])
+    spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
     spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs), read_text(sc.read)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]

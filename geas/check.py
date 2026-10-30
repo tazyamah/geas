@@ -28,7 +28,7 @@ def unit_label(u: str) -> str:
 
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
-RAW_OPS = ("len", "only", "text", "positions", "digit")  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
+RAW_OPS = ("len", "only", "text", "positions", "digit", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -246,10 +246,11 @@ class Checker:
             elif u not in CURRENCIES:
                 self.d(ERROR, "単位", f"{where} / {n}", f"金額の単位「{u}」は使えません（{'・'.join(CURRENCIES)}）")
 
-    def check_type(self, t: Type, where: str, comp_ok: bool = False):
+    def check_type(self, t: Type, where: str, comp_ok: bool = False, raw_ok: bool = False):
         """型に出てくる名前（参照先・状態・写像のキー）が定義されているか。合成型は、項目と処理の入力・slot にだけ使える"""
-        if t.kind == "生":
-            self.d(ERROR, "型", where, "raw（未検査の生データ）は、raw から変換する convert の引数にだけ書けます。型に read 変換名 で変換を結びます")
+        if t.kind == "生" and not (raw_ok or (t.trust is not None and t.trust[0] == "dangerous")):
+            self.d(ERROR, "型", where, "raw（未検査の生データ）を受けられるのは、raw から変換する convert の引数と、trust dangerous の入力と、外部作用の引数だけです。"
+                   "変換するなら、型に read 変換名 を結びます")
         if t.read is not None and t.read not in self.read_checked:
             self.read_checked.add(t.read)
             self.check_type_read(where, t)
@@ -354,6 +355,7 @@ class Checker:
         n = pt.params[0][0]
         pc = ProcChecker(self, Process(pt.name))
         pc.where = where
+        pc.raw_convert = True
         env = {n: "Raw"}
         for cond, _ in pt.requires:
             c = pc.ty(cond, env)
@@ -399,7 +401,7 @@ class Checker:
         for e in p.effects:
             self.check_unique([n for n, _ in e.params], f"外部作用 {e.name}", "引数")
             for n, t in e.params:
-                self.check_type(t, f"外部作用 {e.name} / {n}", comp_ok=True)
+                self.check_type(t, f"外部作用 {e.name} / {n}", comp_ok=True, raw_ok=True)
         for x in [*p.processes, *p.queries]:
             kind = "処理" if isinstance(x, Process) else "問い合わせ"
             self.check_unique([n for n, _ in [*x.inputs, *x.refs]], f"{kind} {x.name}", "入力・参照の名前")
@@ -1760,6 +1762,8 @@ class ProcChecker:
                 if upper is not None and (hi is None or upper < hi):
                     hi = upper
             return (lo, hi)
+        if isinstance(e, Call) and e.n == "len":  # raw の文字数（メモリに載る長さ）
+            return (0, 2**63 - 1)
         if isinstance(e, Cond):
             (al, ah), (bl, bh) = self.interval(e.a, env), self.interval(e.b, env)
             return (None if None in (al, bl) else min(al, bl), None if None in (ah, bh) else max(ah, bh))
@@ -1839,10 +1843,23 @@ class ProcChecker:
 
     def raw_op(self, e: Call, env) -> str:
         """raw の操作：len(r)＝文字数、only(r, "文字種")＝文字種だけか、text(r)＝文字列として取り出す"""
-        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2}[e.n]
+        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2, "to_raw": 1, "raw_cat": 2}[e.n]
+        if e.n in ("only", "text", "positions", "digit") and not getattr(self, "raw_convert", False):
+            self.d(ERROR, "型", f"{e.n}( ) は、raw から変換する convert の中でだけ使えます（処理の中で raw に使えるのは len・to_raw・raw_cat です）")
+            return "?"
         if len(e.args) != n:
             self.d(ERROR, "型", f"{e.n}( ) の引数は {n} 個です")
             return "?"
+        if e.n == "to_raw":  # 検査済みの文字列を raw にする（情報を付けて中継するときの材料）
+            if self.ty(e.args[0], env) != "Str":
+                self.d(ERROR, "型", "to_raw( ) の対象は文字列です")
+                return "?"
+            return "Raw"
+        if e.n == "raw_cat":
+            if not all(self.ty(a, env) == "Raw" for a in e.args):
+                self.d(ERROR, "型", "raw_cat( ) の引数は raw 2つです（文字列は to_raw( ) で raw にします）")
+                return "?"
+            return "Raw"
         if self.ty(e.args[0], env) != "Raw":
             self.d(ERROR, "型", f"{e.n}( ) の対象は raw です")
             return "?"
