@@ -46,6 +46,15 @@ impl Display for Ratio {
 pub fn scale(x: i128, r: Ratio) -> Result<Ratio, Fault> {
     Ok(Ratio { num: x.checked_mul(r.num).ok_or(Fault::Overflow("割合の掛け算"))?, den: r.den })
 }
+pub fn mul_ratio(a: Ratio, b: Ratio) -> Result<Ratio, Fault> {
+    Ok(Ratio {
+        num: a.num.checked_mul(b.num).ok_or(Fault::Overflow("割合どうしの掛け算"))?,
+        den: a.den.checked_mul(b.den).ok_or(Fault::Overflow("割合どうしの掛け算"))?,
+    })
+}
+/// 外から入る割合の分母の上限と、範囲を書かないときの値の上限
+pub const RATIO_DEN_MAX: i128 = 1_000_000_000;
+pub const RATIO_VAL_MAX: i128 = 1_000_000_000;
 fn positive_den(x: Ratio) -> Result<(), Fault> {
     if x.den > 0 { Ok(()) } else { Err(Fault::Overflow("割合の分母が 0 以下")) }
 }
@@ -91,7 +100,8 @@ pub fn join_idem_key(xs: &[String]) -> String {
     format!("[{}]", q.join(","))
 }
 pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if x.den <= 0 || lo.map_or(false, |l| x.num < l.saturating_mul(x.den)) || hi.map_or(false, |h| x.num > h.saturating_mul(x.den)) {
+    let (lo, hi) = (lo.unwrap_or(-RATIO_VAL_MAX), hi.unwrap_or(RATIO_VAL_MAX));
+    if x.den <= 0 || x.den > RATIO_DEN_MAX || x.num < lo.saturating_mul(x.den) || x.num > hi.saturating_mul(x.den) {
         return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())

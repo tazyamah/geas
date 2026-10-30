@@ -97,8 +97,9 @@ pub fn read_ratio(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<Ratio, 
     let (a, b) = s.split_once('/').ok_or_else(|| "割合は \"分子/分母\" で書いてください".to_string())?;
     let num: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
     let den: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
-    if den <= 0 { return Err("割合の分母は 1 以上にしてください".into()); }
-    if lo.map_or(false, |l| num < l * den) || hi.map_or(false, |h| num > h * den) { return Err("範囲外の割合です".into()); }
+    if den <= 0 || den > RATIO_DEN_MAX { return Err(format!("割合の分母は 1 以上 {} 以下にしてください", RATIO_DEN_MAX)); }
+    let (lo, hi) = (lo.unwrap_or(-RATIO_VAL_MAX), hi.unwrap_or(RATIO_VAL_MAX));
+    if num < lo.saturating_mul(den) || num > hi.saturating_mul(den) { return Err("範囲外の割合です".into()); }
     Ok(Ratio { num, den })
 }
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {

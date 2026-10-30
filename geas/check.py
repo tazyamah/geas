@@ -742,8 +742,10 @@ class Checker:
                     self.d(ERROR, "rule", where, "default より後ろの行には、決して届きません")
                 if (kind == "割合") != isinstance(val, str):
                     self.d(ERROR, "rule", where, f"値が{kind}の書き方ではありません（割合は 分子/分母、金額と整数は数）")
-                elif isinstance(val, str) and int(val.split("/")[1]) == 0:
-                    self.d(ERROR, "rule", where, "割合の分母が0です")
+                elif isinstance(val, str) and not 0 < int(val.split("/")[1]) <= RATIO_DEN_MAX:
+                    self.d(ERROR, "rule", where, f"割合の分母は 1〜{RATIO_DEN_MAX} にしてください")
+                elif isinstance(val, str) and abs(int(val.split("/")[0])) > RATIO_VAL_MAX * int(val.split("/")[1]):
+                    self.d(ERROR, "rule", where, f"割合の値は ±{RATIO_VAL_MAX} までにしてください")
                 for path, _ in conds:
                     head = path.split(".")[0]
                     for x in users:
@@ -1192,14 +1194,21 @@ PHYS_IV = {"u8": (0, 2**8 - 1), "u16": (0, 2**16 - 1), "u32": (0, 2**32 - 1), "u
            "i128": (-2**127, 2**127 - 1)}
 
 
+RATIO_DEN_MAX = 10**9  # 割合の分母の物理上限。外から入る割合は、境界で 1..この値 に止める
+RATIO_VAL_MAX = 10**9  # 割合の値（分子/分母）の物理上限の既定。範囲を書けば、それに従う
+RATIO_NUM_LIMIT = 2**125  # 端数の出る計算の途中の分子・分母の上限（丸めで 2 倍して足しても i128 に収まる）
+
+
 def iv_of(t: Type):
     """型の値の範囲。整数と金額は、書いた範囲に、物理数に収まる範囲を重ねる（上限や下限を書かなくても、保存できる値はそこまで）"""
     if t.kind in ("整数", "金額"):
         r = t.range
         plo, phi = PHYS_IV[phys(t)]
         return (plo if r is None or r.lo is None else r.lo, phi if r is None or r.hi is None else r.hi)
-    r = t.range if t.kind == "割合" else None
-    return (None, None) if r is None else (r.lo, r.hi)
+    if t.kind == "割合":  # 割合は、書かなくても分母と値の大きさに物理上限がある（境界で確かめる）
+        r = t.range
+        return (-RATIO_VAL_MAX if r is None or r.lo is None else r.lo, RATIO_VAL_MAX if r is None or r.hi is None else r.hi)
+    return (None, None)
 
 
 def iv_show(a):
@@ -1401,7 +1410,11 @@ class ProcChecker:
                     self.d(ERROR, "単位", f"{unit_label(au)}の金額を{unit_label(ru)}の単位で丸めています")
             # 丸めた結果は、端数の元になった数の型（金額 × 割合 なら金額、整数 × 割合 なら整数）
             inner = e.args[0]
-            if isinstance(inner, Bin) and "Money" not in (self.info.types.get(id(inner.l)), self.info.types.get(id(inner.r))):
+            def has_money(x):  # 掛け算の木のどこかに金額があるか
+                if isinstance(x, Bin) and x.op == "*":
+                    return has_money(x.l) or has_money(x.r)
+                return self.info.types.get(id(x)) == "Money"
+            if isinstance(inner, Bin) and not has_money(inner):
                 return "Int"
             return "Money"
         if isinstance(e, (SetB, SumE)):
@@ -1729,6 +1742,28 @@ class ProcChecker:
                 env2[n] = "?"
         return env2
 
+    def frac_bound(self, e, env):
+        """端数の出る式の、途中の分子の絶対値の上限と、分母の上限。分からなければ None"""
+        t = self.ty_quiet(e, env)
+        if isinstance(e, Bin) and e.op == "*" and t == "Rational":
+            a, b = self.frac_bound(e.l, env), self.frac_bound(e.r, env)
+            return None if a is None or b is None else (a[0] * b[0], a[1] * b[1])
+        lo, hi = self.interval(e, env)
+        if lo is None or hi is None:
+            return None
+        if t in ("Ratio", "Rational"):
+            return (ceil(max(abs(lo), abs(hi)) * RATIO_DEN_MAX), RATIO_DEN_MAX)
+        return (max(abs(lo), abs(hi)), 1)
+
+    def check_frac_fit(self, e: Bin, env):
+        """割合を掛けた途中の分子・分母が i128 に収まると示す（収まらなければ、範囲を狭める）"""
+        a, b = self.frac_bound(e.l, env), self.frac_bound(e.r, env)
+        if a is None or b is None:
+            self.d(ERROR, "範囲", f"「{show(e)}」: 掛ける数の範囲が分からないので、途中の計算が収まると示せません（範囲を書いてください）")
+        elif a[0] * b[0] > RATIO_NUM_LIMIT or a[1] * b[1] > RATIO_NUM_LIMIT:
+            self.d(ERROR, "範囲", f"「{show(e)}」: 割合を掛けた途中の分子が最大 約 {a[0] * b[0]:.2e} になり、収まる上限 約 {RATIO_NUM_LIMIT:.2e} を"
+                   "超えるかもしれません。金額や割合の範囲を狭めてください")
+
     def binop(self, e: Bin, env) -> str:
         a, b = self.ty(e.l, env), self.ty(e.r, env)
         if "?" in (a, b):
@@ -1791,7 +1826,9 @@ class ProcChecker:
                 return "?"
             if a in num and b in num:  # 金額 × 整数（数量ぶん）は金額
                 return "Money" if "Money" in (a, b) else "Int"
-            if {a, b} <= {"Ratio", "Int", "Money"} and "Ratio" in (a, b) and "Ratio" not in (a if b == "Ratio" else b):
+            frac = ("Ratio", "Rational")
+            if {a, b} <= {"Ratio", "Rational", "Int", "Money"} and (a in frac or b in frac):
+                self.check_frac_fit(e, env)
                 return "Rational"
             self.d(ERROR, "型", f"「{show(e)}」: 掛けられない組み合わせです")
             return "?"

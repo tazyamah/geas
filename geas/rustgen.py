@@ -55,6 +55,15 @@ impl Display for Ratio {
 pub fn scale(x: i128, r: Ratio) -> Result<Ratio, Fault> {
     Ok(Ratio { num: x.checked_mul(r.num).ok_or(Fault::Overflow("割合の掛け算"))?, den: r.den })
 }
+pub fn mul_ratio(a: Ratio, b: Ratio) -> Result<Ratio, Fault> {
+    Ok(Ratio {
+        num: a.num.checked_mul(b.num).ok_or(Fault::Overflow("割合どうしの掛け算"))?,
+        den: a.den.checked_mul(b.den).ok_or(Fault::Overflow("割合どうしの掛け算"))?,
+    })
+}
+/// 外から入る割合の分母の上限と、範囲を書かないときの値の上限
+pub const RATIO_DEN_MAX: i128 = 1_000_000_000;
+pub const RATIO_VAL_MAX: i128 = 1_000_000_000;
 fn positive_den(x: Ratio) -> Result<(), Fault> {
     if x.den > 0 { Ok(()) } else { Err(Fault::Overflow("割合の分母が 0 以下")) }
 }
@@ -100,7 +109,8 @@ pub fn join_idem_key(xs: &[String]) -> String {
     format!("[{}]", q.join(","))
 }
 pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if x.den <= 0 || lo.map_or(false, |l| x.num < l.saturating_mul(x.den)) || hi.map_or(false, |h| x.num > h.saturating_mul(x.den)) {
+    let (lo, hi) = (lo.unwrap_or(-RATIO_VAL_MAX), hi.unwrap_or(RATIO_VAL_MAX));
+    if x.den <= 0 || x.den > RATIO_DEN_MAX || x.num < lo.saturating_mul(x.den) || x.num > hi.saturating_mul(x.den) {
         return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())
@@ -187,8 +197,9 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'check_range("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind in ("整数", "金額") and t.range:
         chk.append(f'check_range("{label}", {num} as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
-    if t.kind == "割合" and t.range:
-        chk.append(f'check_ratio("{label}", {ref}, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
+    if t.kind == "割合":  # 範囲を書かなくても、分母と値の大きさの物理上限は確かめる
+        r = t.range
+        chk.append(f'check_ratio("{label}", {ref}, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?;')
     if t.kind == "写像" and t.maxn is not None:  # 検査器は max N を前提に合計の範囲を示すので、外から来る写像は境界で要素数を止める
         chk.append(f'check_range("{label}の要素数", {x}.len() as i128, Some(0), Some({t.maxn}))?;')
     if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
@@ -752,8 +763,11 @@ class ProcGen:
             l, r = self.rx(e.l), self.rx(e.r)
             if e.op in ("/", "%"):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
-            if e.op == "*" and "Ratio" in (lt, rt):
-                return f"scale({r}, {l})?" if lt == "Ratio" else f"scale({l}, {r})?"
+            fr = ("Ratio", "Rational")
+            if e.op == "*" and lt in fr and rt in fr:
+                return f"mul_ratio({l}, {r})?"
+            if e.op == "*" and (lt in fr or rt in fr):
+                return f"scale({r}, {l})?" if lt in fr else f"scale({l}, {r})?"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
                 return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
             if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）

@@ -2726,3 +2726,60 @@ fn main() {
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2000:]
     assert r.stdout.strip() == "true false"
+
+
+# ---- 割合の物理上限と、割合どうしの掛け算 ----
+RATIO_SRC = """ltype 非負金額 = money(JPY) 0..
+ltype 率 = ratio 0..1
+entity 品 {
+  品ID: id unique
+  価格: 非負金額 required
+}
+result 置いた結果 {
+  置いた(品ID: id)
+}
+deed 置く {
+  input 元: 非負金額 required, 税率: 率 required, 割引: 率 required
+  writes 品
+  result 置いた結果
+  effects none
+
+  let 品 = create 品 { 価格: round(元 * 税率 * 割引, half_up, JPY) }
+  return 置いた(品.品ID)
+}
+nexus 流れ {
+  置く: 置いた → reply
+}
+"""
+
+
+def test_割合どうしの掛け算は丸めの対象で_途中の桁が収まると検査で示す():
+    ck = chk(RATIO_SRC)
+    assert ck.ready, ck.diags
+    # 範囲を書かない割合にも物理上限（分母 10^9・値 ±10^9）があり、掛けた途中の分子が i128 に収まらない組み合わせは検査で止まる
+    wide = chk(mutate(RATIO_SRC, "ltype 率 = ratio 0..1\n", "ltype 率 = ratio 0..1000000000\n"))
+    assert any("途中の分子" in m for m in msgs(wide, ERROR)), wide.diags
+    # 丸めずに書くと問いになる
+    assert any(d.code == "丸め" for d in chk(mutate(RATIO_SRC, "round(元 * 税率 * 割引, half_up, JPY)", "元 * 税率 * 割引")).diags)
+
+
+@needs_cargo
+def test_割合は分母の上限を境界で確かめ_割合どうしの掛け算が動く(tmp_path):
+    ck = chk(RATIO_SRC)
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    for (r1, r2) in [("1/2", "1/2"), ("1/2", "1000000001/1000000001"), ("1/0", "1/2"), ("2/1", "1/2")] {
+        let req = format!(r#"{{"name":"置く","ctx":{{"new_品_id":"A"}},"input":{{"元":1000,"税率":"{}","割引":"{}"}},"store":{{}}}}"#, r1, r2);
+        println!("{:?}", call(&req));
+    }
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    a, b, c, d = r.stdout.splitlines()
+    assert a.startswith("Ok(") and '\\"価格\\":250' in a, a
+    assert b.startswith("Err(") and "分母" in b, b
+    assert c.startswith("Err(") and "分母" in c, c
+    assert d.startswith("Err(") and "範囲" in d, d
