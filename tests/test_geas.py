@@ -2833,7 +2833,7 @@ fn main() {
     assert outs[' trust assume "契約 §4"'].startswith("Ok("), outs  # 1000 × 3/2 × 1/2 = 750。範囲外の税率がそのまま通る
 
 
-# ---- raw と、型に結んだ raw から変換する convert（Strong Parameters 的な境界） ----
+# ---- raw と、型に結んだ raw から変換する convert（入力の選別を通す境界） ----
 RAW_SRC = """ltype PartNo = text 8..8 of "0-9" read part_no_reader
 ltype Plain = text 8..8 of "0-9"
 entity Item {
