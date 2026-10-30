@@ -901,15 +901,15 @@ class Checker:
     DESIGN_KEYS = {"layout": {"stack", "list", "grid", "form"}, "mode": {"light", "dark"}, "accent": None}
 
     def check_isolations(self):
-        """名前のある保存先（store 名 in 保存先）は、直列を誰が保証するか isolation で宣言する。geas は中身を知らないので、書き忘れは止める"""
+        """store 名 in 保存先 の保存先は、storage で定義する（直列を誰が保証するかを持つ）。geas は中身を知らないので、定義の漏れと余りは止める"""
         used = {d.store: d for d in self.p.data if d.store}
-        for where, d in used.items():
+        for where in used:
             if where not in self.p.isolations:
-                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"保存先「{where}」にリクエストの直列を誰が保証するか分かりません。"
-                                       f"`isolation {where} by process`（geas のサーバーがプロセスの中で直列にする）か `isolation {where} by store(種類)`（保存先が直列にする）を書いてください"))
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"保存先「{where}」が定義されていません。"
+                                       f"`storage {where} isolation process`（geas のサーバーがプロセスの中で直列にする）か `storage {where} isolation store(種類)`（保存先が直列にする）を書いてください"))
         for where, (who, kind, why, line) in self.p.isolations.items():
             if where not in used:
-                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"isolation の保存先「{where}」は、どの entity の store にも使われていません"))
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"storage「{where}」は、どの entity の store にも使われていません"))
             elif who == "store" and kind not in VERIFIED_STORES and not why.strip():
                 self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f'保存先の種類「{kind}」は geas が確かめていないので、人の保証として理由を "…" で書いてください'
                                        f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）"))
