@@ -25,6 +25,8 @@ fn e(x: rusqlite::Error) -> String {
 impl Db {
     pub fn open(path: &str, entities: Vec<String>) -> R<Db> {
         let conn = Connection::open(path).map_err(e)?;
+        // 同じファイルを使う別プロセスが書き込み中なら、失敗にせず待つ（直列の保証は SQLite の書き込みロックが担う）
+        conn.busy_timeout(std::time::Duration::from_secs(10)).map_err(e)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").map_err(e)?;
         for en in &entities {
             conn.execute_batch(&format!("CREATE TABLE IF NOT EXISTS \"{}\" (k TEXT PRIMARY KEY, v TEXT NOT NULL);", en)).map_err(e)?;

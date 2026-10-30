@@ -295,3 +295,22 @@ def test_同時に来たリクエストは直列に並べた場合と同じ結�
 def test_サーバーの単体テストが通る_汚れた_Mutex_でも続けて動く(built):
     r = subprocess.run(["cargo", "test", "--offline", "--quiet"], cwd=built / "server", capture_output=True, text=True)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_同じDBファイルを使うサーバーが2つあっても_直列に並べた場合と同じ結果になる(built, server):
+    from concurrent.futures import ThreadPoolExecutor
+
+    other = Server(built, server.db)
+    other.start()
+    try:
+        pid, _ = server.accept()
+        servers = [server, other]
+        with ThreadPoolExecutor(8) as ex:
+            codes = sorted(ex.map(lambda i: servers[i % 2].call("POST", "/cancellations", {"parcel_id": pid})[0], range(16)))
+        assert codes == [201] + [409] * 15, codes  # 待たされるだけで、「database is locked」で落ちるリクエストは無い
+        assert other.parcels()[pid]["status"] == "Canceled"
+        with ThreadPoolExecutor(8) as ex:
+            ids = list(ex.map(lambda i: servers[i % 2].accept()[0], range(24)))
+        assert len(set(ids)) == 24, ids
+    finally:
+        other.stop()
