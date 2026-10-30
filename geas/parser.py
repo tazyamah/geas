@@ -794,7 +794,19 @@ class Parser:
             f = self.name()
             if self.peek().val in ("+=", "-="):  # x.f += e は x.f = x.f + e（読む項目にも数える）。並列の枝で重なってよい可換な更新の印を残す
                 op = self.next().val
-                s = SetField(n, f, Bin(op[0], Attr(Name(n), f), self.expr()), line, op)
+                e = self.expr()
+                guard = None
+                if self.is_("saturating") or self.is_("trust"):  # saturating "理由"（範囲の端で止める）／trust assume "理由"（届かないと人が承知する）
+                    mode = self.next().val
+                    if mode == "trust":
+                        if not self.accept("assume"):
+                            raise self.err("+= と -= の trust は assume だけです（trust assume \"理由\"）")
+                        mode = "assume"
+                    why = self.next()
+                    if why.kind != "STR" or not why.val.strip():
+                        raise self.err(f'{"trust assume" if mode == "assume" else mode} には、理由を "…" で書いてください')
+                    guard = (mode, why.val)
+                s = SetField(n, f, Bin(op[0], Attr(Name(n), f), e), line, op, guard)
             else:
                 self.expect("=")
                 s = SetField(n, f, self.expr(), line)

@@ -3070,3 +3070,79 @@ fn main() {
     assert len(out) == 4 and all(o.startswith("Ok(") for o in out), out
     for o, (q, m) in zip(out, [(0, 100), (100, 0), (14, 2), (0, 100)]):
         assert f"{q}" in o and f"{m}" in o, (o, q, m)
+
+
+# ---- 足し引きの範囲を人が引き受ける：saturating（端で止める）と trust assume（届かないと承知する） ----
+ACC_SRC = """ltype Hits = int 0..1000000
+ltype Step = int 1..100
+entity Counter {
+  counter_id: id unique
+  hits: Hits required
+}
+result Done {
+  Counted
+  NoCounter
+}
+deed bump {
+  input counter_id: id required, step: Step required
+  reads Counter.hits
+  writes Counter.hits
+  result Done
+  effects none
+
+  let c = Counter[counter_id] else { return NoCounter }
+  c.hits += step
+  return Counted
+}
+nexus Flow {
+  bump: Counted → reply, NoCounter → reply
+}
+"""
+ACC_SAT = ACC_SRC.replace("c.hits += step", 'c.hits += step saturating "アクセス数は頭打ちでよい"')
+ACC_ASSUME = ACC_SRC.replace("c.hits += step", 'c.hits += step trust assume "1 件ずつ足すだけで上限には届かない"')
+
+
+def test_足し引きの範囲は_saturating_か_trust_assume_で人が引き受けるまで示せないとして止まる():
+    assert any("収まると示せません" in m for m in msgs(chk(ACC_SRC), ERROR))
+    for src, mode in ((ACC_SAT, "saturating"), (ACC_ASSUME, "assume")):
+        ck = chk(src)
+        assert ck.ready, ck.diags
+        assert ck.infos["bump"].guards == [("Counter.hits", "+=", mode, ck.infos["bump"].guards[0][3])]
+    # 理由は必須。assume 以外の trust と、= の代入には付けられない
+    with pytest.raises(ParseError, match="理由"):
+        parse(ACC_SRC.replace("c.hits += step", "c.hits += step saturating"))
+    with pytest.raises(ParseError, match="assume"):
+        parse(ACC_SRC.replace("c.hits += step", 'c.hits += step trust verify "x"'))
+    # 下限の 0 で止める -= も同じ形で書ける
+    assert chk(ACC_SAT.replace("+=", "-=")).ready
+    # 人の保証の一覧に、場所と理由つきで出る
+    rows = build(chk(ACC_SAT))["人の保証"]
+    assert rows[0][:2] == ("bump", "Counter.hits +=") and "端で止まる" in rows[0][3] and rows[0][4] == "アクセス数は頭打ちでよい"
+    assert "届くと異常" in build(chk(ACC_ASSUME))["人の保証"][0][3]
+    # 範囲の無い型（int 0..）は assume で足せる。saturating の端は保存する型の範囲
+    open_ = ACC_ASSUME.replace("ltype Hits = int 0..1000000", "ltype Hits = int 0..")
+    assert chk(open_).ready
+
+
+@needs_cargo
+def test_saturating_は端で止まり_trust_assume_は届いたら異常で止まる(tmp_path):
+    main = """use geas_app::*;
+use geas_app::host::call;
+fn main() {
+    for step in [10, 100] {
+        let req = format!(r#"{{"name":"bump","ctx":{{}},"input":{{"counter_id":"K","step":{}}},"store":{{"Counter":{{"K":{{"counter_id":"K","hits":999950}}}}}}}}"#, step);
+        println!("{:?}", call(&req));
+    }
+}
+"""
+    outs = {}
+    for name, src in (("sat", ACC_SAT), ("assume", ACC_ASSUME)):
+        ck = chk(src)
+        d = tmp_path / name
+        d.mkdir()
+        write_crate(ck, generate(ck), main, d, host=True)
+        r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=d, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-2500:]
+        outs[name] = r.stdout.splitlines()
+    assert "999960" in outs["sat"][0] and "1000000" in outs["sat"][1], outs
+    assert "999960" in outs["assume"][0] and outs["assume"][1].startswith("Err("), outs

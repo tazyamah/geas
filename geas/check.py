@@ -110,6 +110,7 @@ class ProcInfo:
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
     deletes: set = field(default_factory=set)  # delete したデータ名
+    guards: list = field(default_factory=list)  # 足し引きの範囲を人が引き受けた文：("データ.項目", 書き方, "saturating"|"assume", 理由)
 
     @property
     def reads(self) -> set:
@@ -2237,6 +2238,13 @@ class ProcChecker:
             self.set_null(data, st.f, b, not passing)
             if fld.type.kind in ("整数", "金額", "割合"):
                 iv = self.interval(st.e)
+                if st.guard is not None:
+                    if fld.type.kind == "割合" or fld.type.optional:
+                        self.d(ERROR, "範囲", f"{data}.{st.f}: {st.guard[0]} は、null にならない整数か金額の項目だけに付けられます", st.line)
+                    else:  # 人が範囲の確認を引き受けた：書く値は項目の範囲にあるとして先へ進む（saturating は端で止め、assume は外れたら異常で止まる）
+                        lo, hi = iv_of(fld.type)
+                        iv = (lo if iv[0] is None else max(iv[0], lo), hi if iv[1] is None else min(iv[1], hi))
+                        info.guards.append((f"{data}.{st.f}", st.op, *st.guard))
                 self.check_write(data, st.f, iv, st.line, bind=b)
                 self.forget(data, st.f)
                 if iv[0] is not None:
