@@ -14,7 +14,7 @@ pub enum Fault {
     Unproven(&'static str),
     /// 計算か物理型への変換があふれた
     Overflow(&'static str),
-    /// 外から足した部品の戻り値が、宣言の保証に違反した（部品名, 内容）
+    /// ライブラリの戻り値が、宣言の範囲か保証に違反した（部品名, 内容）。ライブラリの panic もここに入る
     Guarantee(&'static str, String),
     /// 範囲の宣言に反する値を書こうとした
     Range(String),

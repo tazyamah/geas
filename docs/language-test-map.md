@@ -31,7 +31,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 4. `create`・`x.f = …`・`x.f += …`・`update { … -= … }`・`delete` | ◎ | `test_behavior.py`（受注・在庫の加減算・状態の更新）、`test_delete.py` |
 | 4. 内包表記・`sum`・`is nonempty`・`let … else`・`if`・`return` | ◎ | `test_behavior.py`（在庫不足の集合・小計・存在確認）、`test_geas.py` の null 関連 |
 | 4. 金額の丸め `round(…, floor｜ceil｜half_up)`・割合×金額 | ◎ | `test_behavior.py` の「金額の丸めは指定の方向になり…」、`test_geas.py` の「組み込みの丸めは単位より近い値を返す」 |
-| 4. 割り算と余り・`convert`・`part` の保証 | ◎ | `test_geas.py` の「割り算と余りは生成コードで動く」「convert は生成コードの中で計算され…」「部品の保証は呼ぶたびに確かめ…」 |
+| 4. 割り算と余り・`convert`・`library` の保証 | ◎ | `test_geas.py` の「割り算と余りは生成コードで動く」「convert は生成コードの中で計算され…」「ライブラリの戻り値は呼ぶたびに確かめ…」「ライブラリは版を固定した依存として…」 |
 | 4. `request`（冪等キー・`for` の中の組） | ◎ | `test_behavior.py` の「…外部作用の冪等キーは回す値ごとに決まる」、お店の通し（同じ冪等キーで引き直す） |
 | 5. `rule`（上から順に最初に当てはまる行） | ◎ | `test_runtime.py` の「rule は上から順に…」。誤りは `test_rest.py` の「rule の誤りは止まる」 |
 | 5. 同時リクエストの直列化（全体の Mutex と 1 リクエスト 1 トランザクション）・汚れた Mutex | ◎ | `test_runtime.py` の「同時に来たリクエストは直列に並べた場合と同じ結果になる」「サーバーの単体テストが通る…」 |
