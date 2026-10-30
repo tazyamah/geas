@@ -3175,3 +3175,11 @@ def test_storage_は保存先を定義し_直列の担い手を持ち_人の保�
                      ("storage ExternalDb isolation store", r"\("), ("storage ExternalDb isolation process\nstorage ExternalDb isolation process", "2つ以上")):
         with pytest.raises(ParseError, match=pat):
             parse(ISO_SRC + bad + "\n")
+
+
+def test_仕様書に_entity_ごとの保存先と直列の担い手が出る():
+    ck = chk(ISO_SRC + "storage ExternalDb isolation store(sqlite)\n")
+    assert build(ck)["保存先"] == [("Stat", "ExternalDb", "保存先が直列にする（sqlite）")]
+    assert "## 保存先" in render(ck, build(ck))
+    assert "## 保存先" not in render(chk(DIV_SRC), build(chk(DIV_SRC)))
+    assert build(chk(DIV_SRC))["保存先"] == []
