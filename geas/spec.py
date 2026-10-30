@@ -158,6 +158,8 @@ def build_raw(ck: Checker) -> dict:
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
+    spec["保存先"] = [(d.name, d.store, {"process": "このアプリのプロセスの中だけ", "store": "保存先が直列にする"}[p.isolations[d.store][0]]
+                    + (f"（{p.isolations[d.store][1]}）" if p.isolations[d.store][0] == "store" else "")) for d in p.data if d.store and d.store in p.isolations]
     for where, (who, kind, why, _) in p.isolations.items():  # 直列の担い手。geas が契約の試験で確かめてある種類の保存先は、人の保証ではない
         if who == "process":
             spec["人の保証"].append((f"（保存先 {where}）", "リクエストの直列化", "このアプリのプロセスの中だけ", "geas のサーバーが直列にする（別プロセスとの関係は約束しない）", "プロセスの外は保証の対象外"))
@@ -271,6 +273,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["人の保証"]:
         out += ["", "## 人の保証（範囲の確認を、人が危険を承知で省いたもの。検査器は宣言した範囲を事実として使う）", "", "| 処理 | 入力 | 型・範囲 | 実行時の確認 | 理由 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["人の保証"]]
+    if spec["保存先"]:
+        out += ["", "## 保存先（entity を置く場所と、リクエストの直列を誰が保証するか）", "", "| データ | 保存先 | 直列の担い手 |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["保存先"]]
     if spec["削除"]:
         out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]
