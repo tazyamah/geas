@@ -117,6 +117,12 @@ python -m geas spec $F/overseas_shop.geas --plan $F/overseas_shop_plan.md > $F/o
 python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $F/overseas_shop_review.html
 ```
 
+変異検査の結果（`overseas_shop_mutation.md`）も見本として固定してあり、`.geas` を変えて崩し方や生き残りが変わったら、テストが落ちる。直したら再生成する：
+
+```sh
+python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
+```
+
 仕様書は[ユースケース][動作][仕様]の3タブ。ユースケース図の「人」は、計画書のユースケースの表に任意の「アクター」列を足すと、その名前で描く（無いときは、ユースケースを始める画面で代用）。
 
 仕様書には、答えてほしいことと件数、前の版からの変更は載せない（別の HTML）。更新のレビューでは `--diff-o 変更点.html` を足し、前の版を `--base 前のコード.geas`、または git の版なら `--base-git HEAD~1` で渡す。
