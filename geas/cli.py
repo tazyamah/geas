@@ -59,6 +59,27 @@ def run_interview(a) -> int:
     return 0
 
 
+def run_mutate(a) -> int:
+    from . import mutate
+    try:
+        if a.base:
+            base, scope = Path(a.base).read_text(), f"{Path(a.base).name} から変わった行だけ"
+        elif a.base_git:
+            base, scope = mutate.read_git(Path(a.code), a.base_git), f"git {a.base_git} から変わった行だけ"
+        else:
+            base, scope = None, "すべての行"
+        ms, why = mutate.run(a.code, base)
+    except (ParseError, LexError, ModuleError, ValueError) as e:
+        print(f"エラー: {e}", file=sys.stderr)
+        return 2
+    if why:
+        print(why, file=sys.stderr)
+        return 1
+    text = mutate.report(ms, Path(a.code).name, scope)
+    Path(a.o).write_text(text) if a.o else print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合（試作）")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -94,10 +115,17 @@ def main(argv=None) -> int:
     m.add_argument("plan")
     m.add_argument("--no-run", action="store_true", help="具体例を実行しない（静的な突合だけ）")
     m.add_argument("-o", help="結果を Markdown で書き出す")
+    mu = sub.add_parser("mutate", help="変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る（普段は走らせない。レビューの前に）")
+    mu.add_argument("code")
+    mu.add_argument("--base", help="前の版のコード。変わった行だけを崩す")
+    mu.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする。変わった行だけを崩す")
+    mu.add_argument("-o", help="結果を Markdown で書き出す")
     a = ap.parse_args(argv)
 
     if a.cmd == "interview":
         return run_interview(a)
+    if a.cmd == "mutate":
+        return run_mutate(a)
     ck = load(a.code)
     if a.cmd == "check":
         for d in ck.diags:
