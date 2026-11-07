@@ -3479,3 +3479,39 @@ fn main() {
     assert r.returncode == 0, r.stderr[-2500:]
     lines = r.stdout.splitlines()
     assert '\\"stock\\":44' in lines[0] and '\\"stock\\":1' in lines[1], lines  # 200 は 2 の冪でない（200+100 は 44）。64 は 2 の冪（1）
+
+
+# ---- 変異検査（geas mutate）：約束を 1 つ崩した版を、検査器が止めるか ----
+def test_変異検査は_不変条件を守る確認を消した版を検出する(tmp_path):
+    from geas import mutate as mt
+    f = tmp_path / "shop.geas"
+    f.write_text(CODE)
+    ms, why = mt.run(str(f))
+    assert why is None and ms
+    by = {m.before.strip(): m for m in ms if m.kind == "確認を消す"}
+    assert by["if order.total <= 0 { return ZeroTotal }"].result == mt.KILLED  # 不変条件「合計 > 0」の守り
+    assert by["if short is nonempty { return OutOfStock(short) }"].result == mt.KILLED  # 不変条件「在庫 >= 0」の守り
+    assert {m.result for m in ms} <= {mt.KILLED, mt.SURVIVED, mt.INVALID}
+    text = mt.report(ms, "shop.geas", "すべての行")
+    assert "変異検査" in text and "検出" in text
+
+
+def test_変異検査は_前の版から変わった行だけを崩し_元が通らなければ始めない(tmp_path):
+    from geas import mutate as mt
+    f = tmp_path / "shop.geas"
+    f.write_text(CODE)
+    line = "  if order.total <= 0 { return ZeroTotal }\n"
+    base = CODE.replace(line, "  if order.total < 0 { return ZeroTotal }\n")  # この 1 行だけが変わった
+    ms, _ = mt.run(str(f), base)
+    assert ms and {m.before.strip() for m in ms} == {line.strip()}
+    f.write_text(CODE.replace(line, ""))  # 元の版が不変条件を示せない
+    ms, why = mt.run(str(f))
+    assert ms == [] and "始めません" in why
+
+
+def test_変異検査のコマンドは_結果を書き出す(tmp_path):
+    from geas.cli import main
+    f, out = tmp_path / "shop.geas", tmp_path / "m.md"
+    f.write_text(CODE)
+    assert main(["mutate", str(f), "-o", str(out)]) == 0
+    assert out.read_text().startswith("# 変異検査")

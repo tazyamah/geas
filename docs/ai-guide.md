@@ -49,6 +49,7 @@ python -m geas check アプリ.geas                       # 検査。エラー�
 python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
+python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束
 python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--seed 最初のデータ.json] [--server URL]
 python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
 ```
@@ -133,6 +134,7 @@ python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
 | `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
 | `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
+| `mutate.py` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
 | `modules.py` | `use`／`module` |
 | `names.py` | 名前の規則と表示名の検査 |
 | `cli.py` | コマンド |
