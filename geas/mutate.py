@@ -21,6 +21,8 @@ KILLED, SURVIVED, INVALID = "検出", "生き残り", "対象外"
 GUARD = re.compile(r"^(\s*)if .+ \{ return [^{}]*\}\s*(//.*)?$")  # 1 行で書いた確認（満たさなければ結果を返す）
 THRESHOLD = re.compile(r"^(\s*if [\w.]+ (?:>|>=) )(\d+)( \{ return .*)$")  # 上限の確認：数を緩める
 TRANSITION = re.compile(r"^\s*transition .+$")
+LTYPE_RANGE = re.compile(r"^(\s*ltype \w+ = (?:int|money\([\w]+\)) -?\d+\.\.)(\d+)(.*)$")  # 整数・金額の範囲の上限
+LTYPE_MAX = re.compile(r"^(\s*ltype \w+ = .* max )(\d+)(.*)$")  # 写像の要素数の上限
 REQUIRED = re.compile(r"^(.*\w+: [^,/\n]*?) required\b(.*)$")
 
 
@@ -50,6 +52,12 @@ def mutants_of(text: str, only: set[int] | None = None) -> list[Mutant]:
         if m:  # 上限の確認を緩める（10 倍と 1000 足しのうち、桁が大きいほう。範囲の外へ出す）
             n = int(m.group(2))
             out.append(Mutant(i, "上限の確認を緩める", line, f"{m.group(1)}{n * 10 + 1000}{m.group(3)}"))
+        m = LTYPE_RANGE.match(line)
+        if m and int(m.group(2)) >= 10:  # 範囲の上限を 1/10 に狭める。上限の確認（if x > N …）が、範囲に収まる根拠なら、示せなくなって止まるはず
+            out.append(Mutant(i, "範囲の上限を狭める", line, f"{m.group(1)}{int(m.group(2)) // 10}{m.group(3)}"))
+        m = LTYPE_MAX.match(line)
+        if m:  # 要素数の上限を 10 倍に広げる。合計などの桁が、上限から示されていれば、示せなくなって止まるはず
+            out.append(Mutant(i, "要素数の上限を広げる", line, f"{m.group(1)}{int(m.group(2)) * 10}{m.group(3)}"))
         if GUARD.match(line):
             out.append(Mutant(i, "確認を消す", line, None))
         elif TRANSITION.match(line):

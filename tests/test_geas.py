@@ -3515,3 +3515,13 @@ def test_変異検査のコマンドは_結果を書き出す(tmp_path):
     f.write_text(CODE)
     assert main(["mutate", str(f), "-o", str(out)]) == 0
     assert out.read_text().startswith("# 変異検査")
+
+
+def test_お店アプリの変異検査の結果は_コミットした見本と一致する(tmp_path):
+    """崩した版が増えた・生き残りが変わったときに落とす（CI で全件を回す代わり。検査は速いので毎回回せる）。
+    直したときは、`python -m geas mutate tests/fixtures/overseas_shop/overseas_shop.geas -o tests/fixtures/overseas_shop/overseas_shop_mutation.md` で作り直す"""
+    from geas import mutate as mt
+    f = Path("tests/fixtures/overseas_shop/overseas_shop.geas")
+    ms, why = mt.run(str(f))
+    assert why is None
+    assert mt.report(ms, f.name, "すべての行") == Path("tests/fixtures/overseas_shop/overseas_shop_mutation.md").read_text(encoding="utf-8")
