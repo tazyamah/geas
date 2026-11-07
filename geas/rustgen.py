@@ -82,8 +82,12 @@ pub fn half_up(x: Ratio) -> Result<i128, Fault> {
     let n = x.num.checked_mul(2).and_then(|n| n.checked_add(x.den)).ok_or(Fault::Overflow("四捨五入"))?;
     Ok(n.div_euclid(x.den.checked_mul(2).ok_or(Fault::Overflow("四捨五入"))?))
 }
+/// 範囲の判定（真偽だけ。文言を組み立てないので、Kani で証明できる。`lo <= x <= hi` と同値）
+pub fn range_ok(x: i128, lo: Option<i128>, hi: Option<i128>) -> bool {
+    !(lo.map_or(false, |l| x < l) || hi.map_or(false, |h| x > h))
+}
 pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
-    if lo.map_or(false, |l| x < l) || hi.map_or(false, |h| x > h) {
+    if !range_ok(x, lo, hi) {
         return Err(format!("{}={} は範囲外", name, x));
     }
     Ok(())
@@ -112,9 +116,13 @@ pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
     format!("[{}]", q.join(","))
 }
-pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+/// 割合の判定（真偽だけ。通れば、分母は 1 以上 RATIO_DEN_MAX 以下）
+pub fn ratio_ok(x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> bool {
     let (lo, hi) = (lo.unwrap_or(-RATIO_VAL_MAX), hi.unwrap_or(RATIO_VAL_MAX));
-    if x.den <= 0 || x.den > RATIO_DEN_MAX || x.num < lo.saturating_mul(x.den) || x.num > hi.saturating_mul(x.den) {
+    !(x.den <= 0 || x.den > RATIO_DEN_MAX || x.num < lo.saturating_mul(x.den) || x.num > hi.saturating_mul(x.den))
+}
+pub fn check_ratio(name: &str, x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> Result<(), String> {
+    if !ratio_ok(x, lo, hi) {
         return Err(format!("{}={}/{} は範囲外", name, x.num, x.den));
     }
     Ok(())
