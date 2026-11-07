@@ -50,6 +50,7 @@ python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕�
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
 python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束
+python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
 python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--seed 最初のデータ.json] [--server URL]
 python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
 ```
