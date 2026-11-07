@@ -3525,3 +3525,11 @@ def test_お店アプリの変異検査の結果は_コミットした見本と�
     ms, why = mt.run(str(f))
     assert why is None
     assert mt.report(ms, f.name, "すべての行") == Path("tests/fixtures/overseas_shop/overseas_shop_mutation.md").read_text(encoding="utf-8")
+
+
+def test_前置きの範囲と割合の確認は_判定と文言に分かれている():
+    """判定（真偽だけ）は文言を組み立てないので、Kani で証明できる。check_* はそれを呼ぶだけ"""
+    src = generate(chk(trust_src("")))
+    assert "pub fn range_ok(x: i128, lo: Option<i128>, hi: Option<i128>) -> bool" in src
+    assert "pub fn ratio_ok(x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> bool" in src
+    assert "if !range_ok(x, lo, hi) {" in src and "if !ratio_ok(x, lo, hi) {" in src
