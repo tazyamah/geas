@@ -341,6 +341,15 @@ flowchart LR
 | Product: stock >= 0 | place_order: 対象外／request_payment: 対象外／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（減算の前に不足を確認している）／cancel_unpaid: 対象外／refund_and_cancel: 対象外／recheck_payment: 対象外／expire_order: 対象外／restock_product: 証明済み（書く値は 0 以上）／withdraw_product: 対象外 |
 | Order: status == PaymentRequested なら total > 0 | place_order: 証明済み（新規作成はPaymentRequested以外）／request_payment: 証明済み（PaymentRequestedにする前に total > 0 を確認している）／request_stock_hold: 対象外／grant_campaign_points: 対象外／grant_points: 対象外／settle_order: 対象外／complete_order: 証明済み（PaymentRequested以外にする）／cancel_unpaid: 証明済み（PaymentRequested以外にする）／refund_and_cancel: 証明済み（PaymentRequested以外にする）／recheck_payment: 対象外／expire_order: 証明済み（PaymentRequested以外にする）／restock_product: 対象外／withdraw_product: 対象外 |
 
+## 保証の強さ（約束ごとに、何が守っているか。上ほど強く、下の行ほど人が重点的に読む）
+
+件数：検査器が示した 2
+
+| 強さ | 対象 | 内容 |
+|---|---|---|
+| 検査器が示した | 不変条件 | 商品: 在庫 >= 0 |
+| 検査器が示した | 不変条件 | 注文: 状態 == 決済要求済 なら 合計 > 0 |
+
 ## 指定事項（コードに書かれた、既定でない指定）
 
 | 項目 | ◆指定 |

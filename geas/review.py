@@ -696,7 +696,7 @@ draw();
 
 
 CHANGE_KEYS = [("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
-               ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存先", "保存先"), ("人の保証", "人の保証"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
+               ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存先", "保存先"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
 
 
 def _row_text(x) -> str:
@@ -880,6 +880,11 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         rules += "<h3>slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値）</h3>" + table(["slot", "条件", "値"], spec["決め方"])
     rules += "<h3>いつでも成り立つこと（不変条件）</h3>" + table(["内容", "検査の結果"], [(t, "／".join(f"{a}: {b}" for a, b in rows)) for t, rows in ck.invariant_status])
     add("rules", "決まりごと", rules)
+    if spec["保証の強さ"]:
+        from .spec import level_counts
+        add("levels", "保証の強さ", lead("約束ごとに、何が守っているかです。上ほど強く、下の行ほど人が重点的に読む対象です。")
+            + lead("件数：" + "、".join(f"{lv} {n}" for lv, n in level_counts(spec["保証の強さ"])))
+            + table(["強さ", "対象", "内容"], spec["保証の強さ"]))
 
     for dname in dict.fromkeys(d for d, *_ in spec["遷移"]):
         add(f"states-{dname}", f"状態の移り変わり：{dname}", state_machine(spec, dname))
@@ -933,7 +938,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         ("overview", "概要", ["overview", "usage"]),
         ("screens", "画面（流れ・一覧・デザイン・確認の網羅）", ["screens", "design", "coverage"]),
         ("data", "データと状態", ["data"] + [a for a in by_id if a.startswith("states-")]),
-        ("rules", "決まりごと（処理・問い合わせ・不変条件）", ["rules", "trusts"]),
+        ("rules", "決まりごと（処理・問い合わせ・不変条件）", ["rules", "levels", "trusts"]),
         ("systems", "外部とのつながり", ["systems"]),
         ("flows", "処理の流れ", [a for a in by_id if a.startswith("flow-")]),
         ("triggers", "待ち・期限・出来事・削除", ["triggers", "deletes"]),

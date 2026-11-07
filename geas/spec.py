@@ -184,10 +184,49 @@ def build_raw(ck: Checker) -> dict:
             spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}", show_type(pt.ret),
                                   {"check": "戻り値を毎回確かめる", "verify": "戻り値を検証ビルドだけ確かめる", "assume": "戻り値を確かめない"}[level]
                                   + "（panic は異常で止まる。無限ループ・メモリ枯渇は防げない）", why))
+    spec["保証の強さ"] = guarantee_levels(ck, spec)
     spec["指定"] = [(f"{x['処理']}.丸め", f"{SHOW_JA.get(m, m)}({SHOW_JA.get(u, u)})") for x in procs for m, u in x["丸め"]]
     spec["名前"] = [(n, " / ".join(f"{k or '既定'}: {v}" for k, v in ls.items())) for n, ls in p.labels.items()]
     spec["実現"] = [(f"{d.name}.{f.name}", phys(f.type)) for d in p.data for f in d.fields if f.type.kind in ("整数", "金額")]
     return spec
+
+
+# 保証の強さ（強い順）。GitHub Next の PDD Kit が結果に「証明」か「テスト」かのラベルを付けるのに倣い、
+# 約束ごとに「何が守っているか」を 1 つの表にする（人は、強さが弱い行だけを重点的に読めばよい）
+LEVEL_PROVEN = "検査器が示した"
+LEVEL_RUNTIME = "実行時に毎回確かめる"
+LEVEL_VERIFY = "検証ビルドだけ確かめる"
+LEVEL_STOP = "範囲の端で止まる（人の保証）"
+LEVEL_TRUST = "確かめない（人の保証）"
+LEVEL_NOT = "示せていない"
+LEVELS = [LEVEL_PROVEN, LEVEL_RUNTIME, LEVEL_VERIFY, LEVEL_STOP, LEVEL_TRUST, LEVEL_NOT]
+
+
+def level_of_check(text: str) -> str:
+    """人の保証の表の「実行時の確認」の文言から、保証の強さを決める"""
+    if "範囲の端で止まる" in text:
+        return LEVEL_STOP
+    if "毎回確かめる" in text:
+        return LEVEL_RUNTIME
+    if "検証ビルドだけ" in text:
+        return LEVEL_VERIFY
+    return LEVEL_TRUST
+
+
+def guarantee_levels(ck: Checker, spec: dict) -> list[tuple[str, str, str]]:
+    """(強さ, 対象, 内容)。不変条件は検査器が示せたか、人の保証の行は実行時にどこまで確かめるかで分ける"""
+    rows = []
+    for text, st in ck.invariant_status:
+        ok = all(s.startswith("証明済み") or s == "対象外" for _, s in st)
+        rows.append((LEVEL_PROVEN if ok else LEVEL_NOT, "不変条件", text))
+    for who, target, typ, check, why in spec["人の保証"]:
+        rows.append((level_of_check(check), f"{who} {target}", f"{typ}：{check}（理由：{why}）"))
+    rank = {x: i for i, x in enumerate(LEVELS)}
+    return sorted(rows, key=lambda r: rank[r[0]])  # 弱いものほど下に集まる。同じ強さの中は宣言の順
+
+
+def level_counts(rows) -> list[tuple[str, int]]:
+    return [(lv, sum(1 for r in rows if r[0] == lv)) for lv in LEVELS if any(r[0] == lv for r in rows)]
 
 
 def flow_diagram(fl) -> list[str]:
@@ -293,6 +332,11 @@ def render(ck: Checker, spec: dict, name="") -> str:
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")
+    if spec["保証の強さ"]:
+        out += ["", "## 保証の強さ（約束ごとに、何が守っているか。上ほど強く、下の行ほど人が重点的に読む）", "",
+                "件数：" + "、".join(f"{lv} {n}" for lv, n in level_counts(spec["保証の強さ"])), "",
+                "| 強さ | 対象 | 内容 |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["保証の強さ"]]
     if spec["部品"]:
         out += ["", "## 部品（外から足す。呼ぶたびに、戻り値が保証に合うかを確かめる）", "", "| 部品 | ◆引数 | ◆戻り値 | ◆保証 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["部品"]]

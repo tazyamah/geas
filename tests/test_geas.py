@@ -2841,6 +2841,23 @@ def test_trust_の段階に応じて境界の確認が変わり_仕様書に人�
     assert build(chk(trust_src("")))["人の保証"] == []
 
 
+def test_保証の強さは_人の保証の段階ごとに_弱い順に仕様書へ出る():
+    assert build(chk(trust_src("")))["保証の強さ"] == []  # 何も緩めていなければ、人の保証の行は無い
+    for level, label in [("verify", "検証ビルドだけ確かめる"), ("assume", "確かめない（人の保証）")]:
+        sp = build(chk(trust_src(f' trust {level} "契約 §4"')))
+        assert [(r[0], r[1]) for r in sp["保証の強さ"]] == [(label, "put_item tax_rate")]
+        assert "契約 §4" in sp["保証の強さ"][0][2]
+        assert "## 保証の強さ" in render(chk(trust_src(f' trust {level} "契約 §4"')), sp)
+
+
+def test_保証の強さは_検査器が示した不変条件と_人の保証を強い順に並べる():
+    ck = check(parse(Path("tests/fixtures/overseas_shop/overseas_shop.geas").read_text(encoding="utf-8")))
+    rows = build(ck)["保証の強さ"]
+    assert rows and rows[0][0] == "検査器が示した" and ("検査器が示した", "不変条件") == rows[0][:2]
+    order = ["検査器が示した", "実行時に毎回確かめる", "検証ビルドだけ確かめる", "範囲の端で止まる（人の保証）", "確かめない（人の保証）", "示せていない"]
+    assert [order.index(r[0]) for r in rows] == sorted(order.index(r[0]) for r in rows)
+
+
 @needs_cargo
 def test_trust_assume_は範囲外を通し_既定は止める(tmp_path):
     main = """use geas_app::*;
