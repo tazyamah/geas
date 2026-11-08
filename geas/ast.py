@@ -270,6 +270,7 @@ class Program:
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     isolations: dict = field(default_factory=dict)  # 保存先の名前 → (process|store, 種類, 理由, 行)。リクエストの直列を誰が保証するか（`isolation 保存先 by …`）
+    needs: list = field(default_factory=list)  # アプリが環境に要求すること（`needs secret|exposure|instances …`）。(種類, 対象, 値, 理由, 行)
     title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う
     tz_offset: int = 0  # アプリの標準のタイムゾーン：UTC からのずれ（秒）。`timezone +09:00` で宣言する。書かなければ UTC
     labels: dict = field(default_factory=dict)  # 名前 → {言語: 表示名}。説明コメント（///）から。仕様書の表示だけに使い、意味は変えない

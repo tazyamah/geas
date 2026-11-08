@@ -160,6 +160,8 @@ def build_raw(ck: Checker) -> dict:
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
     spec["保存先"] = [(d.name, d.store, {"process": "このアプリのプロセスの中だけ", "store": "保存先が直列にする"}[p.isolations[d.store][0]]
                     + (f"（{p.isolations[d.store][1]}）" if p.isolations[d.store][0] == "store" else "")) for d in p.data if d.store and d.store in p.isolations]
+    from . import envreq
+    spec["動かす前提"] = envreq.rows(p)
     for where, (who, kind, why, _) in p.isolations.items():  # 直列の担い手。geas が契約の試験で確かめてある種類の保存先は、人の保証ではない
         if who == "process":
             spec["人の保証"].append((f"（保存先 {where}）", "リクエストの直列化", "このアプリのプロセスの中だけ", "geas のサーバーが直列にする（別プロセスとの関係は約束しない）", "プロセスの外は保証の対象外"))
@@ -323,6 +325,10 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["保存先"]:
         out += ["", "## 保存先（entity を置く場所と、リクエストの直列を誰が保証するか）", "", "| データ | 保存先 | 直列の担い手 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["保存先"]]
+    if spec["動かす前提"]:
+        out += ["", "## 動かす前提（アプリが実行環境に要求すること。環境の実際は書かず、plan や実環境から読んで照合する。照合する器はまだ無いので、いまはどの行も人が確かめる）", "",
+                "| 番号 | 観点 | 要求 | 由来 | 確かめ方 |", "|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["動かす前提"]]
     if spec["削除"]:
         out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]

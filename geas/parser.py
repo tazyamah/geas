@@ -230,6 +230,8 @@ class Parser:
                         why = self.next().val
                 p.isolations[where] = (who, kind, why, line)
                 self.end_line()
+            elif kw == "needs":  # needs secret 外部.名前 "理由" ／ needs exposure public|internal "理由" ／ needs instances at_most N "理由"：アプリが環境に要求すること
+                p.needs.append(self.needs_decl(line))
             else:
                 raise ParseError(f"未知の定義「{kw}」です", line)
             self.skip_nl()
@@ -242,6 +244,36 @@ class Parser:
         self.apply_stores(p, stores)
         self.add_sync_state(p)
         return p
+
+    def needs_decl(self, line):
+        """needs の 1 行。(種類, 対象, 値, 理由, 行)。環境の実際は書かず、アプリが成り立つ条件だけを書く。理由は必須（仕様書の「動かす前提」に出る）"""
+        usage = ('needs は `needs secret 外部.名前 "理由"`、`needs exposure public "理由"`（または internal）、'
+                 '`needs instances at_most N "理由"` のどれかで書きます')
+        t = self.peek()
+        kind = self.name() if t.kind == "NAME" else ""
+        target, value = "", ""
+        if kind == "secret":
+            target = self.dotted()
+        elif kind == "exposure":
+            value = self.name()
+            if value not in ("public", "internal"):
+                raise ParseError("exposure のあとには public（インターネットに公開してよい）か internal（公開しない）を書きます", line)
+        elif kind == "instances":
+            if not self.accept("at_most"):
+                raise ParseError('instances は `needs instances at_most N "理由"` と書きます（同時に動くサーバーの数の上限）', line)
+            n = self.peek()
+            if n.kind != "NUM" or not n.val.isdigit() or int(n.val) < 1:
+                raise ParseError("at_most のあとには 1 以上の整数を書きます", line)
+            self.i += 1
+            value = int(n.val)
+        else:
+            raise ParseError(usage, line)
+        w = self.peek()
+        if w.kind != "STR" or not w.val.strip():
+            raise ParseError(f'needs {kind} には理由が要ります（行末に "理由" を書きます）。' + usage, line)
+        self.i += 1
+        self.end_line()
+        return kind, target, value, w.val, line
 
     def store_decl(self, line):
         """store データ名 in 保存先：データの保存先。データの宣言とは別に、要件に応じて書く（書かなければ保存しない）"""

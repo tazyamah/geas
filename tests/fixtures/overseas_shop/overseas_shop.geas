@@ -797,3 +797,7 @@ resource ProductPrices key jan {
 resource Reconnections {
   create Reconnected
 }
+
+// 動かす前提：アプリが実行環境に要求すること（環境の実際は書かない）
+needs exposure public "海外のお客さんがブラウザから買う"
+needs secret Payment.api_key "決済事業者の API 鍵"
