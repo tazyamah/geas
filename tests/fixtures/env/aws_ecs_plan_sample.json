@@ -1,0 +1,62 @@
+{
+  "_注意": "手書きの見本。terraform が使えなかったので、公開されているスキーマの知識から書いた。実物の plan とは未照合。",
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "aws_ecs_service.app", "type": "aws_ecs_service", "name": "app",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "desired_count": 2,
+          "deployment_maximum_percent": 200,
+          "deployment_minimum_healthy_percent": 100,
+          "launch_type": "FARGATE",
+          "network_configuration": [{"assign_public_ip": false, "security_groups": null, "subnets": null}]
+        },
+        "after_unknown": {"id": true, "task_definition": true, "network_configuration": [{"security_groups": true, "subnets": true}]}
+      }
+    },
+    {
+      "address": "aws_appautoscaling_target.app", "type": "aws_appautoscaling_target", "name": "app",
+      "change": {"actions": ["create"], "after": {"min_capacity": 2, "max_capacity": 6, "service_namespace": "ecs"}}
+    },
+    {
+      "address": "aws_ecs_task_definition.app", "type": "aws_ecs_task_definition", "name": "app",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "container_definitions": "[{\"name\":\"app\",\"image\":\"example/app:1\",\"portMappings\":[{\"containerPort\":8787}],\"secrets\":[{\"name\":\"PAYMENT_API_KEY\",\"valueFrom\":\"arn:aws:secretsmanager:ap-northeast-1:123456789012:secret:payment-api-key\"}],\"environment\":[{\"name\":\"RUST_LOG\",\"value\":\"info\"}]}]",
+          "volume": []
+        }
+      }
+    },
+    {
+      "address": "aws_security_group.app", "type": "aws_security_group", "name": "app",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "ingress": [{"from_port": 8787, "to_port": 8787, "protocol": "tcp", "cidr_blocks": ["10.0.0.0/16"], "security_groups": []}],
+          "egress": [{"from_port": 443, "to_port": 443, "protocol": "tcp", "cidr_blocks": ["0.0.0.0/0"]}]
+        }
+      }
+    },
+    {
+      "address": "aws_lb.front", "type": "aws_lb", "name": "front",
+      "change": {"actions": ["create"], "after": {"internal": false, "idle_timeout": 60, "load_balancer_type": "application"}}
+    },
+    {
+      "address": "aws_lb_listener.https", "type": "aws_lb_listener", "name": "https",
+      "change": {"actions": ["create"], "after": {"port": 443, "protocol": "HTTPS"}}
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {"address": "aws_ecs_service.app", "expressions": {"task_definition": {"references": ["aws_ecs_task_definition.app.arn", "aws_ecs_task_definition.app"]},
+          "network_configuration": [{"security_groups": {"references": ["aws_security_group.app.id", "aws_security_group.app"]}}]}},
+        {"address": "aws_appautoscaling_target.app", "expressions": {"resource_id": {"references": ["aws_ecs_service.app.name", "aws_ecs_service.app"]}}}
+      ]
+    }
+  }
+}

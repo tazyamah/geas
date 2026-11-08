@@ -37,7 +37,7 @@ PDD Kit は「AI が書いたコードを、一行ずつ読まずに信頼する
 
 ## 実行環境（動かす前提）
 
-方針の記録は、project のメモリ（geas-environment-direction）。geas は Terraform や Ansible を置き換えず、アプリが環境に要求することだけを宣言し、環境の実際は plan と実環境から読んで照合する。**済み**：`needs`（secret・exposure・instances）、導出する項目、`geas env-checks [--json]`、仕様書とレビュー画面の「動かす前提」の節。**未着手**：`terraform plan` の JSON との照合器、実環境の検査項目への変換器（goss を第一候補、番号つきの一覧から作る）、サーバー起動時の自己点検（シークレットが無ければ起動を拒否）、更新時の同時最大数の照合、「保証の強さ」への「環境が担う」の行、レシートへの環境の要求の増減。
+方針の記録は、project のメモリ（geas-environment-direction）。geas は Terraform や Ansible を置き換えず、アプリが環境に要求することだけを宣言し、環境の実際は plan と実環境から読んで照合する。**済み**：`needs`（secret・exposure・instances）、導出する項目、`geas env-checks [--json]`、仕様書とレビュー画面の「動かす前提」の節、中立な事実のスキーマと照合器（`geas env-verify`、判定は合格・不合格・確かめられなかった・人の保証）、aws-ecs のアダプタ（`geas env-facts`。見本の plan は手書きで、**実物の `terraform show -json` とは未照合**）。**未着手**：実物の plan での確かめ、ほかのプラットフォームのアダプタ（k8s、Cloud Run など）、子モジュールの中のリソースの読み取り、シークレットの名前を環境の変数名に結ぶ取り決め（いまの secret は常に「確かめられなかった」）、実環境の検査項目への変換器（goss を第一候補、「条件」つきの一覧から作る）、サーバー起動時の自己点検（シークレットが無ければ起動を拒否）、「保証の強さ」への「環境が担う」の行、レシートへの環境の要求の増減、sqlite を共有ファイルシステムに置く構成の検出。
 
 ## AIネイティブ開発ガイド（OpenAI）との比較から取り込んだもの
 
