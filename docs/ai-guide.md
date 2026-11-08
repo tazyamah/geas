@@ -48,7 +48,9 @@ python -m pytest tests                                                # テス�
 ```sh
 python -m geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを出す。終了コードは、エラーがあれば 1。--json は、指摘ごとに hint（見る節と直し方）を付けた JSON（構文エラーは終了コード 2）
 python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
-python -m geas env-checks アプリ.geas [--json]              # 動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す。plan や実環境と照合する器はまだ無い
+python -m geas env-checks アプリ.geas [--json]              # 動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す。照合は env-verify
+python -m geas env-facts plan.json [--adapter aws-ecs] [--service アドレス]   # terraform show -json の出力から、環境の事実（クラウドに依存しない形）を作る。読めなかった事実は null
+python -m geas env-verify アプリ.geas (--plan plan.json | --facts 事実.json) [--strict] [--json]   # 動かす前提と環境の事実を照合。不合格があれば終了コード 1（--strict は「確かめられなかった」も 1）
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
 python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [--run --plan 計画書.md] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束（`--run --plan` を付けると、生き残りを計画書の具体例でも確かめ、食い違えば「具体例で検出」にする。Rust をビルドするので遅い）

@@ -160,6 +160,63 @@ def run_bench_cmd(a) -> int:
     return 0 if all(s.passed for s in scores) else 1
 
 
+def _facts_from_plan(a):
+    """--plan の JSON をアダプタで事実にする。(事実, メモ) か、エラーなら (None, メッセージ)"""
+    import json
+    from .adapters import ADAPTERS
+    if a.adapter not in ADAPTERS:
+        return None, f"アダプタ「{a.adapter}」はありません（ある：{'・'.join(ADAPTERS)}）"
+    try:
+        plan = json.loads(Path(a.plan).read_text())
+    except (OSError, ValueError) as e:
+        return None, f"plan を読めません: {e}"
+    return ADAPTERS[a.adapter].facts_from_plan(plan, a.service), None
+
+
+def run_env_facts(a) -> int:
+    import json
+    got, err = _facts_from_plan(a)
+    if got is None:
+        print(err, file=sys.stderr)
+        return 2
+    facts, notes = got
+    print(json.dumps({"facts": facts, "notes": notes}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def run_env_verify(a, ck) -> int:
+    import json
+    from . import envcheck, envreq
+    if not ck.ok:
+        for d in ck.diags:
+            print(d, file=sys.stderr)
+        print("検査: エラーがあります（直してから照合してください）", file=sys.stderr)
+        return 1
+    notes: list = []
+    if a.facts:
+        try:
+            facts = json.loads(Path(a.facts).read_text())
+            facts = facts.get("facts", facts)
+        except (OSError, ValueError) as e:
+            print(f"事実を読めません: {e}", file=sys.stderr)
+            return 2
+    else:
+        got, err = _facts_from_plan(a)
+        if got is None:
+            print(err, file=sys.stderr)
+            return 2
+        facts, notes = got
+    results = envcheck.verify(envreq.items(ck.p), facts)
+    if a.json:
+        print(json.dumps({"results": results, "counts": envcheck.counts(results), "notes": notes}, ensure_ascii=False, indent=2))
+    else:
+        print(envcheck.to_text(results), end="")
+        for n in notes:
+            print(f"メモ：{n}")
+    c = envcheck.counts(results)
+    return 1 if c[envcheck.FAIL] or (a.strict and c[envcheck.UNKNOWN]) else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合（試作）")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -179,6 +236,19 @@ def main(argv=None) -> int:
     ev = sub.add_parser("env-checks", help="動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す")
     ev.add_argument("code")
     ev.add_argument("--json", action="store_true", help="JSON で出す（plan の照合器や、検査ツールへの変換器が読む）")
+    ef = sub.add_parser("env-facts", help="plan（terraform show -json の出力）から、環境の事実（プラットフォームに依存しない形）を作る")
+    ef.add_argument("plan", help="terraform show -json の出力")
+    ef.add_argument("--adapter", default="aws-ecs", help="プラットフォームのアダプタ（いまは aws-ecs）")
+    ef.add_argument("--service", default="", help="アプリの ECS サービスのアドレス（サービスが複数あるとき）")
+    ev2 = sub.add_parser("env-verify", help="動かす前提（env-checks の一覧）と、環境の事実を照合する。不合格があれば終了コード 1")
+    ev2.add_argument("code")
+    src = ev2.add_mutually_exclusive_group(required=True)
+    src.add_argument("--facts", help="環境の事実の JSON（env-facts の出力）")
+    src.add_argument("--plan", help="terraform show -json の出力（アダプタで事実にしてから照合する）")
+    ev2.add_argument("--adapter", default="aws-ecs")
+    ev2.add_argument("--service", default="")
+    ev2.add_argument("--json", action="store_true", help="結果を JSON で出す")
+    ev2.add_argument("--strict", action="store_true", help="「確かめられなかった」も、終了コード 1 にする")
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
     v.add_argument("code")
     v.add_argument("--plan", help="計画書（①）")
@@ -236,6 +306,8 @@ def main(argv=None) -> int:
         return run_trace(a)
     if a.cmd == "bench":
         return run_bench_cmd(a)
+    if a.cmd == "env-facts":
+        return run_env_facts(a)
     if a.cmd == "check" and a.json:
         from .hints import syntax_json
         try:
@@ -254,6 +326,8 @@ def main(argv=None) -> int:
             print(d)
         print("検査: " + ("通りました" if ck.ok else "エラーがあります"))
         return 0 if ck.ok else 1
+    if a.cmd == "env-verify":
+        return run_env_verify(a, ck)
     if a.cmd == "env-checks":
         from . import envreq
         if not ck.ok:

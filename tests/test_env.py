@@ -86,7 +86,7 @@ def test_公開する口があるアプリは_公開範囲を書かないと警�
 def test_仕様書に動かす前提の節が出て_行は一覧と同じ():
     ck = chk(SHOP + '\nneeds secret Payment.api_key "決済事業者の API 鍵"\n')
     md = render(ck, build(ck))
-    assert "## 動かす前提" in md and "secret.決済.api_key" in md and "照合する器はまだ無い" in md  # 名前は表示名に置き換わって出る
+    assert "## 動かす前提" in md and "secret.決済.api_key" in md and "env-verify" in md  # 名前は表示名に置き換わって出る
     assert [r[0] for r in build(ck)["動かす前提"]] == [ck.p.show_names(x["id"]) for x in items(ck.p)]  # 仕様書は表示名、一覧（JSON）はコードの名前
 
 
@@ -97,7 +97,7 @@ def test_env_checks_は_JSON_で一覧を出し_検査のエラーがあれば�
     assert r.returncode == 0, r.stderr
     j = json.loads(r.stdout)
     assert [x["id"] for x in j["items"]] == ["instances", "durable.default", "reach.Payment", "secret.Payment.api_key"]
-    assert set(j["items"][0]) == {"id", "観点", "要求", "由来", "確かめ方", "環境の事実", "人の保証", "理由"}
+    assert set(j["items"][0]) == {"id", "観点", "要求", "由来", "確かめ方", "環境の事実", "人の保証", "理由", "条件"}
     t = subprocess.run([sys.executable, "-m", "geas", "env-checks", str(f)], capture_output=True, text=True, cwd=ROOT)
     assert "secret.Payment.api_key（機密）" in t.stdout
     f.write_text(SHOP + '\nneeds secret Shipping.api_key "x"\n')
