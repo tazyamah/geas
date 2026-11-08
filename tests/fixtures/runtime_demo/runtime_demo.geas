@@ -189,6 +189,27 @@ deed mark_refunded {
   return Marked
 }
 
+deed ask_nudge {
+  input parcel_id: id required
+  reads Parcel
+  result RefundAsk
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  return Asked
+}
+
+deed nudge {
+  input parcel_id: id required
+  reads Parcel
+  result RefundMark
+  effects Courier.send
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  request Courier.send(parcel_id, idempotency_key = parcel_id)
+  return Marked
+}
+
 deed recheck {
   input parcel_id: id required
   reads Parcel.fee, Parcel.status
@@ -234,6 +255,10 @@ trigger RefundPending(parcel_id: id) {
   deadline now + 10 min → mark_refunded
 }
 
+trigger Nudge(parcel_id: id) {
+  deadline now + 10 min → nudge
+}
+
 trigger Pending(parcel_id: id) {
   all reply PaySettled, DepotSettled → settle
   deadline now + 30 min → expire
@@ -255,6 +280,11 @@ nexus Settlement {
 nexus Refund {
   ask_refund: Asked → wait RefundPending, NoParcel → reply
   mark_refunded: Marked → reply, NoParcel → reply
+}
+
+nexus Nudging {
+  ask_nudge: Asked → wait Nudge, NoParcel → reply
+  nudge: Marked → reply, NoParcel → reply
 }
 
 nexus Removal {
@@ -299,6 +329,13 @@ resource ParcelDetails under Parcels {
 
 resource RefundRequests {
   create ask_refund {
+    Asked → 201
+    NoParcel → 404
+  }
+}
+
+resource NudgeRequests {
+  create ask_nudge {
     Asked → 201
     NoParcel → 404
   }
