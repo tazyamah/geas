@@ -15,7 +15,8 @@ Chrome 拡張 ────┘                  │
 ```sh
 ./build.sh                         # Geas から Rust・画面・拡張・サーバーの実行部を作り、サーバーをビルドする
 cd generated/server
-./target/release/geas_server   # http://localhost:8787/ （--port --db --pwa --dev --seed で変えられる）
+./target/release/geas_server   # http://localhost:8787/ （--port --db --pwa --seed で変えられる）
+./target/release/geas_server --test   # 開発用の模擬操作パネル（/test.html）とテスト用の口も開く。公開するサーバーには付けない
 ```
 
 - 画面：ブラウザで `http://localhost:8787/` を開く。Chrome のアドレスバーの「インストール」で、アプリとして入れられる（PWA）。
@@ -29,13 +30,13 @@ cd generated/server
 |---|---|---|
 | `generated/server/`（`geas rust --host --runtime` が geas から置く） | サーバーの実行部：`engine.rs` は生成した処理を呼び、結果の行き先・待ち・外部作用・出来事を動かす。`db.rs` は保存（実体ごとの表）。`http.rs` は JSON の口と画面の配信。`mock.rs` は決済・倉庫などの模擬（宣言の `replies` と結果の種類で動く） | 知らない（生成物の定義 `DEFS_JSON` で動く） |
 | `generated/ui/` | 画面（PWA）。geas の screen 宣言から置く汎用の画面。配置・色は design、手順は action の行き先で決まる。manifest とアイコンも生成 | 知らない（定義 `/api/defs` で動く） |
-| `generated/dev/` | 開発用の模擬操作パネル（応答の結果の種類と出来事の宣言から生成）。アプリの画面ではない | 知らない（定義で動く） |
+| `generated/dev/` | 開発用の模擬操作パネル（応答の結果の種類と出来事の宣言から生成）。アプリの画面ではない。サーバーを `--test` で起こしたときだけ配る | 知らない（定義で動く） |
 
 SQLite に決めているのは `generated/server/src/db.rs` だけ。別の DB に替えるなら、そこだけを替える。サーバーは localhost にだけ待ち受ける（`127.0.0.1`）。Web サーバーと DB サーバーを分けるなら、`Db` の呼び口の先をネットワーク越しにするだけで、他の層は変わらない。
 
 ## 口
 
-URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customers/:customer_id/orders`、`/product_prices/:jan` など）。結果の種類ごとの HTTP の状態も宣言どおりです（受付＝201、在庫不足＝422、注文なし＝404 …）。`create` の本文は処理の入力で、slot は `slots` に入れます。クエリ文字列は使いません。下の `/api/…` は、これまでの口で、残してあります。
+URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customers/:customer_id/orders`、`/product_prices/:jan` など）。結果の種類ごとの HTTP の状態も宣言どおりです（受付＝201、在庫不足＝422、注文なし＝404 …）。`create` の本文は処理の入力で、slot は `slots` に入れます。クエリ文字列は使いません。下の `/api/…` は、これまでの口で、サーバーを `--test` で起こしたときだけ開きます（宣言を通らずに、どの処理でも名前で呼べるため。[docs/server.md](../../../../docs/server.md) の「外から呼べる口」）。
 
 | 口 | 中身 |
 |---|---|
@@ -52,7 +53,7 @@ URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customer
 |---|---|
 | 円・ドル・ユーロの商品、1つの注文は1つの通貨 | 画面の通貨切り替え。通貨の違う商品を混ぜると `OtherCurrency` |
 | 決済と倉庫の返事を待ち合わせ（`all reply`、中身を見て判断） | 注文が「決済の返事待ち」から「完了」へ。倉庫が在庫不足なら返金して取り消し |
-| 30分で期限切れ | テスト操作の「時計を30分進める」 |
+| 30分で期限切れ | テスト操作の「時計を30分進める」（`--test` のとき） |
 | つながりが戻った（出来事） | 決済の返事を落としておき、「つながりが戻った」で引き直す（同じ冪等キーで二重に請求しない）。画面は `online` のときに自動で呼ぶ |
 | 並列の枝で書く（ポイントの加算） | 注文のあと、通常ポイントとキャンペーンポイントが重なって加算される |
 | JAN の検査数字 | 拡張の問い合わせも、サーバーの境界でも、最後の1桁が違う JAN は止まる |

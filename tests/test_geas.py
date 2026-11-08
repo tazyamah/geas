@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -2636,7 +2637,9 @@ def test_host_は列つきの問い合わせの行を列名つきの_JSON_で返
     ck = chk(OVERSEAS)
     host = host_source(ck)
     assert "product_list_row_json" in host and 'js_str("price")' in host and '\\"rows\\"' in host
-    defs = json.loads(host.split('DEFS_JSON: &str = r####"')[1].split('"####')[0])
+    # DEFS_JSON は rust_str の文字列リテラル（\\ ・ \" ・ \u{…} で逃がしてある。改行も逃がすので、リテラルは 1 行）
+    lit = host.split("DEFS_JSON: &str = ")[1].split(";\n")[0]
+    defs = json.loads(re.sub(r'\\(?:u\{([0-9a-f]+)\}|(.))', lambda m: chr(int(m[1], 16)) if m[1] else m[2], lit[1:-1]))
     assert defs["effects"]["Warehouse.hold"]["joins"] == "OrderPending"
     assert defs["effects"]["Shipping.ship"]["no_wait"] is True
     assert defs["effects"]["Payment.charge"]["args"] == ["order_id", "currency", "amount"]

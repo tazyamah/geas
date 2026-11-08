@@ -32,8 +32,10 @@ def built(tmp_path_factory):
 
 
 class Server:
-    def __init__(self, built, db, extra=()):
+    def __init__(self, built, db, extra=(), test_api=True):
+        """test_api：テスト用の口（/api/test/…）を開く --test を付けて起こすか"""
         self.built, self.db, self.proc, self.base, self.extra = built, db, None, None, list(extra)
+        self.test_api = test_api
 
     def start(self):
         s = socket.socket()
@@ -42,7 +44,8 @@ class Server:
         s.close()
         self.proc = subprocess.Popen(
             [str(self.built / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(self.db),
-             "--pwa", str(self.built / "ui"), "--dev", str(self.built / "dev"), *self.extra], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             "--pwa", str(self.built / "ui"), *(["--test"] if self.test_api else []), "--dev", str(self.built / "dev"), *self.extra],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.base = f"http://127.0.0.1:{port}"
         for _ in range(100):
             try:
@@ -274,6 +277,91 @@ def test_画面と_API_の応答には_CSP_が付き_生成した_HTML_にイン
         assert 'style="' not in text, html
     manifest = json.loads((built / "ext" / "manifest.json").read_text())
     assert manifest["content_security_policy"]["extension_pages"] == "script-src 'self'; object-src 'self'"
+
+
+def test_テスト用の口と_宣言を通らない口は__test_を付けたときだけ開く(built, tmp_path):
+    """--test なしで外から呼べるのは、仕様書の URL の表にある口と、画面が使う /api/defs・/api/health だけ。
+    時計を進める・模擬を変える・処理を名前で呼ぶ（resource の宣言を通らない）口は 404"""
+    s = Server(built, tmp_path / "plain.sqlite", test_api=False)
+    s.start()
+    try:
+        for method, path, body in [("GET", "/api/test/state", None), ("POST", "/api/test/advance", {"secs": 3600}), ("POST", "/api/test/settings", {"delay_secs": 0}),
+                                   ("POST", "/api/test/tick", {}), ("GET", "/api/queries/parcel_list", None), ("POST", "/api/deeds/accept", {"input": {"kind": "light"}}),
+                                   ("POST", "/api/events/Reconnected", {}), ("GET", "/test.html", None), ("GET", "/test.js", None)]:
+            assert s.call(method, path, body)[0] == 404, (method, path)
+        assert s.call("GET", "/parcels")[1]["rows"] == []  # 名前で呼ぶ口からは、何も作られていない
+        assert s.call("POST", "/parcels", {"kind": "light"})[0] == 201
+        assert s.call("GET", "/api/defs")[0] == 200 and s.call("GET", "/api/health")[0] == 200
+        assert urllib.request.urlopen(s.base + "/", timeout=5).status == 200
+    finally:
+        s.stop()
+
+
+def test__test_を付けると開発用の模擬パネルとテスト用の口が開く(server):
+    assert urllib.request.urlopen(server.base + "/test.html", timeout=5).status == 200
+    assert server.call("GET", "/api/test/state")[0] == 200
+
+
+def test_POST_は_JSON_と名乗るものだけを受け_UTF8_でない本文は断る(server):
+    """別のサイトのページは、フォームや text/plain の POST なら事前の確認なしに送らせられる（CSRF）。JSON と名乗る POST だけを受ける"""
+    body = json.dumps({"kind": "light"}).encode()
+    for ct in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonp"):
+        req = urllib.request.Request(server.base + "/parcels", method="POST", data=body, headers={"Content-Type": ct})
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=5)
+        assert e.value.code == 415, ct
+    assert server.parcels() == {}  # 断った要求では、何も作られていない
+    req = urllib.request.Request(server.base + "/parcels", method="POST", data=body, headers={"Content-Type": "Application/JSON; charset=utf-8"})
+    assert urllib.request.urlopen(req, timeout=5).status == 201
+    req = urllib.request.Request(server.base + "/parcels", method="POST", data=b'{"kind": "\xff"}', headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req, timeout=5)
+    assert e.value.code == 400 and "UTF-8" in json.loads(e.value.read())["error"]
+    assert len(server.parcels()) == 1
+    for path in ("/api/health", "/", "/ui.js"):
+        h = urllib.request.urlopen(server.base + path, timeout=5).headers
+        assert h.get("X-Content-Type-Options") == "nosniff" and h.get("Referrer-Policy") == "same-origin", path
+
+
+def test_Host_が手元の名前でも足した名前でもなければ断る(built, tmp_path):
+    """悪意のあるページが DNS の付け替え（DNS rebinding）で 127.0.0.1 に届いても、ブラウザは Host にそのページの名前を書く。
+    その名前の要求は、読むのも書くのも断る。localhost・IP の書き方・--allow-host で足した名前は受ける"""
+    s = Server(built, tmp_path / "host.sqlite", ["--allow-host", "shop.example"])
+    s.start()
+    try:
+        def send(method, path, host, body=None):
+            req = urllib.request.Request(s.base + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json", "Host": host})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+        port = s.base.rsplit(":", 1)[1]
+        for host in (f"evil.example:{port}", f"127.0.0.1.evil.example:{port}"):
+            assert send("GET", "/parcels", host) == 403, host
+            assert send("POST", "/parcels", host, {"kind": "light"}) == 403, host
+            assert send("GET", "/api/defs", host) == 403, host
+        assert s.call("GET", "/parcels")[1]["rows"] == []  # 断った要求では、何も作られていない
+        for host in (f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}", "shop.example", f"SHOP.example:{port}"):
+            assert send("GET", "/parcels", host) == 200, host
+        assert send("POST", "/parcels", "shop.example", {"kind": "light"}) == 201
+    finally:
+        s.stop()
+
+
+def test_期限の待ちが1件失敗し続けても_ほかの期限は発火する(server):
+    """発火に失敗する待ち（ここでは、無いトリガの待ち）が先にあっても、うしろの待ちの期限は止まらない"""
+    import sqlite3
+    with sqlite3.connect(server.db) as c:
+        c.execute("INSERT INTO geas_waits (trigger, args, collected, deadline) VALUES ('Nowhere', '{}', '{}', 0)")
+    server.mock(PaySettled={"drop": True})
+    pid, _ = server.accept()
+    server.advance(6)
+    fired = server.advance(30 * 60 + 10)
+    assert any(f.get("deadline") == "Nowhere" and "error" in f for f in fired), fired
+    assert any(f.get("deadline") == "Pending" and f["outcome"].get("fired") == "expire" for f in fired), fired
+    assert server.parcels()[pid]["status"] == "Canceled"
 
 
 def test_同時に来たリクエストは直列に並べた場合と同じ結果になる(server):
