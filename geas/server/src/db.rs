@@ -125,9 +125,10 @@ impl Db {
         self.conn.execute("UPDATE geas_waits SET collected = ?1 WHERE id = ?2", params![collected.to_string(), id]).map_err(e)?;
         Ok(())
     }
-    pub fn remove_wait(&self, id: i64) -> R<()> {
-        self.conn.execute("DELETE FROM geas_waits WHERE id = ?1", params![id]).map_err(e)?;
-        Ok(())
+    /// 待ちを消す。消せた（この呼び出しが消した）なら true。すでに他のサーバーが消していたら false
+    pub fn remove_wait(&self, id: i64) -> R<bool> {
+        let n = self.conn.execute("DELETE FROM geas_waits WHERE id = ?1", params![id]).map_err(e)?;
+        Ok(n > 0)
     }
     pub fn due_waits(&self, now: i64) -> R<Vec<Wait>> {
         let mut st = self.conn.prepare("SELECT id, trigger, args, collected, deadline FROM geas_waits WHERE deadline <= ?1 ORDER BY id").map_err(e)?;

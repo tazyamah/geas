@@ -316,7 +316,6 @@ def test_同じDBファイルを使うサーバーが2つあっても_直列に�
         other.stop()
 
 
-@pytest.mark.xfail(strict=True, reason="既知の不具合：期限の発火は、同じ DB を共有する複数サーバーで二重になる（tick が期限の一覧を直列化の外で読み、待ちを消せたか確かめずに進むため）。直したらこの印を外す")
 def test_同じDBファイルを使うサーバーが2つあっても_期限の発火は待ち1件につき1回だけになる(built, server):
     import sqlite3
     from concurrent.futures import ThreadPoolExecutor
