@@ -225,7 +225,11 @@ impl Engine {
                 // 期限の要因（deadline）の行き先へ
                 let def = en.trigger_def(&w.trigger)?;
                 let dest = def["causes"].as_array().into_iter().flatten().find(|c| c["kind"] == "deadline").map(|c| s(c, "dest")).ok_or("期限の要因がありません")?;
-                en.db.remove_wait(w.id)?;
+                // 期限の一覧は直列化の外で読んでいるので、同じ DB を共有する別のサーバーが先に発火したかもしれない。
+                // 待ちを消せた 1 つだけが先へ進む（消せなければ何もしない）
+                if !en.db.remove_wait(w.id)? {
+                    return Ok(json!({ "skipped": "他のサーバーがすでに発火した" }));
+                }
                 let mut trace = Vec::new();
                 en.step(&dest, &w.args, &json!({}), &mut trace, 0)?;
                 Ok(json!({ "fired": dest, "trace": trace }))
