@@ -3567,3 +3567,84 @@ def test_レシートのコマンドと差分HTMLは_同じ内容を出す(tmp_p
     h = html.read_text()
     assert 'id="receipt"' in h and "信頼のレシート" in h and "検証ビルドだけ確かめる → 確かめない（人の保証）" in h
     assert h.index('id="receipt"') < h.index('id="changes"')  # 変更点の前に出る
+
+
+# ---- 開発ガイド対応：check --json・変異検査の --run ----
+
+def test_check_jsonは_指摘に直すための手がかりを付ける(tmp_path):
+    bad = tmp_path / "bad.geas"
+    bad.write_text(EX.joinpath("shop.geas").read_text().replace("  if order.total <= 0 { return ZeroTotal }\n", ""))
+    r = subprocess.run([sys.executable, "-m", "geas", "check", str(bad), "--json"], capture_output=True, text=True, cwd=ROOT)
+    d = json.loads(r.stdout)
+    assert r.returncode == 1 and d["ok"] is False
+    err = [x for x in d["diagnostics"] if x["level"] == "error"][0]
+    assert err["code"] and err["message"] and err["hint"]["ref"].startswith("docs/language-reference.md") and err["hint"]["fix"]
+
+
+def test_check_jsonは_構文エラーも_JSONで返す(tmp_path):
+    bad = tmp_path / "syn.geas"
+    bad.write_text("entity A { x: int 0..5 }\n")
+    r = subprocess.run([sys.executable, "-m", "geas", "check", str(bad), "--json"], capture_output=True, text=True, cwd=ROOT)
+    d = json.loads(r.stdout)
+    assert r.returncode == 2 and d["diagnostics"][0]["level"] == "syntax"
+
+
+def test_検査器が出す指摘の種類は_すべて手がかりの表にある():
+    import re
+    from geas.hints import TABLE
+    src = (ROOT / "geas" / "check.py").read_text()
+    codes = set(re.findall(r'self\.d\((?:ERROR|WARN|QUESTION), "([^"]+)"', src))
+    assert codes - set(TABLE) == set(), "geas/hints.py の TABLE に足してください"
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo が無い")
+def test_変異検査の_runは_検査器が止めなかった崩しを_具体例で止める(tmp_path):
+    from geas import mutate as mt
+    f = tmp_path / "shop.geas"
+    f.write_text((EX / "shop.geas").read_text())
+    lines = f.read_text().splitlines()
+    i = next(n for n, l in enumerate(lines, 1) if "let total = subtotal + round(" in l)
+    # 税を落とす崩しは、型の上では通る（検査器は止めない）が、具体例の合計が合わなくなる
+    mu = mt.Mutant(i, "税を落とす（試験用）", lines[i - 1], "  let total = subtotal", result=mt.SURVIVED)
+    assert mt.stopped(mt.apply(f.read_text(), mu), str(f))[0] is False
+    note = mt.run_examples(str(f), [mu], (EX / "shop_plan.md").read_text())
+    assert note is None and mu.result == mt.KILLED_EX
+
+
+def test_レシートの影響範囲は_変わった処理から_URLと画面とユースケースをたどる():
+    from geas.receipt import impact_of
+    ov = ROOT / "tests" / "fixtures" / "overseas_shop"
+    src = (ov / "overseas_shop.geas").read_text()
+    new = build(check(parse(src, "n.geas"), strict_names=True))
+    old = build(check(parse(src.replace("ltype Quantity = int 1..99", "ltype Quantity = int 1..50"), "o.geas"), strict_names=True))
+    rows = read_plan((ov / "overseas_shop_plan.md").read_text())["ユースケース"]
+    imp = impact_of(new, old, rows)
+    assert "注文" in imp["処理"] and "注文" in imp["データ"]
+    assert "POST /orders" in imp["ルート"] and "注文の画面" in imp["画面"]
+    assert "商品を見つけて注文する" in imp["ユースケース"]
+    assert not any(impact_of(new, new, rows).values())
+
+
+def test_benchは_AIが書いた_geas_を採点し_悪くなったケースを前回と比べて示す(tmp_path):
+    from geas import bench
+    cases, runs = tmp_path / "cases", tmp_path / "runs"
+    for name, code in (("ok", (EX / "shop.geas").read_text()),
+                       ("bad", (EX / "shop.geas").read_text().replace("  if order.total <= 0 { return ZeroTotal }\n", "")),
+                       ("syn", "entity A { x: int 0..5 }\n")):
+        (cases / name).mkdir(parents=True)
+        (cases / name / "plan.md").write_text((EX / "shop_plan.md").read_text())
+        (runs / name).mkdir(parents=True)
+        (runs / name / "app.geas").write_text(code)
+        (runs / name / "rounds.txt").write_text("3\n")
+    (cases / "none").mkdir()
+    (cases / "none" / "plan.md").write_text((EX / "shop_plan.md").read_text())
+    scores = {s.case: s for s in bench.run_bench(cases, runs, run=False)}
+    assert scores["ok"].passed and scores["ok"].rounds == 3
+    assert scores["bad"].status == "検査で止まる" and not scores["bad"].passed
+    assert scores["syn"].status == "構文エラー" and scores["none"].status == "書かれていない"
+    prev = json.loads(bench.to_json([bench.Score("bad", status="通過", examples="合った")]))
+    md = bench.to_markdown(list(scores.values()), prev)
+    assert "悪くなった（通っていたのに通らない）：bad" in md
+    out = tmp_path / "r.json"
+    r = subprocess.run([sys.executable, "-m", "geas", "bench", str(cases), str(runs), "--no-run", "--json", str(out)], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 1 and json.loads(out.read_text())["cases"]

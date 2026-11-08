@@ -17,6 +17,7 @@ from .modules import ModuleError
 from .parser import ParseError, parse
 
 KILLED, SURVIVED, INVALID = "検出", "生き残り", "対象外"
+KILLED_EX = "具体例で検出"  # 検査器は止めなかったが、計画書の具体例を動かすと食い違った
 
 GUARD = re.compile(r"^(\s*)if .+ \{ return [^{}]*\}\s*(//.*)?$")  # 1 行で書いた確認（満たさなければ結果を返す）
 THRESHOLD = re.compile(r"^(\s*if [\w.]+ (?:>|>=) )(\d+)( \{ return .*)$")  # 上限の確認：数を緩める
@@ -120,11 +121,67 @@ def run(path: str, base_text: str | None = None) -> tuple[list[Mutant], str | No
     return ms, None
 
 
+def run_examples(path: str, ms: list[Mutant], plan_text: str) -> str | None:
+    """生き残りを、計画書の具体例を動かして確かめる。具体例が食い違えば「具体例で検出」にする（生成した Rust をビルドして動かすので遅い）。
+    元の版で具体例が合わないときは、その理由を返して何もしない。ビルドの成果物は崩した版どうしで使い回す。"""
+    import os
+    import tempfile
+    from .examples import ExampleError, compare_examples, run_crate, runner_source, write_crate
+    from .plan import UNSPEC, read_plan
+    from .rustgen import generate
+    rows = read_plan(plan_text).get("具体例", [])
+    if not rows:
+        return "計画書に具体例がないので、具体例での確認はしません"
+    text = Path(path).read_text()
+
+    def mismatches(src: str) -> list:
+        ck = check(parse(src, path), strict_names=True)
+        code, problems = runner_source(ck, rows)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_crate(ck, generate(ck), code, Path(tmp))
+            got = run_crate(Path(tmp), ck.p.show_names)
+        return [f for f in problems + compare_examples(rows, got) if f.kind != UNSPEC]
+
+    old = os.environ.get("CARGO_TARGET_DIR")
+    with tempfile.TemporaryDirectory() as target:
+        os.environ["CARGO_TARGET_DIR"] = target
+        try:
+            try:
+                base = mismatches(text)
+            except ExampleError as e:
+                return f"元の版の具体例を動かせないので、具体例での確認は始めません: {e}"
+            if base:
+                return f"元の版で、計画書の具体例が合っていません（{base[0].where}）。先に直してください"
+            for mu in ms:
+                if mu.result != SURVIVED:
+                    continue
+                try:
+                    found = mismatches(apply(text, mu))
+                except (ExampleError, ParseError, LexError, ModuleError) as e:
+                    mu.why = f"具体例を動かせなかった: {str(e)[:120]}"
+                    continue
+                if found:
+                    mu.result, mu.why = KILLED_EX, f"{found[0].where}: {found[0].msg}"
+        finally:
+            if old is None:
+                os.environ.pop("CARGO_TARGET_DIR", None)
+            else:
+                os.environ["CARGO_TARGET_DIR"] = old
+    return None
+
+
 def report(ms: list[Mutant], name: str, scope: str) -> str:
-    n = {k: sum(1 for m in ms if m.result == k) for k in (KILLED, SURVIVED, INVALID)}
+    n = {k: sum(1 for m in ms if m.result == k) for k in (KILLED, KILLED_EX, SURVIVED, INVALID)}
+    ex = f"、計画書の具体例が止めたもの（{KILLED_EX}）{n[KILLED_EX]}" if n[KILLED_EX] else ""
     out = [f"# 変異検査（{name}）", "",
-           f"崩し方の範囲：{scope}。崩した版 {len(ms)} 件のうち、検査器が止めたもの（{KILLED}）{n[KILLED]}、"
+           f"崩し方の範囲：{scope}。崩した版 {len(ms)} 件のうち、検査器が止めたもの（{KILLED}）{n[KILLED]}{ex}、"
            f"止めなかったもの（{SURVIVED}）{n[SURVIVED]}、構文として成り立たず試せなかったもの（{INVALID}）{n[INVALID]}。", ""]
+    ex = [m for m in ms if m.result == KILLED_EX]
+    if ex:
+        out += ["## 具体例が止めたもの（検査器は何も言わなかったが、計画書の具体例が食い違った）", "",
+                "検査器では守られていませんが、具体例のテストが守っています。", "",
+                "| 行 | 崩し方 | 元の行 | 食い違った具体例 |", "|---|---|---|---|"]
+        out += [f"| {m.line} | {m.kind} | `{m.before.strip()}` | {m.why.replace('|', '/')} |" for m in ex] + [""]
     live = [m for m in ms if m.result == SURVIVED]
     if live:
         out += ["## 生き残り（検査器が何も言わなかった崩し方）", "",
@@ -133,5 +190,5 @@ def report(ms: list[Mutant], name: str, scope: str) -> str:
                 "| 行 | 崩し方 | 元の行 |", "|---|---|---|"]
         out += [f"| {m.line} | {m.kind} | `{m.before.strip()}` |" for m in live]
     else:
-        out += ["生き残りはありません（崩した版は、すべて検査器が止めました）。"]
+        out += ["生き残りはありません（崩した版は、すべて検査器" + ("か具体例" if ex else "") + "が止めました）。"]
     return "\n".join(out) + "\n"

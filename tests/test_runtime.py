@@ -336,3 +336,37 @@ def test_workerの本数を指定でき_範囲外の指定は起動前に断る(
     for bad in ("0", "257", "many"):
         r = subprocess.run([exe, "--workers", bad, "--db", str(tmp_path / "bad.sqlite")], capture_output=True, text=True, timeout=30)
         assert r.returncode == 2 and "--workers" in r.stderr, (bad, r.returncode, r.stderr)
+
+
+def test_サーバーのログを_geas_trace_で仕様書の行に結べる(built, tmp_path):
+    """構造化ログ（本文は載らない）が、仕様書のルート表の行・処理・結果の種類に戻れる。仕様書にない経路・状態は「結べなかったもの」に出る"""
+    log = tmp_path / "server.log"
+    with open(log, "w") as f:
+        # Server.start は stderr を捨てるので、ここでは同じ起動をログつきで行う
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        proc = subprocess.Popen([str(built / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(tmp_path / "t.sqlite"),
+                                 "--pwa", str(built / "ui"), "--dev", str(built / "dev")], stdout=subprocess.DEVNULL, stderr=f)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            for _ in range(100):
+                try:
+                    urllib.request.urlopen(base + "/api/health", timeout=1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            req = urllib.request.Request(base + "/parcels", method="POST", data=json.dumps({"kind": "light", "secret_note": "個人の値"}).encode(), headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+        finally:
+            proc.kill()
+            proc.wait()
+    text = log.read_text()
+    assert '"log":"geas.route"' in text and "個人の値" not in text
+    r = subprocess.run([sys.executable, "-m", "geas", "trace", str(SRC), str(log)], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0 and "POST" in r.stdout and "/parcels" in r.stdout and "仕様書に結べたもの" in r.stdout, r.stdout + r.stderr
+    bad = tmp_path / "bad.log"
+    bad.write_text('{"log":"geas.route","ts_ms":1,"method":"GET","route":"/nowhere","target":"x","result":null,"status":200,"ms":1}\n')
+    r = subprocess.run([sys.executable, "-m", "geas", "trace", str(SRC), str(bad)], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 1 and "ルート表にない経路" in r.stdout
