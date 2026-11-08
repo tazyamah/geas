@@ -25,6 +25,7 @@ AI（Claude Code など）が geas を入れて使うときは、[AGENTS.md](AGE
 1. 会話で計画書（plan、Markdown）を作る（[skills/plan-interview](skills/plan-interview/SKILL.md)）。
 2. 計画書から、AI がコード（`.geas`）を起こす。
 3. コードを検査し、仕様書を生成して、計画書と突き合わせる。具体例は生成した Rust で実際に動かして確かめる。
+   検査の問いと、仕様書のレビュー前の確認は、1問ずつ聞く（[skills/geas-develop](skills/geas-develop/SKILL.md)）。
 
 ## 使い方（試作の Python 版。最終的にはすべて Rust にする）
 

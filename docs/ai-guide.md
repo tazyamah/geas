@@ -12,6 +12,7 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | 動く全体の例（海外にも売るお店：画面・REST・拡張・サーバーまで） | [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) と同じフォルダの `overseas_shop_plan.md`（計画書）・`overseas_shop_spec.md`（生成した仕様書） |
 | 小さな例 | [tests/fixtures/shop/shop.geas](../tests/fixtures/shop/shop.geas)、削除の例 `tests/fixtures/delete_demo/` |
 | 計画書の作り方（会話で聞く手順） | [skills/plan-interview/SKILL.md](../skills/plan-interview/SKILL.md) |
+| `.geas` を書いて検査し、人に仕様書を見せるまでの聞き方（問い・レビュアー目線の質問・変異検査の生き残り） | [skills/geas-develop/SKILL.md](../skills/geas-develop/SKILL.md) |
 | 言語機能ごとの動作テスト（どの機能が実際に動かして確かめられているか） | [language-test-map.md](language-test-map.md) |
 | geas の基本の考えと、仕様書とコードがずれない仕組み（どこまで保証しているか） | [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md) |
 | 名前の付け方 | [naming.md](naming.md)、[v0.1.0-scope.md](v0.1.0-scope.md) の「名前の書き方」 |
@@ -65,6 +66,8 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 検査にエラーか「問い」が残っていると、`rust` と `compare` は先へ進みません。
 
 ## 作業の流れ（AI の動き方）
+
+2〜4 の聞き方（問いを1問ずつ、仕様書をレビュアー目線で先に読む、変異検査の生き残りを見せる）は [skills/geas-develop](../skills/geas-develop/SKILL.md) にまとめてある。
 
 1. **計画書を作る**（`skills/plan-interview`）。ユースケースは一問一答で聞き、コードを書く前に動作要件を聞く。計画書は Markdown。
 2. **`.geas` を書く**。[language-reference.md](language-reference.md) と、近い例（お店）を見ながら。名前は半角英数、日本語の表示名は直前の `///` に書く。
