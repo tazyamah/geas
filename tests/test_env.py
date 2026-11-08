@@ -79,6 +79,7 @@ def test_公開する口があるアプリは_公開範囲を書かないと警�
     got = {x["id"]: x for x in items(parse(src))}
     assert "届く口が無い" in got["exposure"]["要求"] and got["exposure"]["観点"] == "到達性"
     assert got["limits"]["人の保証"] and got["limits"]["確かめ方"] == ["人の保証"]  # 前段の約束は外から確かめられない
+    assert "時間切れ" in got["limits"]["要求"] and "本文" not in got["limits"]["要求"]  # 本文の上限はサーバーが 413 で守るので、前段には求めない
     assert "limits" not in ids(SHOP)  # 公開する口が無ければ前段の約束も出ない
 
 
