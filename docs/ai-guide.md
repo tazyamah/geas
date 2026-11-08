@@ -9,6 +9,7 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | 知りたいこと | 読むもの |
 |---|---|
 | 言語の書き方（宣言・文・式の一覧） | [language-reference.md](language-reference.md) |
+| 他の言語のノリで書き間違えやすいこと（`&&`・`else`・`string`・`;` など） | [language-reference.md の 12 節](language-reference.md#12-他の言語から来たときに間違えやすいこと) |
 | 動く全体の例（海外にも売るお店：画面・REST・拡張・サーバーまで） | [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) と同じフォルダの `overseas_shop_plan.md`（計画書）・`overseas_shop_spec.md`（生成した仕様書） |
 | 小さな例 | [tests/fixtures/shop/shop.geas](../tests/fixtures/shop/shop.geas)、削除の例 `tests/fixtures/delete_demo/` |
 | 計画書の作り方（会話で聞く手順） | [skills/plan-interview/SKILL.md](../skills/plan-interview/SKILL.md) |
@@ -46,7 +47,7 @@ python -m pytest tests                                                # テス�
 ## コマンド
 
 ```sh
-python -m geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを出す。終了コードは、エラーがあれば 1。--json は、指摘ごとに hint（見る節と直し方）を付けた JSON（構文エラーは終了コード 2）
+python -m geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを、コードに書いた名前と行番号で出し、最後の行に件数。終了コードは、エラーがあれば 1、構文エラーとファイルが無いときは 2。--json は、指摘ごとに line と hint（見る節と直し方）を付けた JSON
 python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
 python -m geas env-checks アプリ.geas [--json]              # 動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す。照合は env-verify
 python -m geas env-facts plan.json [--adapter aws-ecs] [--service アドレス]   # terraform show -json の出力から、環境の事実（クラウドに依存しない形）を作る。読めなかった事実は null
@@ -77,7 +78,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 
 1. **計画書を作る**（`skills/plan-interview`）。ユースケースは一問一答で聞き、コードを書く前に動作要件を聞く。計画書は Markdown。
 2. **`.geas` を書く**。[language-reference.md](language-reference.md) と、近い例（お店）を見ながら。名前は半角英数、日本語の表示名は直前の `///` に書く。
-3. **検査する**（`check`）。エラーは直す。**問い（QUESTION）は、人に聞くべきことなので、勝手に決めずに質問する**（検査器が「決めていない」と見つけたもの）。警告も読む（表示名の抜けなど）。
+3. **検査する**（`check`）。エラーは直す（指摘の行番号と、`近い名前`・直し方の案内を見る）。**問い（QUESTION）は、人に聞くべきことなので、勝手に決めずに質問する**（検査器が「決めていない」と見つけたもの）。警告も読む（表示名の抜けなど）。
 4. **仕様書を作り、計画書と突き合わせる**（`spec`／`review`／`compare`）。ずれがあれば、計画書とコードのどちらが正しいかを人に確かめる。
 5. **アプリにする**（`rust --host --runtime`）。手で書くコードを増やさないのが原則：計画書・`.geas` に現れない手書きコードは、無くす方向で考える。
 

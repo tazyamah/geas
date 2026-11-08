@@ -5,9 +5,10 @@
 内部では、モジュールの定義名を `名前_定義名` に付け替えて、1つの字句の列につなげる（大文字で始まる名前には _ が入らず、
 小文字の名前は大文字で始まらないので、利用者の名前とは重ならない）。"""
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
-from .lexer import Tok, lex
+from .lexer import LexError, Tok, lex
 
 # モジュールに書ける宣言（状態を持たないもの）
 MODULE_DECLS = {"ltype", "convert", "library", "result", "deed"}
@@ -17,9 +18,13 @@ ALL_DECLS = {"entity", "ltype", "store", "state", "result", "effect", "part", "l
 
 
 class ModuleError(Exception):
-    def __init__(self, msg: str, line: int = 0):
-        super().__init__(f"{line}行目: {msg}" if line else msg)
-        self.line = line
+    def __init__(self, msg: str, line: int = 0, file: str = ""):
+        super().__init__(msg)
+        self.msg, self.line, self.file = msg, line, file  # file は、use で取り込んだモジュールのファイルの中の誤りのとき
+
+    def __str__(self):
+        head = (f"{Path(self.file).name} の " if self.file else "") + (f"{self.line}行目" if self.line else "")
+        return f"{head}: {self.msg}" if head else self.msg
 
 
 def statement_starts(toks: list[Tok]):
@@ -84,7 +89,7 @@ def replace_refs(toks: list[Tok], visible: dict[str, dict[str, str]]) -> list[To
             mod, n = t.val, toks[i + 2].val
             if n not in visible[mod]:
                 raise ModuleError(f"モジュール {mod} に「{n}」はありません", t.line)
-            out.append(Tok("NAME", visible[mod][n], t.line, t.doc))
+            out.append(replace(t, kind="NAME", val=visible[mod][n]))
             i += 3
         else:
             out.append(t)
@@ -101,12 +106,21 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
         raise ModuleError("モジュールが循環して取り込まれています: " + " → ".join(p.name for p in [*stack, path]), line)
     if not path.exists():
         raise ModuleError(f"モジュールのファイル {path.name} がありません", line)
-    toks = [t for t in lex(path.read_text()) if t.kind != "EOF"]
+    try:
+        return _load_module(path, loaded, stack)
+    except (LexError, ModuleError) as e:
+        if not e.file:  # このファイルの中の誤り（取り込んだ先の誤りは、そちらのファイルが付いている）
+            e.file = str(path)
+        raise
+
+
+def _load_module(path: Path, loaded: Loaded, stack: list[Path]) -> str:
+    toks = [replace(t, file=str(path)) for t in lex(path.read_text(encoding="utf-8")) if t.kind != "EOF"]
     uses, toks = split_uses(toks)
     visible = use_all(uses, path, loaded, stack + [path])
     starts = list(statement_starts(toks))
     if not starts or toks[starts[0]].val != "module" or toks[starts[0] + 1].kind != "NAME":
-        raise ModuleError(f"{path.name}: モジュールのファイルは `module 名前` で始めます", toks[0].line if toks else 0)
+        raise ModuleError("モジュールのファイルは `module 名前` で始めます", toks[0].line if toks else 0)
     mod = toks[starts[0] + 1].val
     if mod in loaded.names:
         raise ModuleError(f"モジュール名「{mod}」が2つのファイルにあります", toks[starts[0]].line)
@@ -129,7 +143,7 @@ def load_module(path: Path, loaded: Loaded, stack: list[Path], line: int) -> str
         head = 4
     toks = toks[:starts[0]] + toks[starts[0] + head:]
     toks = replace_refs(toks, visible)
-    toks = [Tok(t.kind, declared[t.val], t.line, t.doc) if t.kind == "NAME" and t.val in declared else t for t in toks]
+    toks = [replace(t, val=declared[t.val]) if t.kind == "NAME" and t.val in declared else t for t in toks]
     loaded.files[path] = mod
     loaded.names[mod] = declared
     loaded.origin.update({m: (mod, n) for n, m in declared.items()})

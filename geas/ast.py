@@ -41,6 +41,7 @@ class Field:
     type: Type
     unique: bool = False
     required: bool = False
+    line: int = field(default=0, compare=False, kw_only=True)  # 書いた行（検査の指摘に付ける）
 
 
 @dataclass
@@ -269,6 +270,7 @@ class Program:
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
+    ltype_lines: dict = field(default_factory=dict)  # 論理型の名前 → 宣言した行（検査の指摘に付ける）
     isolations: dict = field(default_factory=dict)  # 保存先の名前 → (process|store, 種類, 理由, 行)。リクエストの直列を誰が保証するか（`isolation 保存先 by …`）
     needs: list = field(default_factory=list)  # アプリが環境に要求すること（`needs secret|exposure|instances …`）。(種類, 対象, 値, 理由, 行)
     title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う
@@ -286,6 +288,13 @@ class Program:
             if text in (ls.get("ja"), ls.get("")):
                 return n
         return text
+
+    def show_code(self, text: str) -> str:
+        """AI に見せる文字列：名前はコードの名前のまま。use で取り込んだモジュールの定義だけ、書いたとおりの 名前.定義名 に戻す"""
+        if not self.origin:
+            return text
+        table = {m: f"{mod}.{n}" for m, (mod, n) in self.origin.items()}
+        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", lambda m: table.get(m.group(0), m.group(0)), text)
 
     def show_names(self, text: str) -> str:
         """人に見せる文字列の中の名前を表示名（日本語、無ければ既定）に置き換える。生成する Rust には使わない"""

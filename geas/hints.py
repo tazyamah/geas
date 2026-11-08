@@ -50,6 +50,7 @@ TABLE = {
     "名前そのもの": ("§1 全体の決まり", "名前を直す"),
     "表示名": ("§1 全体の決まり", "直前の /// に日本語の表示名を書く"),
     "外部作用": ("§6 外とのやりとり", "外への作用の宣言（trust・冪等）を足す"),
+    "環境": ("§4 処理（deed）の「動かす前提 needs」", "needs の書き方（secret・exposure・instances と理由）を直す。環境の実際は書かない"),
 }
 DEFAULT = ("§11 検査の結果の種類", "指摘の文言を読み、該当する節を language-reference.md で確かめる")
 
@@ -60,8 +61,11 @@ def hint_of(d) -> dict:
 
 
 def as_dict(d) -> dict:
+    """1件の指摘。where と message は、コードに書いた名前のまま（表示名に置き換えない）。line は分かるときだけ"""
     out = {"level": {ERROR: "error", WARN: "warning", QUESTION: "question"}.get(d.level, d.level),
-           "code": d.code, "where": d.where, "message": d.msg}
+           "code": d.code, "where": d.code_where or d.where, "message": d.code_msg or d.msg}
+    if d.line:
+        out["line"] = d.line
     if d.level != WARN or d.code not in ("表示名",):
         out["hint"] = hint_of(d)
     if d.level == QUESTION:
@@ -74,9 +78,12 @@ def to_json(ck, path: str) -> str:
                       ensure_ascii=False, indent=2) + "\n"
 
 
-def syntax_json(path: str, msg: str) -> str:
-    """構文エラー（検査まで進めない）の JSON"""
-    return json.dumps({"file": path, "ok": False, "ready": False, "diagnostics": [{
-        "level": "syntax", "code": "構文", "where": path, "message": msg,
-        "hint": {"ref": f"{REF} §1 全体の決まり", "fix": "メッセージの行を、近い例（tests/fixtures/overseas_shop/）と見比べて書き方を直す"}}]},
-        ensure_ascii=False, indent=2) + "\n"
+def syntax_json(path: str, e) -> str:
+    """構文エラー（検査まで進めない）の JSON。e は例外（line・col・file・hint があれば載せる）か、文言"""
+    fix = "メッセージの行を、近い例（tests/fixtures/overseas_shop/）と見比べて書き方を直す"
+    diag = {"level": "syntax", "code": "構文", "where": getattr(e, "file", "") or path, "message": getattr(e, "msg", "") or str(e),
+            "hint": {"ref": f"{REF} §1 全体の決まり", "fix": (getattr(e, "hint", "") or fix)}}
+    for k in ("line", "col"):
+        if getattr(e, k, 0):
+            diag[k] = getattr(e, k)
+    return json.dumps({"file": path, "ok": False, "ready": False, "diagnostics": [diag]}, ensure_ascii=False, indent=2) + "\n"
