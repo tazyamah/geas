@@ -443,7 +443,7 @@ def test_生成した照合は大小_かな_幅をそろえる(tmp_path):
     if shutil.which("rustc") is None:
         pytest.skip("rustc が無い")
     src = generate(chk(MEMO))
-    start = src.index("pub fn fold_text")
+    start = src.index("pub fn fold_width_kana")  # そろえの 1 文字分（証明の対象）と fold_text
     end = src.index("pub fn show_set")
     main = src[start:end] + '''
 fn main() {

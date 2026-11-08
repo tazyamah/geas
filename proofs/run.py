@@ -32,7 +32,7 @@ def crate(dest: Path) -> None:
 
 def harnesses() -> list[str]:
     import re
-    return re.findall(r"#\[kani::proof\]\s*fn (\w+)", (ROOT / "proofs/prelude_proofs.rs").read_text())
+    return re.findall(r"#\[kani::proof\](?:\s*#\[[^\]]*\])*\s*fn (\w+)", (ROOT / "proofs/prelude_proofs.rs").read_text())
 
 
 def run(timeout: int = 300) -> int:
