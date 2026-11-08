@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .rest import routes as rest_routes
+from .rest import internal_targets, routes as rest_routes
 
 
 def class_of(chars: tuple) -> str:
@@ -66,8 +66,11 @@ def tool_name(kind: str, path: str) -> str:
 def tool_defs(ck) -> list[dict]:
     p, show = ck.p, ck.p.show_names
     server_slots = {f.slot for f in p.rules}  # サーバーが決める slot（客は渡さない）
+    inner = internal_targets(p)  # 流れの途中の処理の URL は、サーバーが外に出さないので、ツールにもしない
     out = []
     for method, path, kind, target, res, statuses in rest_routes(p):
+        if target in inner:
+            continue
         props: dict = {}
         required: list[str] = []
         caps = [s[1:] for s in path.split("/") if s.startswith(":")]

@@ -60,7 +60,7 @@ def impact_of(new: dict, old: dict, plan_rows: list[dict] | None = None) -> dict
         name = d.get("処理") or d.get("問い合わせ")
         if any(r.split(".", 1)[0] in entities for r in [*d.get("読む", []), *d.get("書く", [])]):
             deeds.add(name)
-    routes = sorted({f"{m} {path}" for m, path, _, tgt, _ in new.get("ルート", []) if tgt in deeds})
+    routes = sorted({f"{m} {path}" for m, path, _, tgt, *_ in new.get("ルート", []) if tgt in deeds})
     screens = {sc for sc, op, _, _ in new.get("画面遷移", []) if op in deeds}
     screens |= {x[0] for x in new.get("画面", []) if any(q.strip() in deeds for q in x[1].split(","))}
     ucs = []
@@ -73,7 +73,9 @@ def impact_of(new: dict, old: dict, plan_rows: list[dict] | None = None) -> dict
 
 def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str, plan_rows: list[dict] | None = None) -> Receipt:
     from . import mutate
-    new, old = build(ck)["保証の強さ"], build(base_ck)["保証の強さ"]
+    from .rest import INTERNAL, OPEN
+    new_spec, old_spec = build(ck), build(base_ck)
+    new, old = new_spec["保証の強さ"], old_spec["保証の強さ"]
     old_by = {key_of(r): r for r in old}
     new_keys = {key_of(r) for r in new}
     r = Receipt(label, before=level_counts(old), after=level_counts(new))
@@ -88,7 +90,15 @@ def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str
         elif rank[row[0]] < rank[prev[0]]:
             r.strengthened.append((row[1], prev[0], row[0], row[2]))
     r.strengthened += [(p[1], p[0], "（無くなった）", p[2]) for p in old if key_of(p) not in new_keys and p[0] in WEAK]
-    r.impact = impact_of(build(ck), build(base_ck), plan_rows)
+    # 流れの途中から外れて、外から直接呼べるようになった URL は、確かめを飛ばせる口が増えたので「弱くなった」に出す
+    was_out = {(x[0], x[1]): x[5] for x in old_spec["ルート"]}
+    for m, path, *_, now in new_spec["ルート"]:
+        was = was_out.get((m, path))
+        if was == INTERNAL and now == OPEN:
+            r.weakened.append((f"URL {m} {path}", was, now, "流れの途中から外れ、外から直接呼べるようになりました"))
+        elif was == OPEN and now == INTERNAL:
+            r.strengthened.append((f"URL {m} {path}", was, now, "流れの途中の処理になり、サーバーは外に出さなくなりました"))
+    r.impact = impact_of(new_spec, old_spec, plan_rows)
     r.errors = sum(1 for d in ck.diags if d.level == ERROR)
     r.questions = sum(1 for d in ck.diags if d.level == QUESTION)
     try:

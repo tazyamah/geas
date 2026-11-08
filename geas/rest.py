@@ -30,6 +30,17 @@ def base_path(p, res, seen=()) -> str:
     return "/" + snake(res.name)
 
 
+# 仕様書の URL の表の「外から」の列：呼べる口と、流れの途中の処理の口（サーバーは --test のときだけ答える）
+OPEN, INTERNAL = "呼べる", "内部（流れの途中）"
+
+
+def internal_targets(p) -> set[str]:
+    """流れの途中の処理：返事・期限（trigger の行き先）と、前の処理の結果（nexus の行き先。par の枝も）から進む処理。
+    外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるので、サーバーは、この処理を呼ぶ URL を外に出さない"""
+    out = {d for fl in p.flows for _, rs in fl.entries for _, d in rs if d != "reply" and not d.startswith("wait ")}
+    return out | {d for t in p.triggers for _, _, d in t.causes}
+
+
 def routes(p) -> list[tuple]:
     """(メソッド, 経路, 動作, 対象, リソース名, 結果→状態) の一覧。宣言の順"""
     out = []

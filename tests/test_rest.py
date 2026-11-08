@@ -44,6 +44,61 @@ def test_海外店は検査を通り_仕様書にルートが出る():
     assert "## ルート" in text and "| POST | /orders | create | 注文 | 受付→201," in text and "/customers/:customer_id/orders" in text
 
 
+def test_流れの途中の処理の_URL_は内部として仕様書に出て_定義に印が付く():
+    """返事・期限・前の処理の結果から進む処理（nexus と trigger の行き先）の URL は「内部」。サーバーは --test のときだけ答える。
+    画面の操作や、出来事から起こす処理の URL は「呼べる」"""
+    from geas.hostgen import definitions
+    from geas.rest import INTERNAL, OPEN
+    ck = chk(CODE)
+    outside = {(m, path): o for m, path, *_, o in build(ck)["ルート"]}
+    assert outside[("POST", "/orders")] == OPEN and outside[("PUT", "/products/:id")] == OPEN and outside[("GET", "/orders")] == OPEN
+    assert outside[("POST", "/order_completions")] == INTERNAL  # 決済と在庫の見立ての結果から（前の処理の結果）
+    assert outside[("POST", "/point_grants")] == INTERNAL  # 受付のあとの並列の枝
+    assert outside[("POST", "/order_settlements")] == INTERNAL and outside[("POST", "/expiry_cancellations")] == INTERNAL  # 返事がそろったら・期限（trigger）
+    assert outside[("POST", "/order_recheck_requests")] == OPEN  # 出来事（つながりが戻った）から起こす処理
+    text = render(ck, build(ck))
+    assert "| POST | /order_completions | create | 注文の確定 | 反映済→201, 注文なし→404, 状態違い→409, 在庫が足りなかった→422 | 内部（流れの途中） |" in text
+    defs = {(r["method"], r["path"]): r for r in definitions(ck)["routes"]}
+    assert defs[("POST", "/order_completions")]["internal"] is True and "internal" not in defs[("POST", "/orders")]
+
+
+def test_画面の操作に流れの途中の処理は使えない():
+    ck = chk(mutate(CODE, "restock_product: Restocked → reply,", "restock_product: Restocked → withdraw_product,"))
+    assert any("操作の処理「商品の取り下げ」は流れの途中の処理" in m for m in msgs(ck))  # 名前は表示名に置き換わる
+
+
+def test_計画書のルートの表に外からの列があれば突合する():
+    inner = {"/payment_requests", "/stock_holds", "/point_grants", "/campaign_point_grants", "/order_settlements", "/order_completions",
+             "/unpaid_cancellations", "/refund_cancellations", "/expiry_cancellations"}
+    lines = []
+    for line in PLAN.split("\n"):
+        if line == "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |":
+            line += " 外から |"
+        elif line == "|---|---|---|---|---|" and lines and lines[-1].endswith("外から |"):
+            line += "---|"
+        elif line.startswith(("| POST | /", "| GET | /", "| PUT | /", "| DELETE | /")) and line.count("|") == 6:
+            line += " 内部（流れの途中） |" if line.split(" | ")[1] in inner else " 呼べる |"
+        lines.append(line)
+    plan = "\n".join(lines)
+    assert "| POST | /order_completions | create | 注文の確定 | 反映済→201, 注文なし→404, 状態違い→409, 在庫が足りなかった→422 | 内部（流れの途中） |" in plan
+    assert _compare(plan) == []
+    f = _compare(plan.replace("在庫が足りなかった→422 | 内部（流れの途中） |", "在庫が足りなかった→422 | 呼べる |"))
+    assert [x.where for x in f] == ["ルート POST /order_completions の外から"]
+
+
+def test_流れの途中から外れて外から呼べるようになった_URL_は_レシートの弱くなったものに出る(tmp_path):
+    from geas.receipt import build_receipt, to_markdown
+    f = tmp_path / "app.geas"
+    opened = mutate(CODE, "settle_order: Approved → complete_order,", "settle_order: Approved → reply,")
+    f.write_text(opened)
+    r = build_receipt(chk(opened), chk(CODE), str(f), CODE, "前の版")
+    assert [w[:3] for w in r.weakened] == [("URL POST /order_completions", "内部（流れの途中）", "呼べる")]
+    assert "| URL POST /order_completions | 内部（流れの途中） → 呼べる | 流れの途中から外れ、外から直接呼べるようになりました |" in to_markdown(r)
+    f.write_text(CODE)
+    back = build_receipt(chk(CODE), chk(opened), str(f), opened, "前の版")  # 逆向き（流れの途中に入った）は、強くなったほう
+    assert back.weakened == [] and [w[:3] for w in back.strengthened] == [("URL POST /order_completions", "呼べる", "内部（流れの途中）")]
+
+
 def test_結果の状態が抜けるとエラー():
     ck = chk(mutate(CODE, "    NoSuchCustomer → 404\n  }\n  index order_list", "  }\n  index order_list"))
     assert any("結果「顧客なし」の HTTP の状態がありません" in m for m in msgs(ck))

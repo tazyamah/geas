@@ -1087,8 +1087,10 @@ class Checker:
     def check_screens(self):
         """画面の検査。見せる問い合わせ・呼ぶ処理・行き先が実在し、処理の入力が入力欄か受け取る値で埋まり、
         結果の種類ごとの行き先に漏れがないこと。最初に宣言した画面から行けない画面は警告。見た目の指定（design）は形だけ確かめる。"""
+        from .rest import internal_targets
         scr = {s.name: s for s in self.p.screens}
         edges: dict[str, set[str]] = {s.name: set() for s in self.p.screens}
+        inner = internal_targets(self.p)  # 流れの途中の処理は、サーバーが外に出さない（画面の操作にできない）
         for sc in self.p.screens:
             where = f"画面 {sc.name}"
             if not (sc.shows or sc.actions or sc.opens):
@@ -1128,6 +1130,9 @@ class Checker:
                 if proc is None:
                     self.d(ERROR, "画面", where, f"操作の処理「{dn}」が未定義です")
                     continue
+                if dn in inner:
+                    self.d(ERROR, "画面", where, f"操作の処理「{dn}」は流れの途中の処理（返事・期限・前の処理の結果から進む処理）なので、"
+                                              "サーバーは外に出しません。画面からは、流れの最初の処理を呼んでください")
                 for n, ty in proc.inputs:
                     covered.add(n)
                     if n not in have and n not in sc.fields and not ty.optional:
