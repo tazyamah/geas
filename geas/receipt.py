@@ -29,6 +29,7 @@ class Receipt:
     mutation_note: str = ""  # 変異検査を回せなかった理由（元の版が検査を通らないなど）
     errors: int = 0
     questions: int = 0
+    impact: dict = field(default_factory=dict)  # 動きが変わるかもしれないところ：{"処理": [...], "データ": [...], "ルート": [...], "画面": [...], "ユースケース": [...]}
 
 
 def key_of(row: tuple[str, str, str]) -> str:
@@ -37,7 +38,40 @@ def key_of(row: tuple[str, str, str]) -> str:
     return content if target == "不変条件" else f"{target}｜{content.split('：', 1)[0]}"
 
 
-def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str) -> Receipt:
+def impact_of(new: dict, old: dict, plan_rows: list[dict] | None = None) -> dict:
+    """前の版から変わった処理・問い合わせ・データを起点に、その影響が及ぶ URL・画面・ユースケースを、仕様書の表からたどる。
+    たどるのは仕様書に出る関係だけ（処理が読む・書くデータ、URL の呼ぶ先、画面の操作と見せる問い合わせ、ユースケースの手順）"""
+    from .review import _row_text
+
+    def rows(spec, key):
+        return {(x["処理"] if key == "処理" else x["問い合わせ"] if key == "問い合わせ" else x[0]): _row_text(x) for x in spec.get(key, [])}
+
+    deeds, entities = set(), set()
+    for key in ("処理", "問い合わせ"):
+        a, b = rows(old, key), rows(new, key)
+        deeds |= {k for k in {*a, *b} if a.get(k) != b.get(k)}
+    for key in ("データ", "状態", "遷移", "拒否", "削除", "不変条件"):
+        a = [_row_text(x) if not isinstance(x, str) else x for x in old.get(key, [])]
+        b = [_row_text(x) if not isinstance(x, str) else x for x in new.get(key, [])]
+        for x in b + a:
+            if x not in a or x not in b:
+                entities.add(x.split("　／　", 1)[0].split(":", 1)[0].strip())
+    for d in [*new.get("処理", []), *new.get("問い合わせ", [])]:
+        name = d.get("処理") or d.get("問い合わせ")
+        if any(r.split(".", 1)[0] in entities for r in [*d.get("読む", []), *d.get("書く", [])]):
+            deeds.add(name)
+    routes = sorted({f"{m} {path}" for m, path, _, tgt, _ in new.get("ルート", []) if tgt in deeds})
+    screens = {sc for sc, op, _, _ in new.get("画面遷移", []) if op in deeds}
+    screens |= {x[0] for x in new.get("画面", []) if any(q.strip() in deeds for q in x[1].split(","))}
+    ucs = []
+    for r in plan_rows or []:
+        if r.get("操作", "").strip() in deeds or r.get("画面", "").strip() in screens:
+            ucs.append(r["ユースケース"])
+    return {"処理": sorted(deeds), "データ": sorted(e for e in entities if e), "ルート": routes, "画面": sorted(screens),
+            "ユースケース": list(dict.fromkeys(ucs))}
+
+
+def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str, plan_rows: list[dict] | None = None) -> Receipt:
     from . import mutate
     new, old = build(ck)["保証の強さ"], build(base_ck)["保証の強さ"]
     old_by = {key_of(r): r for r in old}
@@ -54,6 +88,7 @@ def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str
         elif rank[row[0]] < rank[prev[0]]:
             r.strengthened.append((row[1], prev[0], row[0], row[2]))
     r.strengthened += [(p[1], p[0], "（無くなった）", p[2]) for p in old if key_of(p) not in new_keys and p[0] in WEAK]
+    r.impact = impact_of(build(ck), build(base_ck), plan_rows)
     r.errors = sum(1 for d in ck.diags if d.level == ERROR)
     r.questions = sum(1 for d in ck.diags if d.level == QUESTION)
     try:
@@ -69,6 +104,16 @@ def counts_text(cs: list[tuple[str, int]]) -> str:
     return "、".join(f"{lv} {n}" for lv, n in cs) or "なし"
 
 
+IMPACT_LABELS = (("処理", "処理・問い合わせ"), ("データ", "データ（項目・状態・遷移・削除・不変条件）"), ("ルート", "URL"), ("画面", "画面"), ("ユースケース", "ユースケース（計画書を渡したときだけ）"))
+
+
+def impact_lines(imp: dict) -> list[str]:
+    if not any(imp.values()):
+        return ["処理・データの変更はありません（または、仕様書に出る関係では影響が見つかりません）。"]
+    out = ["変わった処理・データと、それにつながる URL・画面・ユースケースです。人が動きを確かめる範囲の目安で、漏れがないことまでは保証しません。", ""]
+    return out + [f"- {label}：{'、'.join(imp[k])}" for k, label in IMPACT_LABELS if imp.get(k)]
+
+
 def to_markdown(r: Receipt) -> str:
     out = [f"## 信頼のレシート（比較元：{r.label}）", ""]
     bad = r.weakened or r.added_weak
@@ -81,6 +126,7 @@ def to_markdown(r: Receipt) -> str:
     if r.strengthened:
         out += ["", "### 強くなった・無くなったもの", "", "| 対象 | 変化 | 内容 |", "|---|---|---|"]
         out += [f"| {t} | {a} → {b} | {c} |" for t, a, b, c in r.strengthened]
+    out += ["", "### 動きが変わるかもしれないところ", ""] + impact_lines(r.impact)
     out += ["", f"### 保証の強さの件数", "", f"- 前：{counts_text(r.before)}", f"- 今：{counts_text(r.after)}"]
     out += ["", "### 変異検査の生き残り（変わった行を崩しても、検査器が何も言わなかったもの）", ""]
     if r.mutation_note:
@@ -106,6 +152,7 @@ def to_html(r: Receipt) -> str:
         parts.append(lead("保証が弱くなったもの、増えた人の保証はありません。"))
     if r.strengthened:
         parts.append("<h3>強くなった・無くなったもの</h3>" + table(["対象", "変化", "内容"], [(t, f"{a} → {b}", c) for t, a, b, c in r.strengthened]))
+    parts.append("<h3>動きが変わるかもしれないところ</h3>" + "".join(lead(escape(x)) for x in impact_lines(r.impact) if x))
     parts.append("<h3>保証の強さの件数</h3>" + lead(f"前：{escape(counts_text(r.before))}") + lead(f"今：{escape(counts_text(r.after))}"))
     parts.append("<h3>変異検査の生き残り</h3>")
     if r.mutation_note:

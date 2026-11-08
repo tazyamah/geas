@@ -85,13 +85,21 @@ def run_mutate(a) -> int:
         else:
             base, scope = None, "すべての行"
         ms, why = mutate.run(a.code, base)
+        run_note = None
+        if a.run and not why:
+            if not a.plan:
+                print("--run には --plan 計画書.md が要ります", file=sys.stderr)
+                return 2
+            run_note = mutate.run_examples(a.code, ms, Path(a.plan).read_text())
     except (ParseError, LexError, ModuleError, ValueError) as e:
         print(f"エラー: {e}", file=sys.stderr)
         return 2
     if why:
         print(why, file=sys.stderr)
         return 1
-    text = mutate.report(ms, Path(a.code).name, scope)
+    text = mutate.report(ms, Path(a.code).name, scope + ("（具体例も動かして確認）" if a.run and not run_note else ""))
+    if run_note:
+        print(run_note, file=sys.stderr)
     Path(a.o).write_text(text) if a.o else print(text)
     return 0
 
@@ -108,9 +116,48 @@ def run_receipt(a) -> int:
     except (ValueError, OSError) as e:
         print(f"前の版を読めません: {e}", file=sys.stderr)
         return 2
-    text = to_markdown(build_receipt(ck, base_ck, a.code, base_text, label))
+    rows = read_plan(Path(a.plan).read_text()).get("ユースケース", []) if a.plan else None
+    text = to_markdown(build_receipt(ck, base_ck, a.code, base_text, label, rows))
     Path(a.o).write_text(text) if a.o else print(text)
     return 0
+
+
+def run_trace(a) -> int:
+    from .trace import read_log, to_markdown, trace
+    ck = load(a.code)
+    try:
+        text = sys.stdin.read() if a.log == "-" else Path(a.log).read_text()
+    except OSError as e:
+        print(f"ログを読めません: {e}", file=sys.stderr)
+        return 2
+    entries = read_log(text)
+    if not entries:
+        print("geas のルートのログ（\"log\": \"geas.route\" の行）が見つかりません。", file=sys.stderr)
+        return 2
+    rows = read_plan(Path(a.plan).read_text()).get("ユースケース", []) if a.plan else None
+    t = trace(ck, entries, rows)
+    out = to_markdown(t, Path(a.code).name)
+    Path(a.o).write_text(out) if a.o else print(out)
+    return 1 if t["unknown"] else 0
+
+
+def run_bench_cmd(a) -> int:
+    import json
+    from . import bench
+    cases, runs = Path(a.cases), Path(a.runs)
+    if not cases.is_dir() or not runs.is_dir():
+        print("ケース集と結果の置き場は、どちらもフォルダで渡してください。", file=sys.stderr)
+        return 2
+    scores = bench.run_bench(cases, runs, run=not a.no_run)
+    if not scores:
+        print("ケース集に plan.md を持つフォルダがありません。", file=sys.stderr)
+        return 2
+    base = json.loads(Path(a.baseline).read_text()) if a.baseline else None
+    if a.json:
+        Path(a.json).write_text(bench.to_json(scores))
+    text = bench.to_markdown(scores, base)
+    Path(a.o).write_text(text) if a.o else print(text)
+    return 0 if all(s.passed for s in scores) else 1
 
 
 def main(argv=None) -> int:
@@ -124,6 +171,7 @@ def main(argv=None) -> int:
     iv.add_argument("--force", action="store_true", help="init で既存の台帳を上書きする")
     c = sub.add_parser("check", help="コードを検査する")
     c.add_argument("code")
+    c.add_argument("--json", action="store_true", help="結果を JSON で出す（AI が直すための手がかり hint つき）")
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
     s.add_argument("code")
     s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")
@@ -152,12 +200,27 @@ def main(argv=None) -> int:
     mu.add_argument("code")
     mu.add_argument("--base", help="前の版のコード。変わった行だけを崩す")
     mu.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする。変わった行だけを崩す")
+    mu.add_argument("--run", action="store_true", help="検査器が止めなかった崩し方を、計画書の具体例を動かして確かめる（--plan が要る。Rust をビルドするので遅い）")
+    mu.add_argument("--plan", help="--run で使う計画書（①）")
     mu.add_argument("-o", help="結果を Markdown で書き出す")
     rc = sub.add_parser("receipt", help="変更ごとのレシート：前の版と比べた、信頼に関わる変化（PR の本文に貼る Markdown）")
     rc.add_argument("code")
     rc.add_argument("--base", help="前の版のコード")
     rc.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする")
+    rc.add_argument("--plan", help="計画書（①）。渡すと、動きが変わるユースケースも出す")
     rc.add_argument("-o", help="結果を Markdown で書き出す")
+    tr = sub.add_parser("trace", help="運用のログ（生成したサーバーの標準エラー）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べないものがあれば終了コード 1")
+    tr.add_argument("code")
+    tr.add_argument("log", help="ログのファイル（- なら標準入力）")
+    tr.add_argument("--plan", help="計画書（①）。渡すと、ユースケースと画面も出す")
+    tr.add_argument("-o", help="結果を Markdown で書き出す")
+    bn = sub.add_parser("bench", help="AI が計画書から書いた .geas の採点（PR の直前・ビルドの直前に 1 回）。AI は呼ばず、書かれたものを採点するだけ")
+    bn.add_argument("cases", help="ケース集のフォルダ（<名前>/plan.md）")
+    bn.add_argument("runs", help="AI が書いた結果の置き場（<名前>/app.geas、<名前>/rounds.txt）")
+    bn.add_argument("--no-run", action="store_true", help="具体例を動かさない（Rust をビルドしない）")
+    bn.add_argument("--baseline", help="前回の --json の出力。悪くなったケースを示す")
+    bn.add_argument("--json", help="結果を JSON で書き出す（次回の --baseline 用）")
+    bn.add_argument("-o", help="結果を Markdown で書き出す")
     a = ap.parse_args(argv)
 
     if a.cmd == "interview":
@@ -166,8 +229,24 @@ def main(argv=None) -> int:
         return run_mutate(a)
     if a.cmd == "receipt":
         return run_receipt(a)
-    ck = load(a.code)
+    if a.cmd == "trace":
+        return run_trace(a)
+    if a.cmd == "bench":
+        return run_bench_cmd(a)
+    if a.cmd == "check" and a.json:
+        from .hints import syntax_json
+        try:
+            ck = check(parse(Path(a.code).read_text(), a.code), strict_names=True)
+        except (ParseError, LexError, ModuleError) as e:
+            print(syntax_json(a.code, str(e)), end="")
+            return 2
+    else:
+        ck = load(a.code)
     if a.cmd == "check":
+        if a.json:
+            from .hints import to_json
+            print(to_json(ck, a.code), end="")
+            return 0 if ck.ok else 1
         for d in ck.diags:
             print(d)
         print("検査: " + ("通りました" if ck.ok else "エラーがあります"))
@@ -193,7 +272,7 @@ def main(argv=None) -> int:
         receipt = None
         if a.diff_o and base_ck is not None:
             from .receipt import build_receipt
-            receipt = build_receipt(ck, base_ck, a.code, base_text, base_label)
+            receipt = build_receipt(ck, base_ck, a.code, base_text, base_label, read_plan(plan_md).get("ユースケース", []) if plan_md else None)
         Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
         if a.diff_o:
             Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label, receipt=receipt))

@@ -46,12 +46,14 @@ python -m pytest tests                                                # テス�
 ## コマンド
 
 ```sh
-python -m geas check アプリ.geas                       # 検査。エラー・警告・問いを出す。終了コードは、エラーがあれば 1
+python -m geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを出す。終了コードは、エラーがあれば 1。--json は、指摘ごとに hint（見る節と直し方）を付けた JSON（構文エラーは終了コード 2）
 python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
-python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束
-python -m geas receipt アプリ.geas --base-git HEAD~1 [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・生き残り）。PR の本文に貼る
+python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [--run --plan 計画書.md] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束（`--run --plan` を付けると、生き残りを計画書の具体例でも確かめ、食い違えば「具体例で検出」にする。Rust をビルドするので遅い）
+python -m geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・動きが変わるかもしれない処理・URL・画面・ユースケース・生き残り）。PR の本文に貼る
+python -m geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
+python -m geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
 python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
 python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--seed 最初のデータ.json] [--server URL]
 python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
@@ -145,7 +147,10 @@ python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
 | `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
 | `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
-| `receipt.py` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化と変異検査の生き残り |
+| `receipt.py` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化・影響範囲・変異検査の生き残り |
+| `hints.py` | `check --json` の hint（指摘の種類ごとの、見る節と直し方）。検査器の指摘の種類を足したら、ここにも足す（テストが見張る） |
+| `trace.py` | `geas trace`。サーバーの構造化ログを仕様書の行に結ぶ |
+| `bench.py` | `geas bench`。AI が書いた `.geas` の採点 |
 | `mutate.py` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
 | `modules.py` | `use`／`module` |
 | `names.py` | 名前の規則と表示名の検査 |

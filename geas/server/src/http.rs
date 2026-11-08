@@ -164,8 +164,13 @@ fn is_screen_url(path: &str) -> bool {
     })
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
 /// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None
 fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+    let started = std::time::Instant::now();
     let verb = match method {
         Method::Get => "GET",
         Method::Post => "POST",
@@ -218,10 +223,16 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -
             }
             k => Err((501, format!("動作 {} は実装していません", k))),
         };
-        return Some(match out {
-            Ok((code, v)) => json_resp(code, v),
-            Err((code, m)) => json_resp(code, json!({ "error": m })),
-        });
+        let (code, v) = match out {
+            Ok((code, v)) => (code, v),
+            Err((code, m)) => (code, json!({ "error": m })),
+        };
+        // 構造化ログ：仕様書のルート表の行（動作・経路・呼ぶもの）と結果の種類に戻れる 1 行。本文と入力の値は書かない（`geas trace` が読む）
+        eprintln!("{}", json!({
+            "log": "geas.route", "ts_ms": now_ms(), "method": verb, "route": r["path"], "target": target,
+            "result": v["result"], "status": code, "ms": started.elapsed().as_millis() as u64,
+        }));
+        return Some(json_resp(code, v));
     }
     None
 }
