@@ -217,6 +217,7 @@ class Checker:
         self.check_resources()
         self.check_deletes()
         self.check_isolations()
+        self.check_needs()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -926,6 +927,37 @@ class Checker:
             elif who == "store" and kind not in VERIFIED_STORES and not why.strip():
                 self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f'保存先の種類「{kind}」は geas が確かめていないので、人の保証として理由を "…" で書いてください'
                                        f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）"))
+
+    def check_needs(self):
+        """needs（アプリが環境に要求すること）の検査。環境の実際は書かないので、ここで見るのは書き方と、導出した保証との食い違いだけ"""
+        from .envreq import NAME_RE, NS_RE, derived_instance_limit, effect_namespaces
+        p = self.p
+        spaces = effect_namespaces(p)
+        seen, one = set(), {}
+        for kind, target, value, why, line in p.needs:
+            where = f"needs {kind}" + (f" {target}" if target else "")
+            if kind == "secret":
+                ns, _, nm = target.partition(".")
+                if not (NS_RE.match(ns) and NAME_RE.match(nm)):
+                    self.diags.append(Diag(ERROR, "環境", where, "シークレットの名前は `外部.名前`（外部は UpperCamel、名前は lower_snake の半角英数）で書きます"))
+                elif ns not in spaces:
+                    self.diags.append(Diag(ERROR, "環境", where, f"「{ns}」という外部作用の名前空間がありません（`effect {ns}.…` で宣言した外部だけが、秘密を使えます）"
+                                           + (f"。ある外部：{'・'.join(spaces)}" if spaces else "")))
+                if target in seen:
+                    self.diags.append(Diag(ERROR, "環境", where, f"シークレット {target} の needs が2つ以上あります"))
+                seen.add(target)
+            else:
+                if kind in one:
+                    self.diags.append(Diag(ERROR, "環境", where, f"needs {kind} は1つだけ書けます"))
+                one[kind] = value
+        limit = derived_instance_limit(p)
+        if limit is not None and isinstance(one.get("instances"), int) and one["instances"] > limit:
+            procs = "・".join(w for w, (who, _, _, _) in p.isolations.items() if who == "process")
+            self.diags.append(Diag(ERROR, "環境", "needs instances", f"at_most {one['instances']} は、保存先 {procs} の isolation process の保証（同時に動くサーバーは {limit} 台）より緩いので書けません。"
+                                   f"書けるのは、導出した上限より厳しい値だけです。台数を増やすなら、保存先を `isolation store(種類)` にしてください"))
+        if p.resources and "exposure" not in one:
+            self.diags.append(Diag(WARN, "環境", "needs exposure", '公開範囲が書かれていません。`needs exposure public "理由"`（インターネットに公開してよい）か '
+                                   '`needs exposure internal "理由"`（公開しない）を書くと、動かす前提に出ます'))
 
     def check_deletes(self):
         """削除の検査。on delete の宣言先が実在し、keep と removable が食い違わず、消されるデータを参照している項目は、扱い（detach・cascade・leave）が決まっていること（決まっていなければ問い）。

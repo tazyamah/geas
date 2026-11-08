@@ -176,6 +176,9 @@ def main(argv=None) -> int:
     s.add_argument("code")
     s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")
     s.add_argument("-o")
+    ev = sub.add_parser("env-checks", help="動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す")
+    ev.add_argument("code")
+    ev.add_argument("--json", action="store_true", help="JSON で出す（plan の照合器や、検査ツールへの変換器が読む）")
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
     v.add_argument("code")
     v.add_argument("--plan", help="計画書（①）")
@@ -251,6 +254,15 @@ def main(argv=None) -> int:
             print(d)
         print("検査: " + ("通りました" if ck.ok else "エラーがあります"))
         return 0 if ck.ok else 1
+    if a.cmd == "env-checks":
+        from . import envreq
+        if not ck.ok:
+            for d in ck.diags:
+                print(d, file=sys.stderr)
+            print("検査: エラーがあります（直してから一覧を出してください）", file=sys.stderr)
+            return 1
+        print(envreq.to_json(ck.p) if a.json else envreq.to_text(ck.p), end="")
+        return 0
     if a.cmd == "spec":
         text = render(ck, build(ck), f"（{Path(a.code).name}）")
         if a.plan:
