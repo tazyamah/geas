@@ -316,6 +316,30 @@ def test_同じDBファイルを使うサーバーが2つあっても_直列に�
         other.stop()
 
 
+@pytest.mark.xfail(strict=True, reason="既知の不具合：期限の発火は、同じ DB を共有する複数サーバーで二重になる（tick が期限の一覧を直列化の外で読み、待ちを消せたか確かめずに進むため）。直したらこの印を外す")
+def test_同じDBファイルを使うサーバーが2つあっても_期限の発火は待ち1件につき1回だけになる(built, server):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    n = 40
+    server.mock(PaySettled={"drop": True}, DepotSettled={"drop": True})
+    other = Server(built, server.db)
+    other.start()
+    try:
+        pids = [server.accept()[0] for _ in range(n)]
+        for pid in pids:
+            assert server.call("POST", "/nudge_requests", {"parcel_id": pid})[0] == 201
+        # 時計は 1 台ごとに進むので、2 台を同時に期限の先へ進める。期限の一覧を両方が読む
+        with ThreadPoolExecutor(2) as ex:
+            list(ex.map(lambda s: s.advance(10 * 60 + 30), [server, other]))
+        time.sleep(3)  # ticker（300ms ごと）が両方の台で回るのを待つ
+        # /api/test/state の effects は件数が切れるので、DB を直接数える
+        keys = [k for (k,) in sqlite3.connect(server.db).execute("SELECT idem_key FROM geas_effects WHERE name = 'Courier.send'")]
+        assert sorted(keys) == sorted(pids), f"期限の発火は {n} 回のはずが {len(keys)} 回"
+    finally:
+        other.stop()
+
+
 def test_大きすぎる本文は読み込まずに413で断り_上限ちょうどの文字列は通る(server):
     req = urllib.request.Request(server.base + "/parcels", method="POST", data=b"x" * (16 * 1024 * 1024 + 1), headers={"Content-Type": "application/json"})
     with pytest.raises(urllib.error.HTTPError) as e:
