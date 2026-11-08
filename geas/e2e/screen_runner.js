@@ -42,6 +42,19 @@ async function calibrate(browser, defs) {
   return { L, S, P, budget };
 }
 
+// 前のユースケースが出した外部作用の模擬の返事が、届き終わるまで待つ（上限は較正から）。
+// 「前のユースケースの結果が残る」は、返事まで済んだ結果のこと。待たないと、次のユースケースの操作が返事より先か後かが、
+// サーバーの速さで変わる（例：返事で「発送済み」になってから取り下げる手順が、返事より先に押されて失敗する）
+async function settle(cal) {
+  const t0 = Date.now();
+  for (;;) {
+    const jobs = await getJson("/api/test/state").then((s) => s.jobs || [], () => []);
+    if (!jobs.length) return;
+    if (Date.now() - t0 > cal.budget) throw new Error(`前のユースケースの返事（${jobs.map((j) => j.reply).join("・")}）が ${cal.budget}ms たっても届き終わりません`);
+    await new Promise((ok) => setTimeout(ok, 100));
+  }
+}
+
 const replaceId = (rt, st) => (rt.id_input ? (st.replace.find((r) => r.field === rt.id_input) || {}).value : undefined);
 const routeOf = (defs, deed) => defs.routes.find((r) => r.target === deed && r.kind !== "index" && r.kind !== "show");
 const pathRe = (pat) => new RegExp("^" + pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:[A-Za-z0-9_]+/g, "[^/]+") + "/?$");
@@ -212,7 +225,7 @@ async function runExtCases(extCases, cal) {
   const cal = await calibrate(browser, defs);
   const pwa = cases.filter((c) => !c.steps[0].ext), ext = cases.filter((c) => c.steps[0].ext);
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
-  for (const c of pwa) { console.log(c.name); await runPwaCase(ctx, defs, cal, c); }
+  for (const c of pwa) { console.log(c.name); await settle(cal); await runPwaCase(ctx, defs, cal, c); }
 
   // 基盤の確認（計画書の手順にはない、汎用の画面の約束）：オフラインでも画面が開く／開発用の操作パネルが定義どおり動く
   const p = await ctx.newPage();

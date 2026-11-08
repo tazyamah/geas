@@ -14,6 +14,13 @@ pub struct Engine {
     pub mock: Mock,
     /// テストで時計を進める秒数
     pub clock_offset: i64,
+    /// 保存をメモリに持つ（DB と同じ内容）。None なら、次に使うときに DB から全部を読む。
+    /// 1 リクエストごとに全件を読んで JSON で渡し直すと、時間とメモリが件数に比例するため
+    store: Option<geas_app::Store>,
+    /// store を読んだときの DB の data_version。別の接続が書くと変わるので、そのときだけ読み直す
+    store_version: i64,
+    /// このトランザクションの中で、メモリ上の保存を書き換えたか（巻き戻すときは、メモリ上の保存も捨てて読み直す）
+    dirty: bool,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -23,45 +30,92 @@ fn s(v: &Value, k: &str) -> String {
 impl Engine {
     pub fn new(db: Db) -> R<Engine> {
         let defs: Value = serde_json::from_str(geas_app::host::DEFS_JSON).map_err(|x| x.to_string())?;
-        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0 })
+        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0, store: None, store_version: 0, dirty: false })
     }
 
     pub fn now(&self) -> i64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) + self.clock_offset
     }
 
-    /// 生成した host を1回呼ぶ。保存は DB から読み、書込は差分だけ DB へ戻す
-    fn call(&self, name: &str, ctx: &Value, input: &Value) -> R<Value> {
-        // 処理が触れる実体（定義の touches）だけを読む。定義に無ければ全部読む
-        let touches: Option<Vec<String>> = self.defs["deeds"].get(name).and_then(|d| d.get("touches")).and_then(|t| t.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect());
-        let before = self.db.load_entities(touches.as_deref())?;
-        let req = json!({ "name": name, "ctx": ctx, "input": input, "store": before }).to_string();
-        let out = geas_app::host::call(&req)?;
-        let resp: Value = serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))?;
-        if let Some(after) = resp.get("store") {
-            self.db.save_diff(&before, after)?;
+    /// メモリ上の保存を、DB の今の内容に合わせる。別の接続が書いていなければ、何も読まない
+    fn ensure_store(&mut self) -> R<()> {
+        if self.db.in_transaction() {
+            return self.reload_if_stale();
         }
-        Ok(resp)
+        // トランザクションの外（問い合わせ）：読み直すなら、全部の表を同じ時点の内容で読む。
+        // 読み込みの途中で panic しても、読むだけのトランザクションを開いたままにしない（次のリクエストが始められなくなる）
+        self.db.begin_read()?;
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reload_if_stale()))
+            .unwrap_or_else(|_| Err("保存を読めません（内部の異常）".into()));
+        self.db.rollback();
+        r
+    }
+
+    fn reload_if_stale(&mut self) -> R<()> {
+        let version = self.db.data_version()?;
+        if self.store.is_some() && version == self.store_version {
+            return Ok(());
+        }
+        self.store = None;
+        let mut s = geas_app::Store::default();
+        self.db.each_row(|en, k, row| geas_app::host::load_row(&mut s, en, k, row).map_err(|x| format!("保存の行 {}「{}」が読めません: {}", en, k, x)))?;
+        self.store = Some(s);
+        self.store_version = version;
+        Ok(())
+    }
+
+    /// 生成した host を1回呼ぶ。保存はメモリ上のものを使い、処理が変えた行だけを DB へ書く
+    fn call(&mut self, name: &str, ctx: &Value, input: &Value) -> R<Value> {
+        self.ensure_store()?;
+        let store = self.store.as_mut().ok_or("保存を読めません")?;
+        let req = json!({ "name": name, "ctx": ctx, "input": input }).to_string();
+        let mut changed = geas_app::Changed::new();
+        let out = geas_app::host::call_store(&req, store, &mut changed);
+        // 同じ行が何度変わっても、書くのは最後の内容を 1 回
+        changed.sort_unstable();
+        changed.dedup();
+        let mut written = Ok(());
+        if out.is_ok() {
+            for (en, k) in &changed {
+                written = self.db.write_row(en, k, geas_app::host::row_json(store, en, k).as_deref());
+                if written.is_err() {
+                    break;
+                }
+            }
+        }
+        if !changed.is_empty() {
+            // DB と食い違ったメモリ上の保存は使わない（トランザクションの中なら、巻き戻すときに捨てる）
+            self.dirty = true;
+            if (out.is_err() || written.is_err()) && !self.db.in_transaction() {
+                self.store = None;
+            }
+        }
+        let out = out?;
+        written?;
+        serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))
     }
 
     fn atomic<T>(&mut self, f: impl FnOnce(&mut Engine) -> R<T>) -> R<T> {
         self.db.begin()?;
+        self.dirty = false;
         // 想定外の panic があっても、書きかけを巻き戻して異常として返す（Mutex を汚さず、以後のリクエストも動く）
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))) {
-            Ok(Ok(x)) => {
-                self.db.commit()?;
-                Ok(x)
-            }
-            Ok(Err(x)) => {
-                self.db.rollback();
-                Err(x)
-            }
+        let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))) {
+            Ok(Ok(x)) => self.db.commit().map(|()| x),
+            Ok(Err(x)) => Err(x),
             Err(_) => {
-                self.db.rollback();
+                self.dirty = true;
                 Err("内部の異常でこのリクエストを取り消しました".into())
             }
+        };
+        if r.is_err() {
+            self.db.rollback();
+            // メモリ上の保存も巻き戻す（書き換えていたら捨てて、次に使うときに DB から読み直す）
+            if self.dirty {
+                self.store = None;
+            }
         }
+        self.dirty = false;
+        r
     }
 
     // ---- 問い合わせ ----
@@ -71,11 +125,12 @@ impl Engine {
         if !refs.is_empty() {
             return Err(format!("問い合わせ {} は参照 {:?} を要しますが、このサーバーは埋められません", name, refs));
         }
-        let resp = self.call(name, &json!({}), input)?;
-        if let Some(rows) = resp.get("body").and_then(|b| b.get("rows")) {
+        let mut resp = self.call(name, &json!({}), input)?;
+        // 行は複製せずに取り出す（行の多い一覧で、全部を写し直さない）
+        if let Some(rows) = resp.get_mut("body").and_then(|b| b.get_mut("rows")).map(Value::take) {
             Ok(json!({ "rows": rows }))
         } else {
-            Ok(json!({ "ids": resp["args"] }))
+            Ok(json!({ "ids": resp["args"].take() }))
         }
     }
 
@@ -279,8 +334,38 @@ pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::lock;
+    use super::{lock, Engine, R};
+    use crate::db::Db;
     use std::sync::{Arc, Mutex};
+
+    fn engine() -> Engine {
+        let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).unwrap();
+        let entities = empty.as_object().unwrap().keys().cloned().collect();
+        Engine::new(Db::open(":memory:", entities).unwrap()).unwrap()
+    }
+
+    #[test]
+    // 巻き戻したリクエストがメモリ上の保存を書き換えていたら、その保存は捨てて DB から読み直す。書き換えていなければ持ち続ける
+    fn rollback_forgets_the_in_memory_store_only_when_it_was_changed() {
+        let mut en = engine();
+        en.ensure_store().unwrap();
+        let r: R<()> = en.atomic(|_| Err("入力が不正".into()));
+        assert!(r.is_err() && en.store.is_some());
+        let r: R<()> = en.atomic(|en| {
+            en.dirty = true; // 前の段が書いたあとで、次の段が失敗した
+            Err("次の段で失敗".into())
+        });
+        assert!(r.is_err() && en.store.is_none());
+        en.ensure_store().unwrap();
+        let r: R<()> = en.atomic(|_| panic!("想定外の異常"));
+        assert!(r.is_err() && en.store.is_none());
+        en.ensure_store().unwrap();
+        let r: R<()> = en.atomic(|en| {
+            en.dirty = true;
+            Ok(())
+        });
+        assert!(r.is_ok() && en.store.is_some() && !en.dirty);
+    }
 
     #[test]
     // 汚れた Mutex でも続けて取れる
