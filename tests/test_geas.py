@@ -3533,3 +3533,37 @@ def test_前置きの範囲と割合の確認は_判定と文言に分かれて�
     assert "pub fn range_ok(x: i128, lo: Option<i128>, hi: Option<i128>) -> bool" in src
     assert "pub fn ratio_ok(x: &Ratio, lo: Option<i128>, hi: Option<i128>) -> bool" in src
     assert "if !range_ok(x, lo, hi) {" in src and "if !ratio_ok(x, lo, hi) {" in src
+
+
+# ---- 変更ごとのレシート（geas receipt／差分 HTML の節）：前の版と比べた、信頼に関わる変化 ----
+def test_レシートは_保証が弱くなったものと_増えた人の保証を先頭に出す(tmp_path):
+    from geas.receipt import build_receipt, to_markdown, to_html
+    f = tmp_path / "app.geas"
+    base_src = trust_src(' trust verify "仕入れ先が保証"')
+    f.write_text(trust_src(' trust assume "契約 §4"'))
+    r = build_receipt(chk(f.read_text()), chk(base_src), str(f), base_src, "前の版")
+    assert [(w[1], w[2]) for w in r.weakened] == [("検証ビルドだけ確かめる", "確かめない（人の保証）")]  # verify → assume
+    assert r.added_weak == [] and r.strengthened == [] and r.errors == 0
+    md = to_markdown(r)
+    assert md.index("保証が弱くなったもの") < md.index("保証の強さの件数") and "契約 §4" in md
+    assert "保証が弱くなったもの" in to_html(r)
+    # 前に無かった人の保証は「増えた」として出る。何も変わらなければ、弱くなったものは無い
+    f.write_text(trust_src(' trust assume "契約 §4"'))
+    added = build_receipt(chk(f.read_text()), chk(trust_src("")), str(f), trust_src(""), "前の版")
+    assert [(a[0], a[1]) for a in added.added_weak] == [("確かめない（人の保証）", "put_item tax_rate")]
+    same = build_receipt(chk(f.read_text()), chk(f.read_text()), str(f), f.read_text(), "前の版")
+    assert same.weakened == [] and same.added_weak == [] and "ありません" in to_markdown(same)
+
+
+def test_レシートのコマンドと差分HTMLは_同じ内容を出す(tmp_path):
+    from geas.cli import main
+    f, base, out, html = tmp_path / "app.geas", tmp_path / "base.geas", tmp_path / "r.md", tmp_path / "d.html"
+    base.write_text(trust_src(' trust verify "仕入れ先が保証"'))
+    f.write_text(trust_src(' trust assume "契約 §4"'))
+    assert main(["receipt", str(f), "--base", str(base), "-o", str(out)]) == 0
+    assert out.read_text().startswith("## 信頼のレシート") and "契約 §4" in out.read_text()
+    assert main(["receipt", str(f)]) == 2  # 前の版が無ければ断る
+    assert main(["review", str(f), "-o", str(tmp_path / "r.html"), "--diff-o", str(html), "--base", str(base)]) == 0
+    h = html.read_text()
+    assert 'id="receipt"' in h and "信頼のレシート" in h and "検証ビルドだけ確かめる → 確かめない（人の保証）" in h
+    assert h.index('id="receipt"') < h.index('id="changes"')  # 変更点の前に出る

@@ -26,6 +26,22 @@ def load(path):
         sys.exit(2)
 
 
+def load_text(text: str, path):
+    """コードの文字列を、path の場所にあるものとして読む（use の相対参照のため）"""
+    try:
+        return check(parse(text, str(path)), strict_names=True)
+    except (ParseError, LexError, ModuleError) as e:
+        raise ValueError(str(e))
+
+
+def read_base(a) -> tuple[str, str]:
+    """前の版のコードの文字列と、その名前（--base のファイル、または --base-git の版）"""
+    from . import mutate
+    if a.base:
+        return Path(a.base).read_text(), Path(a.base).name
+    return mutate.read_git(Path(a.code), a.base_git), f"git {a.base_git}"
+
+
 def report(findings) -> str:
     if not findings:
         return "突合の結果: 計画とコードに食い違いはありません。\n"
@@ -80,6 +96,23 @@ def run_mutate(a) -> int:
     return 0
 
 
+def run_receipt(a) -> int:
+    from .receipt import build_receipt, to_markdown
+    if not (a.base or a.base_git):
+        print("前の版が要ります（--base 前のコード.geas、または --base-git REV）。", file=sys.stderr)
+        return 2
+    try:
+        base_text, label = read_base(a)
+        ck = load(a.code)
+        base_ck = load_text(base_text, a.base or a.code)
+    except (ValueError, OSError) as e:
+        print(f"前の版を読めません: {e}", file=sys.stderr)
+        return 2
+    text = to_markdown(build_receipt(ck, base_ck, a.code, base_text, label))
+    Path(a.o).write_text(text) if a.o else print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合（試作）")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -120,12 +153,19 @@ def main(argv=None) -> int:
     mu.add_argument("--base", help="前の版のコード。変わった行だけを崩す")
     mu.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする。変わった行だけを崩す")
     mu.add_argument("-o", help="結果を Markdown で書き出す")
+    rc = sub.add_parser("receipt", help="変更ごとのレシート：前の版と比べた、信頼に関わる変化（PR の本文に貼る Markdown）")
+    rc.add_argument("code")
+    rc.add_argument("--base", help="前の版のコード")
+    rc.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする")
+    rc.add_argument("-o", help="結果を Markdown で書き出す")
     a = ap.parse_args(argv)
 
     if a.cmd == "interview":
         return run_interview(a)
     if a.cmd == "mutate":
         return run_mutate(a)
+    if a.cmd == "receipt":
+        return run_receipt(a)
     ck = load(a.code)
     if a.cmd == "check":
         for d in ck.diags:
@@ -142,26 +182,21 @@ def main(argv=None) -> int:
     if a.cmd == "review":
         plan_md = Path(a.plan).read_text() if a.plan else None
         findings = compare_static(build(ck), read_plan(plan_md)) if plan_md else []
-        base_ck, base_label = None, ""
-        if a.base:
-            base_ck, base_label = load(a.base), Path(a.base).name
-        elif a.base_git:
-            import subprocess, tempfile
-            code = Path(a.code).resolve()
-            top = subprocess.run(["git", "-C", str(code.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
-            rel = code.relative_to(Path(top).resolve())
-            old = subprocess.run(["git", "-C", top, "show", f"{a.base_git}:{rel.as_posix()}"], capture_output=True, text=True)
-            if old.returncode:
-                print(f"前の版を読めません（{a.base_git}:{rel.as_posix()}）: {old.stderr.strip()}", file=sys.stderr)
-                return 2
-            with tempfile.TemporaryDirectory() as d:
-                tmp = Path(d) / code.name
-                tmp.write_text(old.stdout)
-                base_ck = load(tmp)
-            base_label = f"git {a.base_git}"
+        base_ck, base_label, base_text = None, "", None
+        try:
+            if a.base or a.base_git:
+                base_text, base_label = read_base(a)
+                base_ck = load_text(base_text, a.base or a.code)
+        except ValueError as e:
+            print(f"前の版を読めません: {e}", file=sys.stderr)
+            return 2
+        receipt = None
+        if a.diff_o and base_ck is not None:
+            from .receipt import build_receipt
+            receipt = build_receipt(ck, base_ck, a.code, base_text, base_label)
         Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
         if a.diff_o:
-            Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label))
+            Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label, receipt=receipt))
             print(f"生成しました: {a.diff_o}")
         elif base_ck is not None:
             print("前の版は、--diff-o で出力先を渡したときだけ使います（仕様書には載せません）。", file=sys.stderr)
