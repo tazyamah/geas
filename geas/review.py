@@ -750,7 +750,7 @@ def page(title: str, h1: str, head_extra: str, body: str, scripts: str, fragment
             f"{head}</head><body>{content}</body></html>\n")
 
 
-def review_changes(ck, findings: list[Finding] | None = None, name: str = "", base_ck=None, base_label: str = "", fragment: bool = False) -> str:
+def review_changes(ck, findings: list[Finding] | None = None, name: str = "", base_ck=None, base_label: str = "", fragment: bool = False, receipt=None) -> str:
     """仕様書とは別の、答えてほしいことと前の版からの変更だけの HTML。更新のたびに人が見るもの"""
     rejects, asks, records = collect_questions(ck, findings)
     verdict, vcls = ("受け入れ可", "ok") if not rejects else ("拒否", "reject")
@@ -762,6 +762,9 @@ def review_changes(ck, findings: list[Finding] | None = None, name: str = "", ba
         parts.append('<section id="questions"><h2>答えてほしいこと</h2>'
                      + lead(f"拒否 {len(rejects)} 件、確認 {len(asks)} 件です。答えるとコードか計画書が直り、もう一度検査されます。")
                      + f'<div class="cards">{"".join(rejects + asks)}</div></section>')
+    if receipt is not None:
+        from .receipt import to_html
+        parts.append(f'<section id="receipt"><h2>信頼のレシート</h2>{lead("前の版と比べた、信頼に関わる変化だけです。仕様書の変更は、この下の「前の版からの変更」にあります。")}{to_html(receipt)}</section>')
     if base_ck is not None:
         parts.append(f'<section id="changes"><h2>前の版からの変更</h2>{changes_section(build(ck), build(base_ck), base_label)}</section>')
     if records:

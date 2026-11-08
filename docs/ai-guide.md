@@ -51,6 +51,7 @@ python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕�
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
 python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束
+python -m geas receipt アプリ.geas --base-git HEAD~1 [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・生き残り）。PR の本文に貼る
 python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
 python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--seed 最初のデータ.json] [--server URL]
 python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
@@ -129,7 +130,7 @@ python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 
 仕様書は[ユースケース][動作][仕様]の3タブ。ユースケース図の「人」は、計画書のユースケースの表に任意の「アクター」列を足すと、その名前で描く（無いときは、ユースケースを始める画面で代用）。
 
-仕様書には、答えてほしいことと件数、前の版からの変更は載せない（別の HTML）。更新のレビューでは `--diff-o 変更点.html` を足し、前の版を `--base 前のコード.geas`、または git の版なら `--base-git HEAD~1` で渡す。
+仕様書には、答えてほしいことと件数、前の版からの変更は載せない（別の HTML）。更新のレビューでは `--diff-o 変更点.html` を足し、前の版を `--base 前のコード.geas`、または git の版なら `--base-git HEAD~1` で渡す。変更点の HTML には、変更の前に「信頼のレシート」の節が出る（`geas receipt` と同じ内容）。PR を出すときは、`geas receipt` の出力を本文に貼る。
 
 ## ソースの地図（`geas/`）
 
@@ -144,6 +145,7 @@ python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 | `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
 | `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
 | `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
+| `receipt.py` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化と変異検査の生き残り |
 | `mutate.py` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
 | `modules.py` | `use`／`module` |
 | `names.py` | 名前の規則と表示名の検査 |
