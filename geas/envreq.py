@@ -95,8 +95,9 @@ def items(p) -> list[dict]:
             out.append(_item("exposure", "到達性", text, f"人が書いた（{why}）", ["plan", "実環境"], ["公開ポート", "公開の許可"], why=why))
     # ---- 前段の約束（外から確かめられない） ----
     if p.resources:
-        out.append(_item("limits", "資源", f"前段（LB・プロキシ）の本文上限が {BODY_LIMIT} 以下で、読み込みの時間切れが設定されている",
-                         f"導出（生成サーバーの上限は本文 {BODY_LIMIT}、JSON の入れ子 {JSON_DEPTH} 段。読み込みの時間切れは部品に口がなく、前段に任せる）",
+        out.append(_item("limits", "資源", "前段（LB・プロキシ）が、遅い読み込みを切る時間切れを持つ",
+                         f"導出（生成サーバーは本文が {BODY_LIMIT} を超えると 413 で断り、JSON の入れ子は {JSON_DEPTH} 段まで。"
+                         "読み込みの時間切れだけは部品に口がなく、前段に任せる。前段の本文上限は、低くても無くても、サーバーが守るので要求しない）",
                          ["人の保証"], [], trust=True, why="外から確かめられない"))
     return out
 
