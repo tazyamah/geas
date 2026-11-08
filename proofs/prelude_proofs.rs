@@ -51,4 +51,61 @@ mod proofs {
         let _ = ceil(any_ratio());
         let _ = half_up(any_ratio());
     }
+
+    /// 文字の判定：2 文字までの文字列で、「使えない文字が無い」ことと「すべての文字が範囲に入る」ことは同値
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn first_bad_char_exact() {
+        let (c1, c2, a, b): (char, char, char, char) = (kani::any(), kani::any(), kani::any(), kani::any());
+        let allowed = [(a, b)];
+        let inside = |c: char| a <= c && c <= b;
+        assert!(first_bad_in([c1, c2].into_iter(), &allowed).is_none() == (inside(c1) && inside(c2)));
+        if let Some(bad) = first_bad_in([c1, c2].into_iter(), &allowed) {
+            assert!(!inside(bad) && (bad == c1 || bad == c2));
+        }
+    }
+
+    /// GTIN の判定：3 文字までの文字列で、「全部が数字で、右から 1 倍・3 倍・1 倍…の和が 10 の倍数」と同値
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn gtin_ok_exact() {
+        let (c1, c2, c3): (char, char, char) = (kani::any(), kani::any(), kani::any());
+        let expected = match (c1.to_digit(10), c2.to_digit(10), c3.to_digit(10)) {
+            (Some(d1), Some(d2), Some(d3)) => (d3 + d2 * 3 + d1) % 10 == 0,
+            _ => false,
+        };
+        assert!(gtin_chars_ok([c1, c2, c3].into_iter()) == expected);
+    }
+
+    /// 幅とかなのそろえは、どんな 1 文字・どんな指定でも panic せず、範囲外の文字は変えず、範囲内は決まった幅だけずらす
+    #[kani::proof]
+    fn fold_width_kana_exact() {
+        let c: char = kani::any();
+        let (kana, width): (bool, bool) = (kani::any(), kani::any());
+        let r = fold_width_kana(c, kana, width);
+        let n = c as u32;
+        let wide = width && (0xFF01..=0xFF5E).contains(&n);
+        let katakana = kana && (0x30A1..=0x30F6).contains(&n);
+        if wide { assert!(r as u32 == n - 0xFEE0); }
+        else if katakana { assert!(r as u32 == n - 0x60); }
+        else { assert!(r == c); }
+    }
+
+    /// 13 桁（JAN）の判定：どんな 13 文字でも、「全部が数字で、右から 1 倍・3 倍…の和が 10 の倍数」と同値
+    #[kani::proof]
+    #[kani::unwind(15)]
+    fn gtin_ok_exact_13() {
+        let cs: [char; 13] = kani::any();
+        let mut sum: u32 = 0;
+        let mut all_digits = true;
+        let mut i = 0;
+        while i < 13 {
+            match cs[12 - i].to_digit(10) {
+                Some(d) => sum += if i % 2 == 1 { d * 3 } else { d },
+                None => all_digits = false,
+            }
+            i += 1;
+        }
+        assert!(gtin_chars_ok(cs.into_iter()) == (all_digits && sum % 10 == 0));
+    }
 }

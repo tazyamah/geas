@@ -85,17 +85,37 @@ pub fn check_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> R
 pub const TIME_LIMIT: i128 = 1_000_000_000_000_000;
 /// 長さの上限を書かなかった文字列の、既定の上限（文字数）。外から入る値を境界で止める。大きくするときは ltype に長さを書く
 pub const TEXT_LIMIT: i128 = 1_048_576;
+/// 使える範囲に入らない最初の文字（文言を組み立てない判定。Kani で証明できる）
+pub fn first_bad_char(s: &str, allowed: &[(char, char)]) -> Option<char> {
+    first_bad_in(s.chars(), allowed)
+}
+pub fn first_bad_in(cs: impl Iterator<Item = char>, allowed: &[(char, char)]) -> Option<char> {
+    let mut cs = cs;
+    cs.find(|c| !allowed.iter().any(|&(a, b)| a <= *c && *c <= b))
+}
 pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), String> {
-    match s.chars().find(|c| !allowed.iter().any(|&(a, b)| a <= *c && *c <= b)) {
+    match first_bad_char(s, allowed) {
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", name, c)),
         None => Ok(()),
     }
 }
 /// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
+/// GTIN の判定（文言を組み立てない判定。足し込みは saturating なので、どれだけ長くても panic しない）
+pub fn gtin_ok(s: &str) -> bool {
+    gtin_chars_ok(s.chars())
+}
+pub fn gtin_chars_ok<I: DoubleEndedIterator<Item = char>>(cs: I) -> bool {
+    let mut sum: u32 = 0;
+    for (i, c) in cs.rev().enumerate() {
+        match c.to_digit(10) {
+            Some(d) => sum = sum.saturating_add(if i % 2 == 1 { d.saturating_mul(3) } else { d }),
+            None => return false,
+        }
+    }
+    sum % 10 == 0
+}
 pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
-    let ds: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
-    let sum: u32 = ds.iter().rev().enumerate().map(|(i, d)| if i % 2 == 1 { d.saturating_mul(3) } else { *d }).sum();
-    if ds.len() != s.chars().count() || sum % 10 != 0 {
+    if !gtin_ok(s) {
         return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
     }
     Ok(())
@@ -122,11 +142,16 @@ pub fn in_range(name: &str, x: i128, lo: Option<i128>, hi: Option<i128>) -> Resu
 }
 pub fn show_bytes(b: &[u8]) -> String { format!("0x{}", b.iter().map(|x| format!("{:02x}", x)).collect::<String>()) }
 /// 検索で同一視する軸をそろえた文字列。大小は小文字へ、かなはカタカナをひらがなへ、幅は全角の英数記号を半角へ
+/// 幅（全角の英数記号→半角）とかな（カタカナ→ひらがな）をそろえる 1 文字分。大小は fold_text が標準ライブラリに任せる。Kani で証明できる
+pub fn fold_width_kana(c: char, fold_kana: bool, fold_width: bool) -> char {
+    let mut c = c;
+    if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0xFEE0)).unwrap_or(c); }
+    if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0x60)).unwrap_or(c); }
+    c
+}
 pub fn fold_text(s: &str, fold_case: bool, fold_kana: bool, fold_width: bool) -> String {
     s.chars().flat_map(|c| {
-        let mut c = c;
-        if fold_width && ('\u{FF01}'..='\u{FF5E}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0xFEE0)).unwrap_or(c); }
-        if fold_kana && ('\u{30A1}'..='\u{30F6}').contains(&c) { c = char::from_u32((c as u32).saturating_sub(0x60)).unwrap_or(c); }
+        let c = fold_width_kana(c, fold_kana, fold_width);
         if fold_case { c.to_lowercase().collect::<Vec<_>>() } else { vec![c] }
     }).collect()
 }
