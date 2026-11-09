@@ -2004,6 +2004,14 @@ def test_説明コメントは意味を変えず_仕様書の名前と表示名�
     assert "名前と表示名" not in render(plain, build(plain))
 
 
+def test_表示名の表は覚えておき_表示名が差し替われば作り直す():
+    ck = chk(mutate(CODE, "/// 顧客\nentity Customer {", "/// 買う人\nentity Customer {"))
+    assert ck.p.show_names("Customer の数") == "買う人 の数"
+    assert ck.p.show_table() is ck.p.show_table()  # 仕様書を作る間は、同じ表を引く
+    ck.p.labels = {**ck.p.labels, "Customer": {"": "客"}}  # 解析の後には変えないが、差し替えたら作り直す
+    assert ck.p.show_names("Customer の数") == "客 の数"
+
+
 # ---- 名前の書き方（半角英数。種類は大文字小文字で見分ける）----
 def strict(src):
     return check(parse(src), strict_names=True)

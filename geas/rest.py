@@ -17,16 +17,24 @@ def singular(word: str) -> str:
     return word[:-1] if word.endswith("s") else word
 
 
-def base_path(p, res, seen=()) -> str:
+def first_by_name(p) -> dict:
+    """名前 → リソース（同じ名前が 2 つあれば、先に書いたほう。重なりは検査器が止める）"""
+    out: dict = {}
+    for r in p.resources:
+        out.setdefault(r.name, r)
+    return out
+
+
+def base_path(p, res, seen=(), by_name=None) -> str:
     """リソースの URL の土台（動作ごとの末尾を付ける前）。親があれば、親の URL に /:親_id を足す"""
     if res.under and res.under not in seen:
-        parent = next((r for r in p.resources if r.name == res.under), None)
+        parent = (by_name or first_by_name(p)).get(res.under)
         if parent is not None:
             ps = singular(snake(parent.name))
             own = snake(res.name)
             if own.startswith(ps + "_"):  # CustomerOrders under Customers → /customers/:customer_id/orders
                 own = own[len(ps) + 1:]
-            return f"{base_path(p, parent, (*seen, res.name))}/:{ps}_id/{own}"
+            return f"{base_path(p, parent, (*seen, res.name), by_name)}/:{ps}_id/{own}"
     return "/" + snake(res.name)
 
 
@@ -41,23 +49,34 @@ def internal_targets(p) -> set[str]:
     return out | {d for t in p.triggers for _, _, d in t.causes}
 
 
+def _table(p) -> tuple[list, dict]:
+    """(ルートの一覧, 対象 → (経路, 動作) の表)。画面ごと・生成物ごとに何度も引くので、Program ごとに 1 回だけ作る
+    （リソースの宣言は構文解析の後に変わらない。差し替えられたら作り直す）"""
+    c = p.__dict__.get("_rest_table")  # (作ったときの resources, 件数, 一覧, 表)
+    if not (c and c[0] is p.resources and c[1] == len(p.resources)):
+        by_name = first_by_name(p)
+        out = []
+        for res in p.resources:
+            base = base_path(p, res, by_name=by_name)
+            for a in res.actions:
+                path = base
+                if a.kind in ("show", "update", "destroy"):
+                    path += "/:" + (res.key or "id")
+                out.append((METHOD[a.kind], path, a.kind, a.target, res.name, tuple(a.statuses)))
+        c = (p.resources, len(p.resources), out, {tgt: (path, kind) for _, path, kind, tgt, _, _ in out})
+        p.__dict__["_rest_table"] = c
+    return c[2], c[3]
+
+
 def routes(p) -> list[tuple]:
     """(メソッド, 経路, 動作, 対象, リソース名, 結果→状態) の一覧。宣言の順"""
-    out = []
-    for res in p.resources:
-        base = base_path(p, res)
-        for a in res.actions:
-            path = base
-            if a.kind in ("show", "update", "destroy"):
-                path += "/:" + (res.key or "id")
-            out.append((METHOD[a.kind], path, a.kind, a.target, res.name, list(a.statuses)))
-    return out
+    return [(m, path, kind, tgt, rn, list(st)) for m, path, kind, tgt, rn, st in _table(p)[0]]
 
 
 def screen_url(p, sc) -> str:
     """画面の URL（html の形式）。操作のある画面は、その処理を create するリソースの /new（入力欄を教える画面）、見せるだけの画面は、見せる問い合わせの URL。
     画面に渡す値（受け取る値）は、URL のフラグメント（#名前=値）に載せる。クエリ文字列は使わない。リソースが無ければ空"""
-    by = {tgt: (path, kind) for _, path, kind, tgt, _, _ in routes(p)}
+    by = _table(p)[1]
     for dn, _ in sc.actions:
         if dn in by and by[dn][1] == "create":
             return by[dn][0] + "/new"
