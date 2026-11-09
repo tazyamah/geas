@@ -36,6 +36,17 @@ def test_名前から_URL_が決まる():
     assert table[("POST", "/order_recheck_requests")] == ("create", "recheck_payment")
 
 
+def test_経路の表は覚えておき_リソースが変われば作り直す():
+    p = chk(CODE).p
+    n = len(routes(p))
+    gone = p.resources.pop()  # 解析の後には変えないが、変えたら作り直す
+    assert len(routes(p)) == n - len(gone.actions)
+    p.resources = [*p.resources, gone]
+    assert len(routes(p)) == n
+    routes(p)[0][5].append(("x", 0))  # 返す一覧は呼ぶたびに新しく、呼んだ側が書き換えても表は変わらない
+    assert ("x", 0) not in routes(p)[0][5]
+
+
 def test_海外店は検査を通り_仕様書にルートが出る():
     ck = chk(CODE)
     assert ck.ok, ck.diags

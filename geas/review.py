@@ -363,7 +363,7 @@ def process_flow(ck, spec, fl) -> str:
 def sequence_of(ck, spec, fl) -> str:
     """このフローの処理が外へ出す依頼と、返ってくる返事を、時間の順に並べる"""
     me = "このシステム"
-    fields = {n: effect_fields(c) for n, c in spec["外部作用"]}
+    contents = dict(spec["外部作用"])  # 項目名は、このフローが出す外部作用の分だけ取り出す（フローごとに全部を分けると、大きいアプリで遅い）
     reply_of = {}
     for eff, resp, _ in spec["模擬"]:
         reply_of.setdefault(eff, resp)
@@ -380,7 +380,8 @@ def sequence_of(ck, spec, fl) -> str:
             system, _, op = eff.partition(".")
             if system not in parts:
                 parts.append(system)
-            msgs.append(svg.Message(me, system, f"{op}（{fields.get(eff, '')}）" if fields.get(eff) else op))
+            fields = effect_fields(contents[eff]) if eff in contents else ""
+            msgs.append(svg.Message(me, system, f"{op}（{fields}）" if fields else op))
             back = reply_of.get(eff, "結果") + (f" → {join[eff]}で待つ" if eff in join else "")
             msgs.append(svg.Message(system, me, back, "dashed"))
     if not msgs:

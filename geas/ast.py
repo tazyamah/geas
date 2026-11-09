@@ -7,6 +7,8 @@ from typing import Optional
 
 # 仕様書に出す日本語の呼び名（言語の名前は半角英数、人に見せる所だけ日本語にする）
 SHOW_JA = {"JPY": "円", "USD": "ドル", "EUR": "ユーロ", "floor": "切り捨て", "ceil": "切り上げ", "half_up": "四捨五入"}
+# 人に見せる文字列の中の、名前に見える語（表示名に置き換える候補）
+_NAME_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass
@@ -300,9 +302,19 @@ class Program:
         """人に見せる文字列の中の名前を表示名（日本語、無ければ既定）に置き換える。生成する Rust には使わない"""
         if not self.labels and not self.origin:
             return text
-        table = {m: f"{mod}.{n}" for m, (mod, n) in self.origin.items()}  # モジュールの定義は、表示名が無ければ 名前.定義名
-        table |= {n: ls.get("ja") or ls.get("") for n, ls in self.labels.items() if ls.get("ja") or ls.get("")}
-        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", lambda m: table.get(m.group(0), m.group(0)), text)
+        table = self.show_table()
+        return _NAME_WORD.sub(lambda m: table.get(m.group(0), m.group(0)), text)
+
+    def show_table(self) -> dict:
+        """名前 → 表示名の表。仕様書を作る間に何万回も引くので、毎回は作らない。
+        labels と origin は構文解析の最後に決まるが、差し替えられたら（別の辞書・件数の変化）作り直す"""
+        c = self.__dict__.get("_show_table")  # (作ったときの labels, origin, 件数, 表)
+        if not (c and c[0] is self.labels and c[1] is self.origin and c[2] == (len(self.labels), len(self.origin))):
+            table = {m: f"{mod}.{n}" for m, (mod, n) in self.origin.items()}  # モジュールの定義は、表示名が無ければ 名前.定義名
+            table |= {n: ls.get("ja") or ls.get("") for n, ls in self.labels.items() if ls.get("ja") or ls.get("")}
+            c = (self.labels, self.origin, (len(self.labels), len(self.origin)), table)
+            self.__dict__["_show_table"] = c
+        return c[3]
 
 
 # ---- 式 ----
