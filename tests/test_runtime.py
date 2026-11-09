@@ -200,6 +200,26 @@ def test_再起動しても待ちと時計の先は続く(server):
     assert pid2 == "parcel-0002"  # ID の採番も再起動で戻らない
 
 
+def test_最初のデータは_DB_が空のときだけ読む(built, tmp_path):
+    """行のある DB で起こすときは、最初のデータ（埋め込みか --seed）を読まない（大きいと、起動のたびに時間とメモリを使う）。
+    読めない最初のデータを渡しても、行のある DB なら起動し、空の DB なら入れられずに止まる"""
+    broken = tmp_path / "broken_seed.json"
+    broken.write_text("{ JSON ではない", encoding="utf-8")
+    s = Server(built, tmp_path / "seeded.sqlite")
+    s.start()
+    pid, _ = s.accept()
+    s.stop()
+    s.extra = ["--seed", str(broken)]
+    s.start()
+    try:
+        assert list(s.parcels()) == [pid]
+    finally:
+        s.stop()
+    r = subprocess.run([str(built / "server" / "target" / "release" / "geas_server"), "--port", "0", "--db", str(tmp_path / "empty.sqlite"), "--seed", str(broken)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "seed.json" in r.stderr, r.stderr[-1000:]
+
+
 def test_計画書のURLの具体例から生成したテストが通る(built):
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", str(built / "tests" / "test_url_examples.py")], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0 and "13 passed" in r.stdout, r.stdout + r.stderr

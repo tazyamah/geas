@@ -54,12 +54,16 @@ pub fn fill_ctx(db: &Db, defs: &Value, refs: &[String], new_ids: &[String], inpu
 }
 
 /// DB が空のときだけ、最初のデータ（seed.json。実体名→キー→行）を入れる。
-/// 空かどうかは各表に 1 行でもあるかで見る（保存の全件は読まない）
-pub fn seed_if_empty(db: &Db, seed: &str) -> R<()> {
-    let seed: Value = serde_json::from_str(seed).map_err(|x| format!("seed.json: {}", x))?;
-    let rows = seed.as_object().ok_or("seed.json はオブジェクトです")?;
+/// 空かどうかは各表に 1 行でもあるかで見る（保存の全件は読まない）。最初のデータは、空のときだけ読む
+/// （大きいと、起動のたびに読んで解析する時間とメモリが、件数に比例してかかるため）
+pub fn seed_if_empty(db: &Db, seed: impl FnOnce() -> R<String>) -> R<()> {
     // 何かの実体にもう行があれば、入れ済み
-    if rows.is_empty() || !db.is_empty()? {
+    if !db.is_empty()? {
+        return Ok(());
+    }
+    let seed: Value = serde_json::from_str(&seed()?).map_err(|x| format!("seed.json: {}", x))?;
+    let rows = seed.as_object().ok_or("seed.json はオブジェクトです")?;
+    if rows.is_empty() {
         return Ok(());
     }
     db.begin()?;
