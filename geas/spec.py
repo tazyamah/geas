@@ -38,7 +38,18 @@ def input_names(inputs) -> list[str]:
     return [n if t.optional else f"{n}（必須）" for n, t in inputs]
 
 
-def query_rows(q) -> dict:
+def order_text(ck: Checker, q) -> str:
+    """並び：日時は新しい順／古い順、数は大きい順／小さい順（コードの desc／asc）"""
+    if not q.order:
+        return ""
+    f, d = q.order
+    dt = ck.data.get(q.target)
+    kind = next((x.type.kind for x in dt.fields if x.name == f), None) if dt else None
+    words = ("新しい順", "古い順") if kind == "日時" else ("大きい順", "小さい順")
+    return f"{f} {words[0] if d == '降順' else words[1]}"
+
+
+def query_rows(ck: Checker, q) -> dict:
     conds = [" または ".join(f"{f} {op} {st}" for f, op, st in group) for group in q.conds]
     ins = dict(q.inputs)
 
@@ -50,7 +61,7 @@ def query_rows(q) -> dict:
               for f, op, a in q.filters]
     cols = [c.name for c in q.select]
     return {"問い合わせ": q.name, "入力": input_names(q.inputs), "読む": sorted(q.reads), "条件": conds, "列": cols,
-            "並び": f"{q.order[0]} {q.order[1]}" if q.order else "",
+            "並び": order_text(ck, q),
             "ページ": f"{q.page_n}件" if q.page_n else f"{q.page}{absent(q.page, '全件')}" if q.page else ""}
 
 
@@ -137,7 +148,7 @@ def build_raw(ck: Checker) -> dict:
             "丸め": sorted(set(info.roundings)),
         })
     spec["処理"] = procs
-    spec["問い合わせ"] = [query_rows(q) for q in p.queries]
+    spec["問い合わせ"] = [query_rows(ck, q) for q in p.queries]
     spec["トリガ"] = [(tg.name, f"{ja_kind(k)} {fmt_cause(k, key)}", d) for tg in p.triggers for k, key, d in tg.causes]
     spec["応答"] = [(rp.name, ", ".join(input_names(rp.params))) for rp in p.replies]
     spec["合流"] = [(e.name, e.joins) for e in p.effects if e.joins]
@@ -362,4 +373,5 @@ def render(ck: Checker, spec: dict, name="") -> str:
                                                           + [f"採番 {d}（実行のたびに基盤が代入）" for d in x["採番"]]))
     out += ["", "## 検査の結果", ""]
     out += [f"- {d}" for d in ck.diags] or ["- 指摘なし"]
-    return "\n".join(out) + "\n"
+    # 表の1行は1行に収める（理由などの文字列に \n で書いた改行は、表の中の改行 <br> にする）
+    return "\n".join(x.replace("\n", "<br>") if x.startswith("|") else x for x in out) + "\n"

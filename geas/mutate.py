@@ -19,7 +19,7 @@ from .parser import ParseError, parse
 KILLED, SURVIVED, INVALID = "検出", "生き残り", "対象外"
 KILLED_EX = "具体例で検出"  # 検査器は止めなかったが、計画書の具体例を動かすと食い違った
 
-GUARD = re.compile(r"^(\s*)if .+ \{ return [^{}]*\}\s*(//.*)?$")  # 1 行で書いた確認（満たさなければ結果を返す）
+GUARD = re.compile(r"^(\s*)if (?!.*\belse\b).+ \{ return [^{}]*\}\s*(//.*)?$")  # 1 行で書いた確認（満たさなければ結果を返す。else のあるものは除く）
 THRESHOLD = re.compile(r"^(\s*if [\w.]+ (?:>|>=) )(\d+)( \{ return .*)$")  # 上限の確認：数を緩める
 TRANSITION = re.compile(r"^\s*transition .+$")
 LTYPE_RANGE = re.compile(r"^(\s*ltype \w+ = (?:int|money\([\w]+\)) -?\d+\.\.)(\d+)(.*)$")  # 整数・金額の範囲の上限

@@ -309,7 +309,7 @@ query heavy_titles {
   filter weight at_most max_weight
   filter title contains word ignore_case
   filter kind equals kind
-  order written_at newest
+  order written_at desc
   page 2
   select memo_id, weight
   reads Memo.memo_id, Memo.weight, Memo.title, Memo.written_at, Memo.kind
@@ -317,7 +317,7 @@ query heavy_titles {
 
 query oldest_first {
   from Memo
-  order written_at oldest
+  order written_at asc
   select memo_id
   reads Memo.memo_id, Memo.written_at
 }
@@ -325,7 +325,7 @@ query oldest_first {
 query light_only {
   from Memo
   where weight == 0 or weight == 1
-  order written_at newest
+  order written_at desc
   select memo_id
   reads Memo.memo_id, Memo.weight, Memo.written_at
 }
@@ -539,3 +539,79 @@ fn main() {
     assert '"result":"Done"' in out[3] and '"note":true' in out[3]  # active and force
     assert '"result":"Off"' in out[4] and '"result":"Off"' in out[5]  # not active、not force
     assert "true か false のはず" in out[6]  # JSON の真偽以外は入力不正
+
+
+# ---- 文の if・else if・else：通った道の書き込みと結果だけが出る ----
+BRANCHES = """ltype Qty = int 0..100
+ltype Step = int 1..10
+
+entity Jar {
+  jar_id: id unique
+  count: Qty required
+  status: JarStatus
+}
+
+state JarStatus {
+  initial Open
+  final Full, Shut
+}
+
+result FillResult { Added, Filled, AlreadyShut, NoJar }
+
+deed fill {
+  input jar_id: id required, n: Step required
+  reads Jar.count, Jar.status
+  writes Jar.count, Jar.status
+  transition Jar: Open → Full
+  result FillResult
+  effects none
+
+  let j = Jar[jar_id] else { return NoJar }
+  if j.status != Open {
+    return AlreadyShut
+  } else if j.count > 90 {
+    j.count = 100
+    j.status = Full
+    return Filled
+  } else {
+    j.count += n
+  }
+  return Added
+}
+
+result SizeResult { Large, Small, NoJar }
+
+deed size_of {
+  input jar_id: id required
+  reads Jar.count
+  result SizeResult
+  effects none
+
+  let j = Jar[jar_id] else { return NoJar }
+  if j.count >= 50 { return Large } else { return Small }
+}
+"""
+
+
+def test_if_と_else_if_と_else_は_通った道の書き込みと結果だけを出す(tmp_path):
+    main = """use geas_app::*;
+fn jar(id: &str, count: u8, status: JarStatus) -> Jar { Jar { jar_id: id.into(), count, status } }
+fn main() {
+    let mut s = Store::default();
+    s.Jar.insert("a".into(), jar("a", 50, JarStatus::Open));
+    s.Jar.insert("b".into(), jar("b", 95, JarStatus::Open));
+    s.Jar.insert("c".into(), jar("c", 10, JarStatus::Shut));
+    for (id, n) in [("a", 5), ("b", 3), ("c", 1), ("x", 1)] {
+        let o = fill(&fillCtx {}, &s, &fillInput { jar_id: id.into(), n }).unwrap();
+        let (r, w) = (o.result.show(), o.Write.len());
+        s.apply(o.Write).unwrap();
+        let now = s.Jar.get(id).map(|j| format!("{}:{}", j.count, j.status.name())).unwrap_or("-".into());
+        println!("{} {} {}", r, w, now);
+    }
+    for id in ["a", "c", "x"] {
+        println!("{}", size_of(&size_ofCtx {}, &s, &size_ofInput { jar_id: id.into() }).unwrap().result.show());
+    }
+}
+"""
+    got = run_app(BRANCHES, main, tmp_path)
+    assert got == ["Added 1 55:Open", "Filled 2 100:Full", "AlreadyShut 0 10:Shut", "NoJar 0 -", "Large", "Small", "NoJar"], got

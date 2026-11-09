@@ -125,9 +125,11 @@ def test_崩したコードを何通り検査しても_検査器は落ちない(
     ("if p.stock > 98 {", "if p.stock > 98 && p.stock < 200 {", "and と書きます"),
     ("if p.stock > 98 {", "if p.stock > 98 || p.stock < 0 {", "or と書きます"),
     ("if p.stock > 98 {", "if !(p.stock < 98) {", "not と書きます"),
-    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full } else { return Done }", "else は書けません"),
-    ("if p.stock > 98 { return Full }", "if p.stock > 98 {\n    return Full\n  } else {\n    return Done\n  }", "else は書けません"),
-    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full }\n  else if p.stock > 97 { return Full }", "else はありません"),
+    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full }\n  else if p.stock > 97 { return Full }", "同じ行に続けて書きます"),
+    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full } elif p.stock > 97 { return Full }", "else if 条件 { … } と書きます"),
+    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full }\n  elsif p.stock > 97 { return Full }", "else if 条件 { … } と書きます"),
+    ("if p.stock > 98 { return Full }", "if p.stock > 98 { return Full } else return Done", "else の後ろには { … } か if を書きます"),
+    ("let p = Product[product_id] else { return NoSuch }", "let p = Product[product_id]\n  else { return NoSuch }", "同じ行に書きます"),
     ("p.stock += 1", "p.stock += 1;", "; は書きません"),
     ("p.stock += 1", "p.stock++", "+= 1"),
     ("let p =", "let mut p =", "mut は付けません"),
@@ -147,6 +149,8 @@ def test_崩したコードを何通り検査しても_検査器は落ちない(
     ("if p.stock > 98 {", "if p.stock > 98 ? {", "if 条件 then 式 else 式"),
     ("p.stock += 1", "p.stock += 1.5", "小数は書けません（「1.5」）"),
     ("p.stock += 1", "p.stock += ①", "数は半角の 0〜9 で書きます"),
+    ("p.stock += 1", "p.stock += １", "数は半角の 0〜9 で書きます（「１」は半角の数字ではありません）"),
+    ("ltype Quantity = int 0..99", "ltype Quantity = int ０..９９", "数は半角の 0〜9 で書きます"),
 ])
 def test_構文エラーは_他の言語の書き方なら直し方を添える(old, new, expect):
     e = syntax_error(edit(BASE, old, new))
@@ -163,13 +167,15 @@ def test_構文エラーは_行と列を持ち_行末とファイルの終わり
     assert "ファイルの終わり" in str(e) and "1行目の { が閉じていません" in str(e)
 
 
-def test_閉じ忘れた文字列は_行をまたいだ文字列の行を言う():
+def test_閉じ忘れた文字列は_その行で止まる():
+    """文字列の中では行を変えられないので、" を閉じ忘れた行がそのままエラーの行になる（後ろの " と組にならない）"""
     line = BASE.split("\n").index("  if p.stock > 98 { return Full }") + 1
-    odd = edit(BASE, "  if p.stock > 98 { return Full }", '  if p.name == "abc { return Full }\n  if p.name == "x" { return Full }')
-    assert f"{line}行目の文字列が行をまたいでいる" in str(syntax_error(odd))  # 字句の段階で、" が足りない
-    even = edit(BASE, "  if p.stock > 98 { return Full }",
-                '  if p.name == "abc { return Full }\n  if p.name == "x" { return Full }\n  if p.name == "y { return Full }')
-    assert f"{line}行目の文字列が行をまたいでいます" in str(syntax_error(even))  # " の数は合うが、構文が崩れる
+    for tail in ('\n  if p.name == "x" { return Full }', '\n  if p.name == "x" { return Full }\n  if p.name == "y { return Full }', ""):
+        e = syntax_error(edit(BASE, "  if p.stock > 98 { return Full }", '  if p.name == "abc { return Full }' + tail))
+        assert (e.line, e.col) == (line, len("  if p.name == ") + 1), str(e)
+        assert '終わりの " を書き忘れたかもしれません' in str(e) and "\\n と書きます" in str(e)
+    e = syntax_error(BASE + 'app "geas')
+    assert "文字列が閉じていません" in str(e)
 
 
 def test_問い合わせと_resource_の書き間違い():
@@ -177,14 +183,18 @@ def test_問い合わせと_resource_の書き間違い():
 query product_list {
   from Product
   where stock > 0
-  order stock newest
+  order stock desc
   reads Product.stock
 }
 '''
+    assert check(parse(q), strict_names=True).ok
     assert "where の行を分けて" in str(syntax_error(edit(q, "where stock > 0", "where stock > 0 and stock < 50")))
     assert "where の行を分けて" in str(syntax_error(edit(q, "where stock > 0", "where stock > 0, stock < 50")))
-    assert "newest は大きい順" in str(syntax_error(edit(q, "order stock newest", "order stock desc")))
-    assert "at_least" in str(syntax_error(edit(q, "  order stock newest", "  filter stock >= 3\n  order stock newest")))
+    assert "「newest」は使えません" in str(syntax_error(edit(q, "order stock desc", "order stock newest")))
+    assert "by は書きません" in str(syntax_error(edit(q, "order stock desc", "order by stock desc")))
+    assert "向きは小文字です" in str(syntax_error(edit(q, "order stock desc", "order stock DESC")))
+    assert "desc か asc" in str(syntax_error(edit(q, "order stock desc", "order stock")))
+    assert "at_least" in str(syntax_error(edit(q, "  order stock desc", "  filter stock >= 3\n  order stock desc")))
     r = BASE + "/// 商品たち\nresource Products {\n  update add_stock {\n    Done → 200\n    NoSuch → 404\n    Full → 409\n  }\n}\n"
     assert "PUT は update" in str(syntax_error(edit(r, "update add_stock {", "put add_stock {")))
     assert "PATCH はありません" in str(syntax_error(edit(r, "update add_stock {", "patch add_stock {")))

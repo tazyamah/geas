@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
-import json
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
@@ -431,7 +430,7 @@ class Gen:
         self.w("        true\n    }).collect();")
         if q.order:
             f, d = q.order
-            a, b = ("b", "a") if d == "新しい順" else ("a", "b")
+            a, b = ("b", "a") if d == "降順" else ("a", "b")
             nulls = f"a.{f}.is_none().cmp(&b.{f}.is_none()).then(" if fields[f].type.optional else "("  # null は最後
             self.w(f"    rows.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
         else:
@@ -618,7 +617,7 @@ class Gen:
         n = pt.params[0][0]
         self.w(f"/// 入力の via で結ぶ変換（入力の選別を通す境界）。拒否は入力不正\npub fn {pt.name}({n}: &str) -> Result<String, String> {{")
         for cond, why in pt.requires:
-            self.w(f"    if !({self.raw_rx(cond, n)}) {{ return Err({json.dumps(why, ensure_ascii=False)}.to_string()); }}")
+            self.w(f"    if !({self.raw_rx(cond, n)}) {{ return Err({rust_str(why)}.to_string()); }}")
         self.w(f"    Ok({self.raw_rx(pt.body, n)})\n}}")
 
     def raw_rx(self, e, r: str) -> str:
@@ -1004,15 +1003,28 @@ class ProcGen:
     def field_type(self, d, f) -> Type:
         return next(x.type for x in self.ck.data[d].fields if x.name == f)
 
+    def block(self, stmts):
+        self.ind += 1
+        for inner in stmts:
+            self.stmt(inner)
+        self.ind -= 1
+
     def stmt(self, st):
         if isinstance(st, Return):
             self.L(f"return {self.ret_expr(st)};")
         elif isinstance(st, If):
             self.L(f"if {self.rx(st.cond)} {{")
-            self.ind += 1
-            for inner in st.body:
-                self.stmt(inner)
-            self.ind -= 1
+            self.block(st.body)
+            els = st.els
+            while els is not None:  # else if は、Rust でも else if に並べる
+                if len(els) == 1 and isinstance(els[0], If):
+                    self.L(f"}} else if {self.rx(els[0].cond)} {{")
+                    self.block(els[0].body)
+                    els = els[0].els
+                else:
+                    self.L("} else {")
+                    self.block(els)
+                    els = None
             self.L("}")
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):

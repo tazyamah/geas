@@ -2,6 +2,7 @@
 """検査器。型の推論つき。宣言（読む・書く・遷移・外部・結果）と本体のずれ、
 行き先の漏れ、丸めの指定漏れ、冪等キーの漏れなどを見つける。"""
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import ceil, floor
@@ -130,7 +131,6 @@ class ProcInfo:
     field_reads: set = field(default_factory=set)
     exist_reads: set = field(default_factory=set)
     writes: set = field(default_factory=set)
-    write_list: list = field(default_factory=list)
     write_ops: dict = field(default_factory=dict)  # "データ.項目" → 書き方の集合（"=", "+=", "-="）。並列の枝の書き込みが重なってよいか見る
     transitions: set = field(default_factory=set)  # (データ, 元, 先)
     effects: list = field(default_factory=list)  # (名前, 冪等キー)
@@ -1468,6 +1468,8 @@ class ProcChecker:
         self.pos = 0
         self.lookup_data: dict[str, str] = self.info.lookup_vars
         self.cur_line = 0  # いま検査している文の行（指摘に行を書かなかったときに使う）
+        self.path_writes: Counter = Counter()  # いまの道で書いた項目と回数（if と else で書き分けた項目は、別の道なので数えない）
+        self.dup_writes: set[str] = set()  # 2回書いたと指摘した項目
 
     def d(self, level, code, msg, line=0):
         self.ck.d(level, code, self.where, msg, line or self.cur_line or self.proc.line)
@@ -2214,13 +2216,112 @@ class ProcChecker:
             self.env[n] = tok_of(t)
         self.exist_sets = {}
         for pos, st in enumerate(proc.body):
+            if pos and always_returns(proc.body[:pos]):
+                self.d(ERROR, "結果", "この文には届きません（前の文が、どの道でも return しています）", getattr(st, "line", 0))
+                break
             self.stmt(st, pos)
         self.cur_line = 0  # ここからは処理全体の指摘（行は処理の始まり）
-        if not (proc.body and isinstance(proc.body[-1], Return)):
+        if not always_returns(proc.body):
             self.d(ERROR, "結果", "処理の最後は return で終えてください（結果を返さずに終わる道があります）",
                    proc.body[-1].line if proc.body else 0)
         self.finish()
         return info
+
+    def snapshot(self) -> tuple:
+        """道ごとに変わる「分かっていること」と、その道で書いた項目の写し"""
+        return (set(self.state_guards), dict(self.facts), set(self.guarded), set(self.present),
+                dict(self.cur_ok), dict(self.cur_sets), dict(self.shortage_sets), Counter(self.path_writes))
+
+    def restore(self, snap: tuple):
+        (self.state_guards, self.facts, self.guarded, self.present,
+         self.cur_ok, self.cur_sets, self.shortage_sets, self.path_writes) = self.copy_of(snap)
+
+    @staticmethod
+    def copy_of(snap: tuple) -> tuple:
+        sg, facts, guarded, present, cur_ok, cur_sets, shortage, writes = snap
+        return set(sg), dict(facts), set(guarded), set(present), dict(cur_ok), dict(cur_sets), dict(shortage), Counter(writes)
+
+    @staticmethod
+    def join(a: tuple, b: tuple) -> tuple:
+        """2つの道の合流。両方で分かっていることだけが残り、書いた回数は多いほう"""
+        same = lambda x, y: {k: v for k, v in x.items() if k in y and y[k] == v}
+        return (a[0] & b[0], iv_join(a[1], b[1]), a[2] & b[2], a[3] & b[3],
+                same(a[4], b[4]), same(a[5], b[5]), same(a[6], b[6]), a[7] | b[7])
+
+    def note_write(self, w: str):
+        """項目へ書いた。同じ道で同じ項目へ2回書くと、残る値が書き込みの順に頼るのでエラー（if と else のような別の道は数えない）"""
+        self.info.writes.add(w)
+        if self.path_writes[w] and w not in self.dup_writes:
+            self.dup_writes.add(w)
+            self.d(ERROR, "書込", f"1つの処理で「{w}」に2回書いています（要素が重なると結果が順序で変わります。"
+                   "if と else のように、同時には通らない道で書き分けるのはかまいません）")
+        self.path_writes[w] += 1
+
+    def block(self, stmts: list, pos: int, what: str = ""):
+        """文の並び。what は if・else の中（書ける文が限られる）。return した後ろの文には届かない"""
+        for k, inner in enumerate(stmts):
+            if k and always_returns(stmts[:k]):
+                self.d(ERROR, "結果", "この文には届きません（前の文が、どの道でも return しています）", getattr(inner, "line", 0))
+                return
+            if what and not isinstance(inner, (Return, If, SetField, Update, Request)):
+                self.d(ERROR, "型", f"{what} の中に書けるのは、return・項目の更新・update・request・if だけです（let は if の前に書いてください）",
+                       getattr(inner, "line", 0))
+                continue
+            self.stmt(inner, pos)
+
+    def if_stmt(self, st: If, pos: int):
+        if self.ty(st.cond) not in ("Bool", "?"):
+            self.d(ERROR, "型", f"if の条件「{show(st.cond)}」は、成り立つか成り立たないかの条件である必要があります", st.line)
+        c = st.cond
+        state_cmp = (isinstance(c, Bin) and c.op in ("==", "!=") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
+                     and c.l.e.n in self.bindings and isinstance(c.r, Name))
+        fact = (self.bindings[c.l.e.n], c.l.n, c.r.n) if state_cmp else None
+        if not st.body:
+            self.d(ERROR, "型", "if の中が空です", st.line)
+        if st.els is not None and not st.els:
+            self.d(ERROR, "型", "else の中が空です（何もしないなら else を書きません）", st.else_line or st.line)
+        # 「x.項目 == 状態」や「x.項目 > 数」が成り立つ道で分かることは、その道の中だけで使う
+        outer = self.snapshot()
+        if state_cmp and c.op == "==":
+            self.state_guards.add(fact)
+        self.facts = self.add_facts(self.facts, self.cond_facts(c, True))
+        self.block(st.body, pos, "if")
+        then_end = self.snapshot()
+        # 成り立たない道（else の中、else が無ければ if の後ろ）で分かること
+        self.restore(outer)
+        self.facts = self.add_facts(self.facts, self.cond_facts(c, False))
+        self.negated_facts(c, state_cmp, fact)
+        if st.els is not None:
+            self.block(st.els, pos, "else")
+        then_ret, else_ret = always_returns(st.body), st.els is not None and always_returns(st.els)
+        if then_ret and not else_ret:
+            return  # 先へ進むのは成り立たなかった道だけ。そこで分かったことを、後ろの文へ引き継ぐ
+        if else_ret and not then_ret:
+            self.restore(then_end)
+        elif not then_ret:  # 両方の道が合流する。両方で分かっていることだけが残る（分岐の中の書き込みで崩れた確認は消える）
+            self.restore(self.join(then_end, self.snapshot()))
+
+    def negated_facts(self, c, state_cmp: bool, fact):
+        """条件 c が成り立たなかった道で分かること（null でない・1件がある・足りない集まりが空・状態がそれ）"""
+        if not isinstance(c, Pred):
+            if state_cmp and c.op == "!=":
+                self.state_guards.add(fact)
+            return
+        if c.kind == "null" and isinstance(c.e, Attr) and isinstance(c.e.e, Name) and c.e.e.n in self.bindings:
+            self.present.add((self.bindings[c.e.e.n], c.e.n))
+        if c.kind == "null" and isinstance(c.e, Name):
+            self.present.add(("#入力", c.e.n))
+        if c.kind == "null" and isinstance(c.e, Attr) and self.ty_quiet(c.e.e, self.env).startswith("Comp:"):
+            self.present.add((("#成分", show(c.e.e)), c.e.n))
+        if c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
+            self.guarded.add(self.exist_sets[c.e.n])
+        if c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.cur_sets:
+            d, sib, src, unit = self.cur_sets[c.e.n]
+            self.cur_ok[(d, sib, src)] = unit
+        if c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
+            self.facts[("#不足", *self.shortage_sets[c.e.n])] = 0
+        if c.kind == "ない" and isinstance(c.e, Index):
+            self.guarded.add((c.e.d, show(c.e.e)))
 
     def stmt(self, st, pos):
         saved = self.cur_line
@@ -2236,53 +2337,7 @@ class ProcChecker:
         if isinstance(st, Return):
             self.check_return(st)
         elif isinstance(st, If):
-            if self.ty(st.cond) not in ("Bool", "?"):
-                self.d(ERROR, "型", f"if の条件「{show(st.cond)}」は、成り立つか成り立たないかの条件である必要があります", st.line)
-            c = st.cond
-            state_cmp = (isinstance(c, Bin) and c.op in ("==", "!=") and isinstance(c.l, Attr) and isinstance(c.l.e, Name)
-                         and c.l.e.n in self.bindings and isinstance(c.r, Name))
-            fact = (self.bindings[c.l.e.n], c.l.n, c.r.n) if state_cmp else None
-            if not st.body:
-                self.d(ERROR, "型", "if の中が空です", st.line)
-            # 「x.項目 == 状態」や「x.項目 > 数」が成り立つ分岐の中で分かることは、分岐の外へは持ち出さない
-            outer_sg, outer_facts, outer_guarded, outer_present = self.state_guards, self.facts, self.guarded, self.present
-            self.present = set(self.present)
-            self.state_guards = self.state_guards | ({fact} if state_cmp and c.op == "==" else set())
-            self.facts = self.add_facts(dict(self.facts), self.cond_facts(c, True))
-            self.guarded = set(self.guarded)
-            for inner in st.body:
-                if not isinstance(inner, (Return, If, SetField, Update, Request)):
-                    self.d(ERROR, "型", "if の中に書けるのは、return・項目の更新・update・request・if だけです（let は外に書いてください）", st.line)
-                    continue
-                self.stmt(inner, pos)
-            skip_facts = self.add_facts(dict(outer_facts), self.cond_facts(c, False))
-            if st.body and isinstance(st.body[-1], Return):
-                # 分岐がかならず return で終わるなら、成り立たなかったときだけ先へ進む。その確認は、あとの文へ引き継ぐ
-                self.state_guards, self.facts, self.guarded, self.present = outer_sg, skip_facts, outer_guarded, outer_present
-                if (isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Attr) and isinstance(c.e.e, Name)
-                        and c.e.e.n in self.bindings):
-                    self.present.add((self.bindings[c.e.e.n], c.e.n))
-                if isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Name):
-                    self.present.add(("#入力", c.e.n))
-                if isinstance(c, Pred) and c.kind == "null" and isinstance(c.e, Attr) and self.ty_quiet(c.e.e, self.env).startswith("Comp:"):
-                    self.present.add((("#成分", show(c.e.e)), c.e.n))
-                if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.exist_sets:
-                    self.guarded.add(self.exist_sets[c.e.n])
-                if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.cur_sets:
-                    d, sib, src, unit = self.cur_sets[c.e.n]
-                    self.cur_ok[(d, sib, src)] = unit
-                if isinstance(c, Pred) and c.kind == "空でない" and isinstance(c.e, Name) and c.e.n in self.shortage_sets:
-                    self.facts[("#不足", *self.shortage_sets[c.e.n])] = 0
-                if isinstance(c, Pred) and c.kind == "ない" and isinstance(c.e, Index):
-                    self.guarded.add((c.e.d, show(c.e.e)))
-                if state_cmp and c.op == "!=":
-                    self.state_guards.add(fact)
-            else:
-                # 分岐を通った道と通らなかった道の合流。両方で分かっていることだけが残る（分岐の中の書き込みで崩れた確認は消える）
-                self.state_guards = outer_sg & self.state_guards
-                self.facts = iv_join(skip_facts, self.facts)
-                self.guarded = outer_guarded
-                self.present = outer_present & self.present
+            self.if_stmt(st, pos)
         elif isinstance(st, Assign):
             u = self.unit_of(st.e)
             if u is not None:
@@ -2376,8 +2431,7 @@ class ProcChecker:
                 self.d(ERROR, "型", f"{tgt.e.d}.{tgt.n} は数ではないので {st.op} できません", st.line)
             if tf is not None and st.op in ("=", "+=", "-="):
                 self.fit_unit(st.value, tf.type, f"{tgt.e.d}.{tgt.n}", st.line, base=tgt.e)
-            info.writes.add(f"{tgt.e.d}.{tgt.n}")
-            info.write_list.append(f"{tgt.e.d}.{tgt.n}")
+            self.note_write(f"{tgt.e.d}.{tgt.n}")
             info.write_ops.setdefault(f"{tgt.e.d}.{tgt.n}", set()).add(st.op)
             if tf is not None and tf.type.kind in ("整数", "金額", "割合") and vt != "Null":
                 self.check_update(st, env2)
@@ -2407,8 +2461,7 @@ class ProcChecker:
                     self.check_write(data, st.f, (None, None), st.line, bind=b, null=True)
                 self.forget(data, st.f)
                 self.set_null(data, st.f, b, False)
-                info.writes.add(f"{data}.{st.f}")
-                info.write_list.append(f"{data}.{st.f}")
+                self.note_write(f"{data}.{st.f}")
                 info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
                 return
             if vt == "Rational":
@@ -2441,8 +2494,7 @@ class ProcChecker:
                     self.facts[(b, st.f)] = iv[0]
                 if iv[1] is not None:
                     self.facts[(UP, b, st.f)] = iv[1]
-            info.writes.add(f"{data}.{st.f}")
-            info.write_list.append(f"{data}.{st.f}")
+            self.note_write(f"{data}.{st.f}")
             info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
             if self.ck.is_lifecycle(fld.type):
                 if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
@@ -2838,7 +2890,9 @@ class ProcChecker:
                 elif not outer:
                     self.d(ERROR, "冪等", f"外部作用 {st.effect} の冪等キー「{show(st.idem)}」が、for で回す値だけです。"
                            "別の処理で同じ値を回すとキーがぶつかるので、for の外で決まる値との組にしてください（idempotency_key = (注文ID, k) など）", st.line)
-        info.effects.append((st.effect, show(st.idem) if st.idem is not None else ""))
+        e = (st.effect, show(st.idem) if st.idem is not None else "")
+        if e not in info.effects:
+            info.effects.append(e)
 
     def finish(self):
         info, proc = self.info, self.proc
@@ -2858,9 +2912,6 @@ class ProcChecker:
         declared_tr = set(proc.transitions)
         for tr in sorted(declared_tr - info.transitions):
             self.d(ERROR, "宣言", f"宣言した遷移 {tr[0]}: {tr[1]} → {tr[2]} が、本体にありません（transition から外すか、本体で状態を変えてください）")
-        dup = {w for w in info.write_list if info.write_list.count(w) > 1}
-        for w in sorted(dup):
-            self.d(ERROR, "書込", f"1つの処理で「{w}」に2回書いています（要素が重なると結果が順序で変わります）")
         rdef = self.ck.results.get(proc.result)
         if rdef:
             for v, _ in rdef.variants:

@@ -9,6 +9,8 @@ Python 版（試作）の書き方の一覧です。書き方の例は、すべ�
 - コメントは `//` から行末。`///` は**説明コメント**で、その直後に書いた名前の日本語表示名になります（仕様書だけに使われ、意味は変わらない）。宣言のキーワード（`entity` `deed` など）の前に書けば、その次の名前に付きます。項目・入力・状態・結果の種類の名前の前にも書けます。複数言語は `@ja …` `@en …`。
 - 矢印は `→` ですが、ASCII の `->` で書いても同じです。
 - 文の区切りは改行。`( )` の中の改行は式の続きです。
+- 数は半角の `0`〜`9` で書きます（全角の `９９` は使えません。小数も無い）。
+- 文字列は `"…"`。中に `"` を書くときは `\"`、`\` そのものは `\\`、改行は `\n`、タブは `\t` と書きます（`\` のあとに書けるのはこれだけ。正規表現の `\d` は `\\d`）。文字列の中でそのまま行は変えられません。長い文字列を次の行へ続けるときは、行の終わりに `\` を書きます（次の行の頭の空白は読み飛ばします）。改行を含む理由は、仕様書の表の中で改行して出ます。
 - `app "名前"`：アプリの名前（画面の見出し）。`timezone +09:00`：アプリの標準のタイムゾーン（書かなければ UTC）。`use "別ファイル.geas"` と `module 名前`：[modules.md](modules.md)。
 
 ## 2. 型
@@ -140,7 +142,8 @@ deed place_order {
 ```
 
 - 宣言（`input slot reads writes transition result effects`）が先、本体の文があと。宣言と本体のずれは検査器が見つけます。
-- 文：`let 名前 = 式 [else { return … }]`、`let 名前 = create エンティティ { 項目: 式, … }`、`x.f = 式`、`x.f += 式`、`update { 対象 -= 式 | (k, v) in 集まり }`、`if 条件 { … }`、`for 要素 in 集まり { … }`、`request 名前空間.操作(引数, idempotency_key = 式)`、`delete 変数`、`return 結果の種類(中身)`。
+- 文：`let 名前 = 式 [else { return … }]`、`let 名前 = create エンティティ { 項目: 式, … }`、`x.f = 式`、`x.f += 式`、`update { 対象 -= 式 | (k, v) in 集まり }`、`if 条件 { … } [else { … }]`、`for 要素 in 集まり { … }`、`request 名前空間.操作(引数, idempotency_key = 式)`、`delete 変数`、`return 結果の種類(中身)`。
+- `if` と `else`：`else` は閉じる `}` と同じ行に続けて書きます（`} else {`、`} else if 条件 {`）。`if` と `else` の中に書けるのは、`return`・項目の更新・`update`・`request`・`if` だけです（`let` は `if` の前に書く）。`else` の中では、条件が成り立たないことが分かっているものとして検査します（`if x.f > 98 { return Full } else { x.f += 1 }` は通る）。同じ道で同じ項目へ 2 回は書けませんが、`if` と `else` のように同時には通らない道で書き分けるのはかまいません。`if` と `else` の両方が `return` で終わると、その後ろの文には届かないのでエラーです（処理の最後をそうした `if` で終えるのはかまいません）。
 - 式：`==` `!=` `<` `<=` `>` `>=`、`and` `or` `not`（両側と後ろは真偽。`not` が最も強く、次に `and`、`or`）、`true` `false`、`+ - *`、`/` `%`（整数の割り算と余り。下の説明）、`D[k]`（キーで引く）、`x is null|absent|present|empty|nonempty`、`{ k | (k, v) in 集まり, 条件 }`（集合の内包表記）、`sum { 式 | (k, v) in 集まり }`、`round(値, floor, 通貨)`、`now`、`tz_offset`。
 - 文字列の長さ：`text` に長さの範囲を書かないと、外から入る値は既定の上限（1,048,576 文字）で境界に止めます。大きくしたいときは `ltype` に長さを書きます（緩めるのは書いた人の責任）。サーバーは、リクエストの本文が 16 MiB を超えると 413 で断ります。JSON の入れ子は 64 段までです。
 - 割り算 `x / d`・余り `x % d`（整数。切り捨ては負の無限大へ、余りは 0 以上）：`d` が定数なら正の整数。`d` が変数なら、検査器が **1 以上と示せる**ときだけ通ります（`ltype` の範囲が 1 以上、または `if n == 0 { return … }`・`if n < 1 { return … }` のように、先へ進む道で 0 を除いてある）。示せないときは、`x / d or 0` のように **0 のときの値**（`or` のあとは整数）を書きます。`or` があれば `d` は 0 でも負でもよく、結果の範囲は商（または余り）と `or` の値の合流です。生成物は `checked_div_euclid` を使い、`i64::MIN / -1` のようなあふれは `Fault::Overflow` になります。
@@ -212,7 +215,7 @@ query orders_of {
   from Order
   where status != Canceled or status == Received      // 行が or、行どうしが and
   filter customer equals customer                     // equals／at_least／at_most／contains（ignore_case 等）／within 1 hour（slot current_time: time が要る）
-  order created_at newest                             // newest｜oldest
+  order created_at desc                               // desc（大きい順。日時なら新しい順）｜asc（小さい順・古い順）
   page 20                                             // order が必須
   select order_id, customer.customer_id as customer, sum(items) as item_count
   reads Order.customer, Order.order_id, Order.items
@@ -287,7 +290,7 @@ resource Reconnections { create Reconnected }                         // 出来�
 - 指摘の名前は、コードに書いたとおり（`Product.stock`）で、分かるものには行番号（`（30行目）`）が付きます。仕様書（`spec`・`review`）に載るときは、表示名に置き換わります。
 - 打ち間違いらしい名前には `（近い名前：stock）` が、他の言語の型名や値（`string`・`True` など）には geas での書き方が付きます。
 - 最後の行は件数です（`検査: エラーがあります（エラー 1 件・問い 0 件・警告 2 件）`）。問いが残っていると、通っても「人に聞いて決める」と出ます。
-- 構文エラーは、行と列、その行の抜き出しと位置の印（`^`）を出し、他の言語の書き方らしいとき（`&&`・`else`・`;` など）は直し方を続けます。`{` と `}` の対応が崩れていれば、閉じていない `{` の行も出します。
+- 構文エラーは、行と列、その行の抜き出しと位置の印（`^`）を出し、他の言語の書き方らしいとき（`&&`・`elif`・`;` など）は直し方を続けます。`{` と `}` の対応が崩れていれば、閉じていない `{` の行も出します。
 - `--json` では、指摘ごとに `line`（構文エラーは `col` も）と、見る節と直し方の `hint` が付きます。
 
 ## 12. 他の言語から来たときに間違えやすいこと
@@ -297,8 +300,7 @@ geas は Rust や TypeScript に似せていますが、次は違います。検
 | 他の言語の書き方 | geas の書き方 |
 |---|---|
 | `a && b`・`a \|\| b`・`!a` | `a and b`・`a or b`・`not a` |
-| `if 条件 { … } else { … }` | 文の `if` に `else` は無い。成り立つ分岐の中で `return` し、成り立たないときの文を `if` の後ろに続ける。値を選ぶだけなら式の `if 条件 then 式 else 式` |
-| `else if`・`elif`・`match`・`switch` | `if 条件 { … }` を並べる |
+| `elif`・`elsif`・`match`・`switch` | `if 条件 { … } else if 条件 { … } else { … }`（`else` は `}` と同じ行に続ける）。値を選ぶだけなら式の `if 条件 then 式 else 式` |
 | `x == null`・`x != null` | `x is null`・`not (x is null)`（1件の有無は `D[k] is absent`・`D[k] is present`） |
 | 文末の `;` | 改行（`( )` の中の改行は式の続き） |
 | `=>` | `→` か `->` |
@@ -306,6 +308,9 @@ geas は Rust や TypeScript に似せていますが、次は違います。検
 | `let mut x`・`var x`・`const x` | `let x = 式` |
 | `string`・`boolean`・`uuid`・`datetime`・`i32` | `text`・`bool`・`id`・`time`・`int`（範囲は `ltype Quantity = int 1..99` と名前を付けて書く） |
 | `float`・`double`・`decimal`・`0.5` | 小数の型も小数の数も無い。金額は `money(JPY)`（最小単位の整数）、割合は `ratio`（定数は rule の値に `10/100`） |
+| 全角の数字 `９９` | 半角の `99` |
+| 文字列の中でそのまま改行する・`"""…"""`・`` `…` `` | 行の終わりに `\` を書いて次の行へ続ける（次の行の頭の空白は読み飛ばす）。改行そのものは `\n` |
+| 正規表現の `"\d+"`（`\` を 1 つ） | `"\\d+"`（`\` そのものは `\\`。`\` のあとに書けるのは `n` `t` `"` `\` と行の終わりだけ） |
 | `text?`・`Option<T>` | 何も付けない（項目と入力は、書かなければ無いかもしれない扱い）。必ずあるものに `required` |
 | `type X = …`・`enum`・`struct`・`class`・`fn` | `ltype`・`state`／`result`・`entity`（値の組は合成の `ltype`）・`deed`／`convert` |
 | `import` | `use "ファイル.geas"` |
@@ -314,7 +319,7 @@ geas は Rust や TypeScript に似せていますが、次は違います。検
 | `while`・`throw`・`try` | 無い。繰り返しは `for 要素 in 集まり`、失敗は結果の種類を `return` |
 | `/* … */` | `//`（`///` は表示名） |
 | `where a and b`・`where a, b` | `where` の行を分ける（行どうしが and、1行の中は `or`） |
-| `order x asc`・`order x desc` | `order x oldest`（小さい順）・`order x newest`（大きい順） |
+| `ORDER BY x DESC`・`order by x desc` | `order x desc`（`by` は書かない。向きは小文字の `desc`・`asc`） |
 | `filter x >= y` | `filter x at_least y`（`equals`・`at_least`・`at_most`・`contains`・`within`） |
 | `limit 20` | `page 20`（`order` が要る） |
 | resource の `get`・`post`・`put`・`patch`・`delete` | `index`／`show`・`create`・`update`・（PATCH は無い）・`destroy` |

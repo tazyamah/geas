@@ -94,6 +94,7 @@ def each_name(p: Program, ltype_names, upper, lower, local):
                     local(st.name, f"処理 {x.name}")
                 elif isinstance(st, If):
                     walk(st.body)
+                    walk(st.els or [])
                 elif isinstance(st, ForEach):
                     walk(st.body)
 
