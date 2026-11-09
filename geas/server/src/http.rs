@@ -17,7 +17,7 @@
 //! （DNS rebinding）で 127.0.0.1 に届いても、ブラウザは Host にそのページの名前を書くので、同じオリジンとして動かされない。
 use crate::engine::Engine;
 use serde_json::{json, Map, Value};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tiny_http::{Header, Method, Request, Response};
@@ -227,7 +227,21 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, 
     } else {
         json_resp(404, json!({ "error": "ありません" }))
     };
-    let _ = req.respond(resp);
+    send(req, resp);
+}
+
+/// 応答を 1 回の書き込みで送る。tiny_http の respond は 1KB ずつ書くので、1KB を超える応答では
+/// 2 回目の書き込みが Nagle のアルゴリズムと相手の遅延 ACK に挟まれ、毎回 40ms ほど待つ。
+/// 中身は respond と同じ（状態行・ヘッダ・本文の作り方は tiny_http のまま）で、書き出す回数だけが違う
+fn send(req: Request, resp: Response<std::io::Cursor<Vec<u8>>>) {
+    let mut buf = Vec::new();
+    let head_only = *req.method() == Method::Head;
+    if resp.raw_print(&mut buf, req.http_version().clone(), req.headers(), head_only, None).is_err() {
+        return;
+    }
+    let mut w = req.into_writer();
+    let _ = w.write_all(&buf);
+    let _ = w.flush();
 }
 
 /// 画面（screen）の URL（geas_app::screens の url。:名前 は任意の 1 区間）に当てはまるか
@@ -243,6 +257,15 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// 定義の routes（resource 宣言の URL）。生成物に埋め込まれていて、動いている間は変わらないので、最初に 1 回だけ読む
+fn routes() -> &'static [Value] {
+    static ROUTES: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
+    ROUTES.get_or_init(|| {
+        let defs: Value = serde_json::from_str(geas_app::host::DEFS_JSON).unwrap_or(Value::Null);
+        defs["routes"].as_array().cloned().unwrap_or_default()
+    })
+}
+
 /// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None。
 /// 流れの途中の処理を呼ぶ URL（定義の internal。仕様書の URL の表で「内部」）は、test_api（--test）のときだけ当てはめる。
 /// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため
@@ -256,21 +279,23 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
         _ => return None,
     };
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
-    let mut en = crate::engine::lock(engine);
-    let routes = en.defs["routes"].as_array().cloned().unwrap_or_default();
-    for r in routes {
+    // 当てはまるルートを上から探す。処理の Mutex は、当てはまってから取る（画面のファイルの配信などは、処理中のリクエストを待たない）
+    let matched = routes().iter().find_map(|r| {
         if r["method"] != verb || (!test_api && r["internal"] == true) {
-            continue;
+            return None;
         }
-        let pat = r["path"].as_str().unwrap_or("").trim_matches('/').to_string();
-        let ps: Vec<&str> = pat.split('/').collect();
+        let ps: Vec<&str> = r["path"].as_str().unwrap_or("").trim_matches('/').split('/').collect();
         if ps.len() != segs.len() {
-            continue;
+            return None;
         }
         let mut caps: Vec<String> = Vec::new();
         if !ps.iter().zip(&segs).all(|(p, s)| if p.starts_with(':') { caps.push(decode(s)); true } else { p == s }) {
-            continue;
+            return None;
         }
+        Some((r, caps))
+    });
+    if let Some((r, caps)) = matched {
+        let mut en = crate::engine::lock(engine);
         let target = r["target"].as_str().unwrap_or("").to_string();
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(body).unwrap_or(Value::Null) };
         if parsed.is_null() {

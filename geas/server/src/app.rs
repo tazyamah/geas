@@ -53,23 +53,23 @@ pub fn fill_ctx(db: &Db, defs: &Value, refs: &[String], new_ids: &[String], inpu
     Ok(Value::Object(ctx))
 }
 
-/// DB が空のときだけ、最初のデータ（seed.json。実体名→キー→行）を入れる
-pub fn seed_if_empty(db: &Db, seed: &str, store: &Value) -> R<()> {
+/// DB が空のときだけ、最初のデータ（seed.json。実体名→キー→行）を入れる。
+/// 空かどうかは各表に 1 行でもあるかで見る（保存の全件は読まない）
+pub fn seed_if_empty(db: &Db, seed: &str) -> R<()> {
     let seed: Value = serde_json::from_str(seed).map_err(|x| format!("seed.json: {}", x))?;
     let rows = seed.as_object().ok_or("seed.json はオブジェクトです")?;
     // 何かの実体にもう行があれば、入れ済み
-    if store.as_object().map_or(false, |m| m.values().any(|x| x.as_object().map_or(false, |r| !r.is_empty()))) || rows.is_empty() {
+    if rows.is_empty() || !db.is_empty()? {
         return Ok(());
     }
-    let mut after = store.clone();
-    for (en, rows) in rows {
-        let target = after.get_mut(en).and_then(|x| x.as_object_mut()).ok_or(format!("実体「{}」がありません", en))?;
-        for (k, v) in rows.as_object().ok_or("seed.json の実体は、キー→行のオブジェクトです")? {
-            target.insert(k.clone(), v.clone());
-        }
-    }
     db.begin()?;
-    let r = db.save_diff(store, &after);
+    let r = rows.iter().try_for_each(|(en, rows)| {
+        if !db.has_entity(en) {
+            return Err(format!("実体「{}」がありません", en));
+        }
+        let rows = rows.as_object().ok_or("seed.json の実体は、キー→行のオブジェクトです")?;
+        rows.iter().try_for_each(|(k, v)| db.write_row(en, k, Some(&v.to_string())))
+    });
     match r {
         Ok(()) => db.commit(),
         Err(x) => {

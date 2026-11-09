@@ -42,6 +42,19 @@ async function calibrate(browser, defs) {
   return { L, S, P, budget };
 }
 
+// 前のユースケースが出した外部作用の模擬の返事が、届き終わるまで待つ（上限は較正から）。
+// 「前のユースケースの結果が残る」は、返事まで済んだ結果のこと。待たないと、次のユースケースの操作が返事より先か後かが、
+// サーバーの速さで変わる（例：返事で「発送済み」になってから取り下げる手順が、返事より先に押されて失敗する）
+async function settle(cal) {
+  const t0 = Date.now();
+  for (;;) {
+    const jobs = await getJson("/api/test/state").then((s) => s.jobs || [], () => []);
+    if (!jobs.length) return;
+    if (Date.now() - t0 > cal.budget) throw new Error(`前のユースケースの返事（${jobs.map((j) => j.reply).join("・")}）が ${cal.budget}ms たっても届き終わりません`);
+    await new Promise((ok) => setTimeout(ok, 100));
+  }
+}
+
 const replaceId = (rt, st) => (rt.id_input ? (st.replace.find((r) => r.field === rt.id_input) || {}).value : undefined);
 const routeOf = (defs, deed) => defs.routes.find((r) => r.target === deed && r.kind !== "index" && r.kind !== "show");
 const pathRe = (pat) => new RegExp("^" + pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:[A-Za-z0-9_]+/g, "[^/]+") + "/?$");
@@ -81,6 +94,10 @@ async function runPwaCase(ctx, defs, cal, c) {
   p.on("pageerror", (e) => errors.push("pageerror: " + e.message));
   p.on("console", (m) => { if (m.type() === "error" && /Content Security Policy/i.test(m.text())) errors.push("CSP 違反: " + m.text()); });
   p.on("dialog", async (d) => { errors.push("ダイアログが出ました: " + d.message()); await d.dismiss(); });
+  // 差し替えの route は、差し替えのあるユースケースでだけ最初に 1 回付け、ページを閉じるまで外さない。手順ごとに付け外しすると、
+  // 外す瞬間に止めていた画面の要求（処理のあとの引き直し）が二度と返らず、処理のボタンが無効のまま残る（Playwright の route の外し方の競合）
+  let swap = null;  // いまの手順の差し替え。差し替えて送ったら true
+  if (c.steps.some((st) => (st.replace || []).length)) await p.route(() => true, async (route) => { if (!(swap && (await swap(route)))) await route.continue(); });
   for (const [i, st] of c.steps.entries()) {
     const here = `#screen[data-screen="${st.screen}"]`;
     if (st.op === "look") {
@@ -129,10 +146,9 @@ async function runPwaCase(ctx, defs, cal, c) {
       }
       const rt = routeOf(defs, st.deed), re = pathRe(rt.path);
       const isCall = (rq) => rq.method() === rt.method && re.test(new URL(rq.url()).pathname);
-      const urlIs = (u) => re.test(u.pathname);
       if (st.replace.length) {  // 画面からは作れない値（画面が出さない選択肢）を、送る直前に差し替えて、結果の扱いを確かめる
-        await p.route(urlIs, async (route) => {
-          if (route.request().method() !== rt.method) return route.continue();
+        swap = async (route) => {
+          if (!isCall(route.request())) return false;
           const body = JSON.parse(route.request().postData() || "{}");
           for (const r of st.replace) {
             if (rt.id_input && r.field === rt.id_input) continue;
@@ -145,17 +161,20 @@ async function runPwaCase(ctx, defs, cal, c) {
           let url = route.request().url();
           const idr = replaceId(rt, st);  // update／destroy の ID は URL にある
           if (idr !== undefined) url = new URL(rt.path.replace(/:[A-Za-z0-9_]+/, encodeURIComponent(idr)), url).href;
-          route.continue({ url, postData: JSON.stringify(body) });
-        });
+          await route.continue({ url, postData: JSON.stringify(body) });
+          return true;
+        };
       }
-      const sent = p.waitForResponse((r) => isCall(r.request()), { timeout: cal.budget });
-      await p.click(`[data-action="${st.deed}"]`);
-      const resp = await sent.catch(async (err) => {  // 送られなかったとき、画面の通知（入力の不足など）を添える
+      // 応答は押す前から待ち受け、待つ長さ（較正の上限）は押し終えてから数える。押せるまでの待ちは click の上限で切る
+      const sent = p.waitForResponse((r) => isCall(r.request()), { timeout: 0 }).catch(() => null);
+      await p.click(`[data-action="${st.deed}"]`, { timeout: cal.budget });
+      const resp = await Promise.race([sent, new Promise((ok) => setTimeout(() => ok(null), cal.budget))]);
+      if (!resp) {  // 送られなかったとき、画面の通知（入力の不足など）を添える
         throw new Error(`${st.text}: 処理の呼び出しが ${cal.budget}ms 待っても送られません。通知: ${await p.locator("#notice").innerText().catch(() => "")}`);
-      });
+      }
       const j = await resp.json();
       if (st.result) assert.strictEqual(j.result, st.result, `${st.text}: 結果の種類（応答: ${JSON.stringify(j).slice(0, 200)}）`);
-      if (st.replace.length) await p.unroute(urlIs);
+      swap = null;
       if (st.advance) {  // 模擬の時計を進める：待ちが登録されてから進める（実際には待たない）
         const t0 = Date.now();
         while (!((await getJson("/api/test/state")).waits || []).length) {
@@ -212,7 +231,7 @@ async function runExtCases(extCases, cal) {
   const cal = await calibrate(browser, defs);
   const pwa = cases.filter((c) => !c.steps[0].ext), ext = cases.filter((c) => c.steps[0].ext);
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
-  for (const c of pwa) { console.log(c.name); await runPwaCase(ctx, defs, cal, c); }
+  for (const c of pwa) { console.log(c.name); await settle(cal); await runPwaCase(ctx, defs, cal, c); }
 
   // 基盤の確認（計画書の手順にはない、汎用の画面の約束）：オフラインでも画面が開く／開発用の操作パネルが定義どおり動く
   const p = await ctx.newPage();

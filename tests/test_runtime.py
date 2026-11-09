@@ -500,3 +500,53 @@ def test_サーバーのログを_geas_trace_で仕様書の行に結べる(buil
     bad.write_text('{"log":"geas.route","ts_ms":1,"method":"GET","route":"/nowhere","target":"x","result":null,"status":200,"ms":1}\n')
     r = subprocess.run([sys.executable, "-m", "geas", "trace", str(SRC), str(bad)], capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 1 and "ルート表にない経路" in r.stdout
+
+
+def test_保存はメモリに持つが_別のサーバーやDBを直接書き換えた内容は次のリクエストで見える(built, server):
+    """サーバーは保存をメモリに持ち、処理が変えた行だけを DB に書く。別の接続（同じ DB を使う別のサーバー・人の手）が
+    書いたことは DB の data_version で分かり、そのときだけ読み直す。古い内容で上書きしない"""
+    import sqlite3
+
+    other = Server(built, server.db)
+    other.start()
+    try:
+        pid, _ = server.accept("light")
+        assert other.parcels()[pid]["kind"] == "light"  # 別のサーバーが作った行が見える
+        assert other.call("PUT", f"/parcels/{pid}", {"kind": "heavy"})[0] == 200
+        assert server.parcels()[pid]["kind"] == "heavy"  # 別のサーバーが書き換えた行が見える
+        db = sqlite3.connect(server.db)
+        row = json.loads(db.execute("SELECT v FROM Parcel WHERE k = ?", (pid,)).fetchone()[0])
+        db.execute("UPDATE Parcel SET v = ? WHERE k = ?", (json.dumps(dict(row, kind="medium")), pid))
+        db.commit()
+        db.close()
+        assert server.parcels()[pid]["kind"] == "medium"  # DB を直接書き換えても見える
+        assert server.call("PUT", f"/parcels/{pid}", {"kind": "small"})[0] == 200
+        got = other.parcels()[pid]
+        assert (got["kind"], got["fee"]) == ("small", row["fee"])
+        # DB にも、処理が変えた行の新しい内容が書かれている
+        db = sqlite3.connect(server.db)
+        stored = json.loads(db.execute("SELECT v FROM Parcel WHERE k = ?", (pid,)).fetchone()[0])
+        db.close()
+        assert (stored["kind"], stored["fee"]) == ("small", row["fee"])
+    finally:
+        other.stop()
+
+
+def test_1KBを超える応答も_書き込みの待ちなしで返る(server):
+    """tiny_http の respond は 1KB ずつ書くので、1KB を超える応答は 2 回目の書き込みが Nagle と相手の遅延 ACK に挟まれ、
+    毎回 40ms ほど待っていた。応答は 1 回の書き込みで送る"""
+    import http.client
+
+    for _ in range(40):
+        server.accept("light")
+    conn = http.client.HTTPConnection("127.0.0.1", int(server.base.rsplit(":", 1)[1]), timeout=10)
+    times = []
+    for _ in range(10):
+        t = time.perf_counter()
+        conn.request("GET", "/parcels")
+        r = conn.getresponse()
+        body = r.read()
+        times.append(time.perf_counter() - t)
+    conn.close()
+    assert r.status == 200 and len(body) > 2048 and len(json.loads(body)["rows"]) == 40
+    assert sorted(times)[len(times) // 2] < 0.02, [round(x * 1000, 1) for x in times]

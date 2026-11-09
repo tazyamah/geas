@@ -254,6 +254,30 @@ def definitions(ck: Checker) -> dict:
     }
 
 
+def server_api(p) -> str:
+    """サーバーの実行部（geas/server）が使う口。保存をメモリに持ったまま処理を走らせ、変わった行だけを DB と行き来する。
+    1 リクエストごとに保存の全件を JSON にして渡し直さない（件数に比例する時間とメモリを使わない）"""
+    load = "\n".join(f'        "{d.name}" => {{ store.{d.name}.insert(key.to_string(), {d.name}_from_json(&j)?); Ok(()) }}' for d in p.data)
+    get = "\n".join(f'        "{d.name}" => store.{d.name}.get(key).map({d.name}_to_json),' for d in p.data)
+    return (
+        "/// サーバーの口：メモリ上の保存に直接、処理か問い合わせを走らせる（request は name・ctx・input。保存は渡さない）。\n"
+        "/// 応答は call から \"store\" を除いた形。変わった行は changed に足す（途中で失敗しても、それまでに変えた行は入っている）\n"
+        "pub fn call_store(request: &str, store: &mut Store, changed: &mut Changed) -> Result<String, String> {\n"
+        "    let r = parse(request)?;\n"
+        '    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, store, changed)\n}\n'
+        "/// DB の 1 行（実体の名前・キー・行の JSON）を、メモリ上の保存へ入れる\n"
+        "pub fn load_row(store: &mut Store, entity: &str, key: &str, row: &str) -> Result<(), String> {\n"
+        "    let j = parse(row)?;\n    match entity {\n"
+        f"{load}\n"
+        '        _ => Err(format!("実体「{}」はありません", entity)),\n    }\n}\n'
+        "/// メモリ上の保存の 1 行を、DB に書く JSON にする。行が無ければ None（消えた行）\n"
+        "pub fn row_json(store: &Store, entity: &str, key: &str) -> Option<String> {\n"
+        "    match entity {\n"
+        f"{get}\n"
+        "        _ => None,\n    }\n}"
+    )
+
+
 def host_source(ck: Checker) -> str:
     p = ck.p
     out = [JSON_PRELUDE]
@@ -305,30 +329,34 @@ def host_source(ck: Checker) -> str:
             items = ", ".join(f'format!("{{}}:{{}}", js_str("{c.name}"), {to_j(t, f"r.{c.name}")})' for c, t in cols)
             w(f'fn {n}_row_json(r: &{n}Row) -> String {{\n    format!("{{{{{{}}}}}}", vec![{items}].join(","))\n}}')
     # 処理の呼び出し
-    w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>, Store: &Store) -> String {\n"
-      '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}],\\"store\\":{}}}", js_str(name), js_arr(&args), body, effects.join(","), write_store(Store))\n}')
-    w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store) -> Result<String, String> {{\n    match name {{")
+    w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>) -> String {\n"
+      '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}]}}", js_str(name), js_arr(&args), body, effects.join(","))\n}')
+    w(f"fn call_inner(name: &str, ctx: &J, Input: &J, Store: &mut Store, changed: &mut Changed) -> Result<String, String> {{\n    match name {{")
     for proc in p.processes:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("new_{d}_id")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
         inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
-        w(f"            let o = {n}(&c, Store, &i).map_err(|f| f.to_string())?;\n            Store.apply(o.Write.clone()).map_err(|f| f.to_string())?;")
-        w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect(), Store))\n        }}")
+        w(f"            let o = {n}(&c, Store, &i).map_err(|f| f.to_string())?;\n            Store.apply_tracked(o.Write, changed).map_err(|f| f.to_string())?;")
+        w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect()))\n        }}")
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         if q.select:
-            w(f'            let rows = {n}(&c, Store, &i);\n            Ok(write_result("一覧", Vec::new(), format!("{{{{\\"rows\\":[{{}}]}}}}", rows.iter().map({n}_row_json).collect::<Vec<_>>().join(",")), vec![], Store))\n        }}')
+            w(f'            let rows = {n}(&c, Store, &i);\n            Ok(write_result("一覧", Vec::new(), format!("{{{{\\"rows\\":[{{}}]}}}}", rows.iter().map({n}_row_json).collect::<Vec<_>>().join(",")), vec![]))\n        }}')
         else:
-            w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![], Store))\n        }}')
+            w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![]))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
-    w(f"pub fn call(request: &str) -> Result<String, String> {{\n"
+    w(f"/// 保存ごと JSON で受け渡す口（画面の WASM・試験）。書込を適用した後の保存を \"store\" に入れて返す\n"
+      f"pub fn call(request: &str) -> Result<String, String> {{\n"
       '    let r = parse(request)?;\n    let mut s = read_store(r.get("store")?)?;\n'
-      f'    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s)\n}}')
+      f'    let out = call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s, &mut Vec::new())?;\n'
+      '    let head = out.strip_suffix(\'}\').ok_or_else(|| "応答の形が違います".to_string())?;\n'
+      '    Ok(format!("{},\\"store\\":{}}}", head, write_store(&s)))\n}')
+    w(server_api(p))
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
     # 定義には表示名など .geas の文字列が入る。生の文字列（r#"…"#）だと、中に "#… があると抜けてコードを差し込めるので、逃がしたリテラルにする
     w(f'pub const DEFS_JSON: &str = {rust_str(defs)};')

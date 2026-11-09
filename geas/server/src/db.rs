@@ -1,8 +1,9 @@
 //! DB の層。Geas の【保存】（store）を SQLite に置く。
-//! 実体ごとに1つの表（キー＋JSON）を持ち、処理の前後で保存の差分だけを書く。
+//! 実体ごとに1つの表（キー＋JSON）を持つ。処理はメモリ上の保存で動き、ここへは処理が変えた行だけを書く。
+//! 別の接続（同じファイルを使う別のサーバー・人の手）が書いたかは data_version で分かり、そのときだけ全部を読み直す。
 //! この層だけが SQLite を知っている（別の DB に替えるときは、ここだけを替える）。
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 pub struct Db {
     conn: Connection,
@@ -27,6 +28,8 @@ impl Db {
         let conn = Connection::open(path).map_err(e)?;
         // 同じファイルを使う別プロセスが書き込み中なら、失敗にせず待つ（直列の保証は SQLite の書き込みロックが担う）
         conn.busy_timeout(std::time::Duration::from_secs(10)).map_err(e)?;
+        // 行の書き込み（実体ごとに書き込みと削除の 2 つ）を、準備済みのまま使い回す
+        conn.set_prepared_statement_cache_capacity(16 + 2 * entities.len());
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;").map_err(e)?;
         for en in &entities {
             conn.execute_batch(&format!("CREATE TABLE IF NOT EXISTS \"{}\" (k TEXT PRIMARY KEY, v TEXT NOT NULL);", en)).map_err(e)?;
@@ -34,7 +37,8 @@ impl Db {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS geas_waits (id INTEGER PRIMARY KEY AUTOINCREMENT, trigger TEXT NOT NULL, args TEXT NOT NULL, collected TEXT NOT NULL, deadline INTEGER NOT NULL, UNIQUE(trigger, args));
              CREATE TABLE IF NOT EXISTS geas_effects (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, name TEXT NOT NULL, args TEXT NOT NULL, idem_key TEXT NOT NULL, trigger TEXT);
-             CREATE TABLE IF NOT EXISTS geas_kv (k TEXT PRIMARY KEY, v INTEGER NOT NULL);",
+             CREATE TABLE IF NOT EXISTS geas_kv (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
+             CREATE INDEX IF NOT EXISTS geas_waits_deadline ON geas_waits (deadline);",
         )
         .map_err(e)?;
         Ok(Db { conn, entities })
@@ -49,48 +53,62 @@ impl Db {
     pub fn rollback(&self) {
         let _ = self.conn.execute_batch("ROLLBACK");
     }
-
-    /// 保存の全体を {実体: {キー: 行}} で読む
-    pub fn load_store(&self) -> R<Value> {
-        self.load_entities(None)
+    /// 読むだけのトランザクション。複数の表を同じ時点の内容で読むために使う（終わりは rollback）
+    pub fn begin_read(&self) -> R<()> {
+        self.conn.execute_batch("BEGIN").map_err(e)
+    }
+    pub fn in_transaction(&self) -> bool {
+        !self.conn.is_autocommit()
+    }
+    /// 別の接続（同じ DB を使う別のサーバー・人の手）が書き込むと変わる値。この接続の書き込みでは変わらない（PRAGMA data_version）。
+    /// サーバーは保存をメモリに持ち、この値が変わったときだけ DB から読み直す
+    pub fn data_version(&self) -> R<i64> {
+        self.conn.query_row("PRAGMA data_version", [], |r| r.get(0)).map_err(e)
     }
 
-    /// 保存から読む実体を絞る（None なら全部）。処理が触れる実体は検査で決まっているので、ほかは読み込まない
-    pub fn load_entities(&self, only: Option<&[String]>) -> R<Value> {
-        let mut all = Map::new();
-        for en in self.entities.iter().filter(|en| only.map_or(true, |o| o.contains(en))) {
-            let mut st = self.conn.prepare(&format!("SELECT k, v FROM \"{}\"", en)).map_err(e)?;
-            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)?;
-            let mut m = Map::new();
-            for r in rows {
-                let (k, v) = r.map_err(e)?;
-                m.insert(k, serde_json::from_str(&v).map_err(|x| x.to_string())?);
-            }
-            all.insert(en.clone(), Value::Object(m));
-        }
-        Ok(Value::Object(all))
-    }
-
-    /// 前後の保存を比べて、変わった行だけを書く
-    pub fn save_diff(&self, before: &Value, after: &Value) -> R<()> {
+    /// 保存の全部の行を、(実体の名前, キー, 行の JSON) で 1 行ずつ渡す
+    pub fn each_row(&self, mut f: impl FnMut(&str, &str, &str) -> R<()>) -> R<()> {
         for en in &self.entities {
-            let empty = Map::new();
-            let b = before.get(en).and_then(|x| x.as_object()).unwrap_or(&empty);
-            let a = after.get(en).and_then(|x| x.as_object()).unwrap_or(&empty);
-            for (k, v) in a {
-                if b.get(k) != Some(v) {
-                    self.conn
-                        .execute(&format!("INSERT INTO \"{}\" (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v", en), params![k, v.to_string()])
-                        .map_err(e)?;
-                }
-            }
-            for k in b.keys() {
-                if !a.contains_key(k) {
-                    self.conn.execute(&format!("DELETE FROM \"{}\" WHERE k = ?1", en), params![k]).map_err(e)?;
-                }
+            let mut st = self.conn.prepare(&format!("SELECT k, v FROM \"{}\"", en)).map_err(e)?;
+            let mut rows = st.query([]).map_err(e)?;
+            while let Some(r) = rows.next().map_err(e)? {
+                let k = r.get_ref(0).map_err(e)?.as_str().map_err(|x| format!("DB: {}", x))?;
+                let v = r.get_ref(1).map_err(e)?.as_str().map_err(|x| format!("DB: {}", x))?;
+                f(en, k, v)?;
             }
         }
         Ok(())
+    }
+
+    /// 1 行を書く。row が None なら、その行を消す
+    pub fn write_row(&self, entity: &str, key: &str, row: Option<&str>) -> R<()> {
+        if !self.has_entity(entity) {
+            return Err(format!("DB: 実体「{}」の表はありません", entity));
+        }
+        match row {
+            Some(v) => self
+                .conn
+                .prepare_cached(&format!("INSERT INTO \"{}\" (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v", entity))
+                .and_then(|mut st| st.execute(params![key, v]))
+                .map_err(e)?,
+            None => self.conn.prepare_cached(&format!("DELETE FROM \"{}\" WHERE k = ?1", entity)).and_then(|mut st| st.execute(params![key])).map_err(e)?,
+        };
+        Ok(())
+    }
+
+    /// 保存のどの表にも行が無いか（全件は読まない）
+    pub fn is_empty(&self) -> R<bool> {
+        for en in &self.entities {
+            let any: Option<i64> = self.conn.query_row(&format!("SELECT 1 FROM \"{}\" LIMIT 1", en), [], |r| r.get(0)).optional().map_err(e)?;
+            if any.is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn has_entity(&self, entity: &str) -> bool {
+        self.entities.iter().any(|x| x == entity)
     }
 
     pub fn next_counter(&self, name: &str) -> R<i64> {
@@ -167,20 +185,55 @@ impl Db {
 mod tests {
     use super::*;
 
-    // 実体を絞って読むと、指定した実体だけが入る。書き込みの差分は、読まなかった実体に影響しない
+    fn rows(db: &Db) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        db.each_row(|en, k, v| {
+            out.push((en.to_string(), k.to_string(), v.to_string()));
+            Ok(())
+        })
+        .unwrap();
+        out
+    }
+
+    // 1 行ずつ書き、消せる。ほかの行と実体には触れない。知らない実体の表には書かない
     #[test]
-    fn load_entities_reads_only_the_named_ones() {
+    fn write_row_writes_and_deletes_only_that_row() {
         let db = Db::open(":memory:", vec!["A".into(), "B".into()]).unwrap();
-        db.conn.execute("INSERT INTO \"A\" (k, v) VALUES ('a1', '{\"n\":1}')", []).unwrap();
-        db.conn.execute("INSERT INTO \"B\" (k, v) VALUES ('b1', '{\"n\":2}')", []).unwrap();
-        let only_a = db.load_entities(Some(&["A".to_string()])).unwrap();
-        assert!(only_a.get("A").is_some() && only_a.get("B").is_none());
-        let before = only_a.clone();
-        let mut after = only_a.clone();
-        after["A"]["a2"] = serde_json::json!({"n": 3});
-        db.save_diff(&before, &after).unwrap();
-        let all = db.load_store().unwrap();
-        assert!(all["A"].get("a2").is_some());
-        assert!(all["B"].get("b1").is_some()); // 読まなかった B の行は、消えない
+        db.write_row("A", "a1", Some("{\"n\":1}")).unwrap();
+        db.write_row("A", "a2", Some("{\"n\":2}")).unwrap();
+        db.write_row("B", "b1", Some("{\"n\":3}")).unwrap();
+        db.write_row("A", "a1", Some("{\"n\":10}")).unwrap();
+        db.write_row("A", "a2", None).unwrap();
+        assert_eq!(rows(&db), vec![("A".into(), "a1".into(), "{\"n\":10}".into()), ("B".into(), "b1".into(), "{\"n\":3}".into())]);
+        assert!(db.write_row("geas_kv\" (k) VALUES ('x'); --", "k", Some("{}")).is_err());
+    }
+
+    // data_version は、同じ DB を使う別の接続が書いたときだけ変わる（自分の書き込みでは変わらない）。
+    // サーバーはこれで、メモリに持った保存を読み直すかを決める
+    #[test]
+    fn data_version_changes_only_when_another_connection_writes() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("geas_db_test_{}_{}.sqlite", std::process::id(), nanos));
+        let p = path.to_str().unwrap();
+        let a = Db::open(p, vec!["A".into()]).unwrap();
+        let b = Db::open(p, vec!["A".into()]).unwrap();
+        let v0 = a.data_version().unwrap();
+        a.begin().unwrap();
+        a.write_row("A", "a1", Some("{}")).unwrap();
+        a.commit().unwrap();
+        assert_eq!(a.data_version().unwrap(), v0);
+        b.write_row("A", "b1", Some("{}")).unwrap();
+        let v1 = a.data_version().unwrap();
+        assert_ne!(v1, v0);
+        // トランザクションの中でも、始まる前に別の接続が書いた分は見える
+        b.write_row("A", "b2", Some("{}")).unwrap();
+        a.begin().unwrap();
+        assert_ne!(a.data_version().unwrap(), v1);
+        assert_eq!(rows(&a).len(), 3);
+        a.rollback();
+        drop((a, b));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", p, suffix));
+        }
     }
 }

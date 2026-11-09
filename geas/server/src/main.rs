@@ -53,8 +53,7 @@ fn main() {
     let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).expect("保存の形");
     let entities: Vec<String> = empty.as_object().expect("保存の形").keys().cloned().collect();
     let db = db::Db::open(&db_path, entities).expect("DB を開けません");
-    let store = db.load_store().expect("保存を読めません");
-    app::seed_if_empty(&db, &seed, &store).expect("最初のデータを入れられません");
+    app::seed_if_empty(&db, &seed).expect("最初のデータを入れられません");
     let engine = Arc::new(Mutex::new(engine::Engine::new(db).expect("定義が読めません")));
 
     // 時間の経過（模擬の返事・期限）

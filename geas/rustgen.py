@@ -508,17 +508,22 @@ class Gen:
         for d in self.p.data:
             self.w(f"    pub {d.name}: BTreeMap<String, {d.name}>,")
         self.w("}\n")
+        self.w("/// 書込で変わった行（実体の名前, キー）。サーバーは、保存をメモリに持ったまま、この行だけを DB へ書き戻す\n"
+               "pub type Changed = Vec<(&'static str, String)>;\n")
         # 書込の適用と差分
         self.w("impl Store {")
-        self.w("    pub fn apply(&mut self, writes: Vec<Write>) -> Result<(), Fault> {\n        for w in writes {\n            match w {")
+        self.w("    pub fn apply(&mut self, writes: Vec<Write>) -> Result<(), Fault> {\n        self.apply_tracked(writes, &mut Vec::new())\n    }")
+        self.w("    /// 書込を適用し、変わった行を changed に足す（削除の cascade・detach で変わった参照元の行も含む）。\n"
+               "    /// 途中で止まっても、それまでに変えた行は changed に入っている\n"
+               "    pub fn apply_tracked(&mut self, writes: Vec<Write>, changed: &mut Changed) -> Result<(), Fault> {\n        for w in writes {\n            match w {")
         for kind, d, f in self.write_kinds():
             if f is None:
-                self.w(f"                Write::{d}_New(r) => {{ self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
+                self.w(f"                Write::{d}_New(r) => {{ changed.push((\"{d}\", r.{self.key(d)}.clone())); self.{d}.insert(r.{self.key(d)}.clone(), r); }}")
             elif f == "削除":
-                self.w(f"                Write::{d}_Del(id) => {{ self.del_{d}(&id); }}")
+                self.w(f"                Write::{d}_Del(id) => {{ self.del_{d}(&id, changed); }}")
             else:
                 # 書込先は、処理が存在を確かめて引いた1件（検査で示してある）。実行時には確かめない
-                self.w(f"                Write::{d}_{f}(id, v) => {{ proven!(self.{d}.get_mut(&id), \"検査で示した書込先が無い: {d}\").{f} = v; }}")
+                self.w(f"                Write::{d}_{f}(id, v) => {{ proven!(self.{d}.get_mut(&id), \"検査で示した書込先が無い: {d}\").{f} = v; changed.push((\"{d}\", id)); }}")
         self.w("            }\n        }\n        Ok(())\n    }")
         self.delete_methods()
         self.w("    pub fn diff(&self, after: &Store) -> Vec<String> {\n        let mut out: Vec<String> = Vec::new();")
@@ -547,15 +552,16 @@ class Gen:
                 continue
             seen.append(d)
             dt = self.ck.data[d]
-            lines = [f"    fn del_{d}(&mut self, id: &str) {{", f"        self.{d}.remove(id);"]
+            lines = [f"    fn del_{d}(&mut self, id: &str, changed: &mut Changed) {{",
+                     f"        if self.{d}.remove(id).is_some() {{ changed.push((\"{d}\", id.to_string())); }}"]
             for src, fld, pol in dt.on_delete:
                 f = next(x for x in self.ck.data[src].fields if x.name == fld)
                 if pol == "detach":
-                    lines.append(f"        for r in self.{src}.values_mut() {{ if r.{fld}.as_deref() == Some(id) {{ r.{fld} = None; }} }}")
+                    lines.append(f"        for (k, r) in self.{src}.iter_mut() {{ if r.{fld}.as_deref() == Some(id) {{ r.{fld} = None; changed.push((\"{src}\", k.clone())); }} }}")
                 elif pol == "cascade":
                     test = f"r.{fld}.as_deref() == Some(id)" if f.type.optional else f"r.{fld} == id"
                     lines.append(f"        let gone: Vec<String> = self.{src}.iter().filter(|(_, r)| {test}).map(|(k, _)| k.clone()).collect();")
-                    lines.append(f"        for k in gone {{ self.del_{src}(&k); }}")
+                    lines.append(f"        for k in gone {{ self.del_{src}(&k, changed); }}")
                     todo.append(src)
             lines.append("    }")
             self.w("\n".join(lines))

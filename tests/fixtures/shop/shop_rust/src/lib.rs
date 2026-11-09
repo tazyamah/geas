@@ -229,13 +229,21 @@ pub struct Store {
     pub Order: BTreeMap<String, Order>,
 }
 
+/// 書込で変わった行（実体の名前, キー）。サーバーは、保存をメモリに持ったまま、この行だけを DB へ書き戻す
+pub type Changed = Vec<(&'static str, String)>;
+
 impl Store {
     pub fn apply(&mut self, writes: Vec<Write>) -> Result<(), Fault> {
+        self.apply_tracked(writes, &mut Vec::new())
+    }
+    /// 書込を適用し、変わった行を changed に足す（削除の cascade・detach で変わった参照元の行も含む）。
+    /// 途中で止まっても、それまでに変えた行は changed に入っている
+    pub fn apply_tracked(&mut self, writes: Vec<Write>, changed: &mut Changed) -> Result<(), Fault> {
         for w in writes {
             match w {
-                Write::Order_New(r) => { self.Order.insert(r.order_id.clone(), r); }
-                Write::Product_stock(id, v) => { proven!(self.Product.get_mut(&id), "検査で示した書込先が無い: Product").stock = v; }
-                Write::Order_status(id, v) => { proven!(self.Order.get_mut(&id), "検査で示した書込先が無い: Order").status = v; }
+                Write::Order_New(r) => { changed.push(("Order", r.order_id.clone())); self.Order.insert(r.order_id.clone(), r); }
+                Write::Product_stock(id, v) => { proven!(self.Product.get_mut(&id), "検査で示した書込先が無い: Product").stock = v; changed.push(("Product", id)); }
+                Write::Order_status(id, v) => { proven!(self.Order.get_mut(&id), "検査で示した書込先が無い: Order").status = v; changed.push(("Order", id)); }
             }
         }
         Ok(())
