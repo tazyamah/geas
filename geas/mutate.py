@@ -91,9 +91,9 @@ def read_git(code: Path, rev: str) -> str:
     if not rev or rev.startswith("-"):
         raise ValueError(f"前の版の指定が正しくありません（{rev!r}）。HEAD~1 やコミットの ID で書いてください")
     code = code.resolve()
-    top = subprocess.run(["git", "-C", str(code.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+    top = subprocess.run(["git", "-C", str(code.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
     rel = code.relative_to(Path(top).resolve())
-    old = subprocess.run(["git", "-C", top, "show", f"{rev}:{rel.as_posix()}"], capture_output=True, text=True)
+    old = subprocess.run(["git", "-C", top, "show", f"{rev}:{rel.as_posix()}"], capture_output=True, text=True, encoding="utf-8")
     if old.returncode:
         raise ValueError(f"前の版を読めません（{rev}:{rel.as_posix()}）: {old.stderr.strip()}")
     return old.stdout
@@ -108,7 +108,7 @@ def stopped(text: str, path: str) -> tuple[bool, str]:
 
 def run(path: str, base_text: str | None = None) -> tuple[list[Mutant], str | None]:
     """崩した版を順に検査する。戻り値は (結果つきの一覧, 元の版が OK でないときの理由)"""
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
     broken, why = stopped(text, path)
     if broken:
         return [], f"元の版が検査を通らないので、変異検査は始めません: {why}"
@@ -135,7 +135,7 @@ def run_examples(path: str, ms: list[Mutant], plan_text: str) -> str | None:
     rows = read_plan(plan_text).get("具体例", [])
     if not rows:
         return "計画書に具体例がないので、具体例での確認はしません"
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
 
     def mismatches(src: str) -> list:
         ck = check(parse(src, path), strict_names=True)

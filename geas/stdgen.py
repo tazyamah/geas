@@ -27,7 +27,7 @@ def default_json() -> Path:
     """nightly の rust-docs-json が入れる core.json（rustup component add rust-docs-json --toolchain nightly）"""
     for toolchain in ["nightly", *sorted(p.name for p in (Path.home() / ".rustup/toolchains").glob("nightly-*"))]:
         try:
-            sysroot = subprocess.check_output(["rustc", f"+{toolchain}", "--print", "sysroot"], text=True, stderr=subprocess.DEVNULL).strip()
+            sysroot = subprocess.check_output(["rustc", f"+{toolchain}", "--print", "sysroot"], text=True, encoding="utf-8", stderr=subprocess.DEVNULL).strip()
         except (OSError, subprocess.CalledProcessError):
             continue
         path = Path(sysroot) / "share/doc/rust/json/core.json"
@@ -119,7 +119,9 @@ def render(rows: list[tuple]) -> str:
 
 def main(argv):
     path = Path(argv[1]) if len(argv) > 1 else default_json()
-    sys.stdout.write(render(collect(json.loads(path.read_text()))))
+    if hasattr(sys.stdout, "reconfigure"):  # .geas にリダイレクトするので、Windows でも UTF-8 で出す
+        sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(render(collect(json.loads(path.read_text(encoding="utf-8")))))
 
 
 if __name__ == "__main__":

@@ -46,14 +46,14 @@ def score_case(case: str, plan_text: str, app: Path, rounds_file: Path, run: boo
     s = Score(case)
     if rounds_file.exists():
         try:
-            s.rounds = int(rounds_file.read_text().strip())
+            s.rounds = int(rounds_file.read_text(encoding="utf-8").strip())
         except ValueError:
             s.notes.append("rounds.txt が整数ではありません")
     if not app.exists():
         s.status = "書かれていない"
         return s
     try:
-        ck = check(parse(app.read_text(), str(app)), strict_names=True)
+        ck = check(parse(app.read_text(encoding="utf-8"), str(app)), strict_names=True)
     except (ParseError, LexError, ModuleError) as e:
         s.status, s.notes = "構文エラー", s.notes + [str(e)[:200]]
         return s
@@ -94,7 +94,7 @@ def _f(kind):
 def run_bench(cases_dir: Path, runs_dir: Path, run: bool = True) -> list[Score]:
     out = []
     for c in sorted(p for p in cases_dir.iterdir() if (p / "plan.md").exists()):
-        out.append(score_case(c.name, (c / "plan.md").read_text(), runs_dir / c.name / "app.geas", runs_dir / c.name / "rounds.txt", run))
+        out.append(score_case(c.name, (c / "plan.md").read_text(encoding="utf-8"), runs_dir / c.name / "app.geas", runs_dir / c.name / "rounds.txt", run))
     return out
 
 

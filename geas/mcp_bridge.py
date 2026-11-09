@@ -52,6 +52,9 @@ def main(argv: list[str]) -> int:
         print("使い方: python mcp_bridge.py tools.json サーバーのURL", file=sys.stderr)
         return 2
     tools = json.load(open(argv[1], encoding="utf-8"))
+    for s in (sys.stdin, sys.stdout):  # MCP の stdio は UTF-8（Windows の既定の文字コードで読み書きしない）
+        if hasattr(s, "reconfigure"):
+            s.reconfigure(encoding="utf-8")
     for line in sys.stdin:
         if line.strip():
             out = handle(json.loads(line), tools, argv[2])

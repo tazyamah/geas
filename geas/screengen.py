@@ -138,7 +138,7 @@ def write_ui(ck, dest) -> None:
     from html import escape
     (out / "icon.svg").write_text(
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="{accent}"/>'
-        f'<text x="256" y="350" font-size="300" text-anchor="middle" fill="#fff" font-family="sans-serif">{escape(title[:1])}</text></svg>\n')
+        f'<text x="256" y="350" font-size="300" text-anchor="middle" fill="#fff" font-family="sans-serif">{escape(title[:1])}</text></svg>\n', encoding="utf-8")
     rgb = bytes(int(accent[i:i + 2], 16) for i in (1, 3, 5))
 
     def png(n):

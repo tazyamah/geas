@@ -41,11 +41,11 @@ def new_ledger(title: str) -> dict:
 
 
 def load(path) -> dict:
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def save(path, led: dict):
-    Path(path).write_text(json.dumps(led, ensure_ascii=False, indent=2) + "\n")
+    Path(path).write_text(json.dumps(led, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def usecase_gaps(u: dict) -> list[str]:
