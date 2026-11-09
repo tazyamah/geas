@@ -13,7 +13,7 @@ from .rest import routes
 HEADER = '''# SPDX-License-Identifier: GPL-3.0-or-later
 """計画書の「URL の具体例」から geas が生成したテスト。手で直さない（計画書を直して作り直す）。
 サーバーは、生成物の server/ をビルドしたもの（cargo build --release）を、新しい DB で起こす。
-環境変数 GEAS_BASE_URL があれば、起こさずにそのサーバーに対して実行する。"""
+環境変数 GEAS_BASE_URL があれば、起こさずにそのサーバーに対して実行する（流れの途中の URL の具体例は、そのサーバーが --test で起きているときだけ通る）。"""
 import json
 import os
 import socket
@@ -44,8 +44,9 @@ def base():
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     with tempfile.TemporaryDirectory() as work:
+        # 流れの途中の処理の URL（仕様書の URL の表で「内部」）も具体例で確かめるので、テスト用の口を開く（--test）
         proc = subprocess.Popen([str(exe), "--port", str(port), "--db", str(Path(work) / "app.sqlite"),
-                                 "--pwa", str(APP / "ui"), "--dev", str(APP / "dev")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 "--pwa", str(APP / "ui"), "--test", "--dev", str(APP / "dev")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         url = f"http://127.0.0.1:{port}"
         for _ in range(100):
             try:

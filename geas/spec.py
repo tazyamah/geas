@@ -78,11 +78,13 @@ def read_text(rd) -> str:
 
 
 def build(ck: Checker) -> dict:
-    from .rest import routes
+    from .rest import INTERNAL, OPEN, internal_targets, routes
     spec = build_raw(ck)
     names = spec["名前"]
     spec = show_all(ck.p, spec)
-    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st)) for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
+    inner = internal_targets(ck.p)
+    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN)
+                     for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
@@ -333,8 +335,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## 削除（消してよい状態と、消したときの参照元の扱い）", "", "| データ | 消してよい状態 | 参照元の扱い |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]
     if spec["ルート"]:
-        out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき）", "", "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |", "|---|---|---|---|---|"]
-        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["ルート"]]
+        out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
+                "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |", "|---|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" for a, b, c, d, e, f in spec["ルート"]]
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")

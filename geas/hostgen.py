@@ -8,7 +8,7 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
 from .rustgen import column_type, opt, rust_str
-from .rest import routes as rest_routes
+from .rest import internal_targets, routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
 from .mcp import tool_defs
@@ -232,6 +232,7 @@ def definitions(ck: Checker) -> dict:
     for fl in p.flows:
         for proc, routes in fl.entries:  # 行き先が1つなら文字列、複数なら書いた順の配列
             flows.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else ds for v, ds in route_map(routes).items()})
+    inner = internal_targets(p)  # 流れの途中の処理を呼ぶ URL：サーバーは --test のときだけ答える（仕様書の URL の表で「内部」）
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
                   "touches": touched_data(ck.infos[x.name])} for x in p.processes},
@@ -244,7 +245,8 @@ def definitions(ck: Checker) -> dict:
         "mock": mock_def(ck),
         "screens": screens_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
-                    **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {})}
+                    **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
+                    **({"internal": True} if tgt in inner else {})}
                    for m, path, kind, tgt, rn, st in rest_routes(ck.p)],
         "mcp": tool_defs(ck),
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
