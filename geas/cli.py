@@ -4,7 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .check import ERROR, check
+from .check import ERROR, QUESTION, WARN, check
 from .servergen import write_server
 from .extgen import ext_screens, write_ext
 from .examples import ExampleError, compare_examples, run_crate, runner_source, write_crate
@@ -18,11 +18,47 @@ from .spec import build, render
 from . import interview
 
 
+def syntax_error_text(e, path) -> str:
+    """構文エラーの表示：位置と文言、その行の抜き出しと、字句の位置の印"""
+    out = [f"構文エラー: {e}"]
+    line, col, file = getattr(e, "line", 0), getattr(e, "col", 0), getattr(e, "file", "") or str(path)
+    if line:
+        try:
+            src = Path(file).read_text(encoding="utf-8").split("\n")
+        except (OSError, UnicodeDecodeError):
+            src = []
+        if 0 < line <= len(src) and src[line - 1].strip():
+            text = src[line - 1].rstrip()
+            out.append(f"  {line:>4} | {text}")
+            if 0 < col <= len(text) + 1:
+                import unicodedata
+                pad = "".join(c if c == "\t" else " " * (2 if unicodedata.east_asian_width(c) in "WF" else 1) for c in text[:col - 1])
+                out.append(f"  {'':>4} | {pad}^")
+    return "\n".join(out)
+
+
+def counts_line(ck) -> str:
+    """check の最後の行。件数と、次にすること"""
+    n = {lv: sum(1 for d in ck.diags if d.level == lv) for lv in (ERROR, QUESTION, WARN)}
+    tally = f"エラー {n[ERROR]} 件・問い {n[QUESTION]} 件・警告 {n[WARN]} 件"
+    if n[ERROR]:
+        return f"検査: エラーがあります（{tally}）"
+    if n[QUESTION]:
+        return f"検査: 通りました（{tally}）。問いは人に1問ずつ聞いて決めてください（答えるまで rust と compare は進みません）"
+    return "検査: 通りました" + (f"（{tally}）" if n[WARN] else "")
+
+
+def print_diags(ck, file=None):
+    """指摘を、コードに書いた名前のまま出す（AI はこの名前と行でコードを探して直す）"""
+    for d in ck.diags:
+        print(d.for_code(), file=file or sys.stdout)
+
+
 def load(path):
     try:
-        return check(parse(Path(path).read_text(), path), strict_names=True)
+        return check(parse(Path(path).read_text(encoding="utf-8"), path), strict_names=True)
     except (ParseError, LexError, ModuleError) as e:
-        print(f"構文エラー: {e}", file=sys.stderr)
+        print(syntax_error_text(e, path), file=sys.stderr)
         sys.exit(2)
 
 
@@ -217,22 +253,53 @@ def run_env_verify(a, ck) -> int:
     return 1 if c[envcheck.FAIL] or (a.strict and c[envcheck.UNKNOWN]) else 0
 
 
+# 読むファイルを受け取る引数（無ければ、トレースバックでなく1行で知らせる）
+INPUTS = ("code", "plan", "base", "seed", "facts", "baseline")
+# 書き出すファイルの引数（置き場のフォルダが無ければ知らせる。rust の -o は作る）
+OUTPUTS = ("o", "diff_o")
+
+
+def check_paths(a) -> list[str]:
+    """引数のファイルの確かめ。問題の文言の列（無ければ空）"""
+    bad = []
+    for k in INPUTS:
+        v = getattr(a, k, None)
+        if v and not Path(v).is_file():
+            bad.append(f"ファイルがありません: {v}" if not Path(v).exists() else f"ファイルではありません: {v}")
+    if getattr(a, "log", None) not in (None, "-") and not Path(a.log).is_file():
+        bad.append(f"ログのファイルがありません: {a.log}")
+    if a.cmd == "bench" and a.json and not Path(a.json).resolve().parent.is_dir():
+        bad.append(f"書き出す先のフォルダがありません: {Path(a.json).parent}")
+    for k in OUTPUTS:
+        v = getattr(a, k, None)
+        if v and a.cmd not in ("rust", "interview") and not Path(v).resolve().parent.is_dir():
+            bad.append(f"書き出す先のフォルダがありません: {Path(v).parent}")
+    if a.cmd == "rust":
+        if a.runtime and not a.host:
+            bad.append("--runtime は --host と一緒に使います（サーバーの実行部は、画面の窓口と組みます）")
+        if a.seed and not a.runtime:
+            bad.append("--seed は --host --runtime と一緒に使います（最初のデータはサーバーが入れます）")
+    return bad
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="geas", description="独自構文の検査・Rust生成・plan突合（試作）")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    ap = argparse.ArgumentParser(prog="geas", description="計画書と .geas を突き合わせ、検査・仕様書・Rust の生成をする（試作の Python 版）",
+                                 epilog="ふだんの流れ：check（検査）→ review（人が読む仕様書）→ compare（計画書と突合）→ rust（生成）。"
+                                        "詳しくは docs/ai-guide.md")
+    sub = ap.add_subparsers(dest="cmd")
     iv = sub.add_parser("interview", help="初回の対話の台帳（init／status／render）。Cockburn のユースケース手法に基づく")
     iv.add_argument("action", choices=["init", "status", "render"])
-    iv.add_argument("ledger")
+    iv.add_argument("ledger", help="台帳のファイル")
     iv.add_argument("--title", default="（題名）")
     iv.add_argument("-o", help="render の出力先")
     iv.add_argument("--force", action="store_true", help="init で既存の台帳を上書きする")
     c = sub.add_parser("check", help="コードを検査する")
-    c.add_argument("code")
+    c.add_argument("code", help=".geas ファイル")
     c.add_argument("--json", action="store_true", help="結果を JSON で出す（AI が直すための手がかり hint つき）")
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
-    s.add_argument("code")
+    s.add_argument("code", help=".geas ファイル")
     s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")
-    s.add_argument("-o")
+    s.add_argument("-o", help="仕様書（Markdown）の出力先。無ければ標準出力に出す")
     ev = sub.add_parser("env-checks", help="動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す")
     ev.add_argument("code")
     ev.add_argument("--json", action="store_true", help="JSON で出す（plan の照合器や、検査ツールへの変換器が読む）")
@@ -250,40 +317,40 @@ def main(argv=None) -> int:
     ev2.add_argument("--json", action="store_true", help="結果を JSON で出す")
     ev2.add_argument("--strict", action="store_true", help="「確かめられなかった」も、終了コード 1 にする")
     v = sub.add_parser("review", help="人が読む仕様書（HTML）を生成する。計画書を渡すと、突合の結果とユースケースも載る")
-    v.add_argument("code")
+    v.add_argument("code", help=".geas ファイル")
     v.add_argument("--plan", help="計画書（①）")
     v.add_argument("--diff-o", help="答えてほしいことと前の版からの変更だけの HTML の出力先（仕様書とは別のファイル）")
     v.add_argument("--base", help="比べる前の版のコード。--diff-o の HTML に「前の版からの変更」が載る")
     v.add_argument("--base-git", metavar="REV", help="比べる前の版を、git の REV（例: HEAD~1）にある同じコードにする")
-    v.add_argument("-o", required=True)
+    v.add_argument("-o", required=True, help="仕様書（HTML）の出力先")
     r = sub.add_parser("rust", help="Rust の crate を生成する")
-    r.add_argument("code")
-    r.add_argument("-o", required=True)
+    r.add_argument("code", help=".geas ファイル")
+    r.add_argument("-o", required=True, help="crate を書き出すフォルダ")
     r.add_argument("--plan", help="具体例の実行用 bin も生成する（--host --runtime と一緒なら、URL の具体例の HTTP テストも）")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
     r.add_argument("--runtime", action="store_true", help="サーバーの実行部（geas_server の crate）も、生成物の server/ に置く（--host と一緒に）")
     r.add_argument("--seed", help="サーバーが、DB が空のときだけ入れる最初のデータ（実体名→キー→行の JSON）。無ければ何も入れない")
     r.add_argument("--server", default="http://localhost:8787", help="拡張と MCP の橋渡しが問い合わせるサーバーの既定の URL")
     m = sub.add_parser("compare", help="plan の仕様書（①）とコードの突合。具体例も実行する")
-    m.add_argument("code")
-    m.add_argument("plan")
+    m.add_argument("code", help=".geas ファイル")
+    m.add_argument("plan", help="計画書（①）")
     m.add_argument("--no-run", action="store_true", help="具体例を実行しない（静的な突合だけ）")
     m.add_argument("-o", help="結果を Markdown で書き出す")
     mu = sub.add_parser("mutate", help="変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る（普段は走らせない。レビューの前に）")
-    mu.add_argument("code")
+    mu.add_argument("code", help=".geas ファイル")
     mu.add_argument("--base", help="前の版のコード。変わった行だけを崩す")
     mu.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする。変わった行だけを崩す")
     mu.add_argument("--run", action="store_true", help="検査器が止めなかった崩し方を、計画書の具体例を動かして確かめる（--plan が要る。Rust をビルドするので遅い）")
     mu.add_argument("--plan", help="--run で使う計画書（①）")
     mu.add_argument("-o", help="結果を Markdown で書き出す")
     rc = sub.add_parser("receipt", help="変更ごとのレシート：前の版と比べた、信頼に関わる変化（PR の本文に貼る Markdown）")
-    rc.add_argument("code")
+    rc.add_argument("code", help=".geas ファイル")
     rc.add_argument("--base", help="前の版のコード")
     rc.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする")
     rc.add_argument("--plan", help="計画書（①）。渡すと、動きが変わるユースケースも出す")
     rc.add_argument("-o", help="結果を Markdown で書き出す")
     tr = sub.add_parser("trace", help="運用のログ（生成したサーバーの標準エラー）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べないものがあれば終了コード 1")
-    tr.add_argument("code")
+    tr.add_argument("code", help=".geas ファイル")
     tr.add_argument("log", help="ログのファイル（- なら標準入力）")
     tr.add_argument("--plan", help="計画書（①）。渡すと、ユースケースと画面も出す")
     tr.add_argument("-o", help="結果を Markdown で書き出す")
@@ -295,6 +362,14 @@ def main(argv=None) -> int:
     bn.add_argument("--json", help="結果を JSON で書き出す（次回の --baseline 用）")
     bn.add_argument("-o", help="結果を Markdown で書き出す")
     a = ap.parse_args(argv)
+    if a.cmd is None:
+        ap.print_help(sys.stderr)
+        return 2
+    bad = check_paths(a)
+    if bad:
+        for b in bad:
+            print(b, file=sys.stderr)
+        return 2
 
     if a.cmd == "interview":
         return run_interview(a)
@@ -311,9 +386,9 @@ def main(argv=None) -> int:
     if a.cmd == "check" and a.json:
         from .hints import syntax_json
         try:
-            ck = check(parse(Path(a.code).read_text(), a.code), strict_names=True)
+            ck = check(parse(Path(a.code).read_text(encoding="utf-8"), a.code), strict_names=True)
         except (ParseError, LexError, ModuleError) as e:
-            print(syntax_json(a.code, str(e)), end="")
+            print(syntax_json(a.code, e), end="")
             return 2
     else:
         ck = load(a.code)
@@ -322,17 +397,15 @@ def main(argv=None) -> int:
             from .hints import to_json
             print(to_json(ck, a.code), end="")
             return 0 if ck.ok else 1
-        for d in ck.diags:
-            print(d)
-        print("検査: " + ("通りました" if ck.ok else "エラーがあります"))
+        print_diags(ck)
+        print(counts_line(ck))
         return 0 if ck.ok else 1
     if a.cmd == "env-verify":
         return run_env_verify(a, ck)
     if a.cmd == "env-checks":
         from . import envreq
         if not ck.ok:
-            for d in ck.diags:
-                print(d, file=sys.stderr)
+            print_diags(ck, sys.stderr)
             print("検査: エラーがあります（直してから一覧を出してください）", file=sys.stderr)
             return 1
         print(envreq.to_json(ck.p) if a.json else envreq.to_text(ck.p), end="")
@@ -368,8 +441,8 @@ def main(argv=None) -> int:
         print(f"生成しました: {a.o}")
         return 0 if ck.ok else 1
     if not ck.ready:
-        for d in ck.diags:
-            print(d)
+        print_diags(ck)
+        print(counts_line(ck), file=sys.stderr)
         print("検査にエラーか問いが残っているので、続けません（問いに答えて、コードか計画書に反映してください）。", file=sys.stderr)
         return 1
     lib = generate(ck)

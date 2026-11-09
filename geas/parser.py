@@ -2,8 +2,10 @@
 """構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。
 キーワードは英語。構文木の中身（型の種類や結果の行き先など）は、仕様書の言葉に合わせた日本語のまま持つ。"""
 import copy
+from pathlib import Path
 
 from .ast import *  # noqa: F401,F403
+from .foreign import ELSE_HOW, FOREIGN_NAMES, TOP_KEYWORDS, brace_hint, def_hint, shown, stmt_hint, string_hint, token_hint
 from .lexer import Tok, lex
 from .modules import ModuleError, expand, statement_starts
 
@@ -38,9 +40,16 @@ COMPONENT_KINDS = ("ID", "整数", "金額", "割合", "文字列", "日時", "�
 
 
 class ParseError(Exception):
-    def __init__(self, msg: str, line: int):
-        super().__init__(f"{line}行目: {msg}")
-        self.line = line
+    """構文エラー。line・col は位置（col は 1 から。分からなければ 0）、file は use で取り込んだファイルのとき、
+    hint は他の言語の書き方らしいときなどの直し方（文言のあとに続けて出す）"""
+
+    def __init__(self, msg: str, line: int, col: int = 0, file: str = "", hint: str = ""):
+        super().__init__(msg)
+        self.msg, self.line, self.col, self.file, self.hint = msg, line, col, file, hint
+
+    def __str__(self):
+        head = (f"{Path(self.file).name} の " if self.file else "") + f"{self.line}行目"
+        return f"{head}: {self.msg}" + (f"。{self.hint}" if self.hint else "")
 
 
 CMP = ("<", ">", "<=", ">=", "==", "!=")
@@ -94,6 +103,7 @@ class Parser:
         self.t = toks
         self.i = 0
         self.ltypes: dict[str, Type] = {}
+        self.ltype_lines: dict[str, int] = {}  # 論理型の名前 → 宣言した行
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
         self.composites: set[str] = {"vtime"}  # 合成型の名前（Make の見分けに使う）
         self.used_builtin: set[str] = set()  # 使われた組み込みの合成型
@@ -118,18 +128,24 @@ class Parser:
             return True
         return False
 
-    def err(self, msg):
-        return ParseError(msg, self.peek().line)
+    def err(self, msg, hint=""):
+        t = self.peek()
+        return ParseError(msg, t.line, t.col, t.file, hint)
+
+    def unexpected(self, msg, hint=""):
+        """思っていない字句があった。他の言語の書き方らしければ、直し方を添える"""
+        return self.err(msg, hint or token_hint(self.t, self.i))
 
     def expect(self, val):
         if not self.accept(val):
-            got = self.peek().val or "行末"
-            raise self.err(f"「{val}」が必要です（「{got}」があります）")
+            t = self.peek()
+            hint = "結果の種類と行き先は → か -> でつなぎます（: ではありません）" if val == "→" and t.val == ":" else ""
+            raise self.unexpected(f"「{val}」が必要です（「{shown(t)}」があります）", hint)
 
     def name(self) -> str:
         t = self.peek()
         if t.kind != "NAME":
-            raise self.err(f"名前が必要です（「{t.val or '行末'}」があります）")
+            raise self.unexpected(f"名前が必要です（「{shown(t)}」があります）")
         self.i += 1
         return t.val
 
@@ -148,7 +164,7 @@ class Parser:
         if self.peek().kind == "NL":
             self.skip_nl()
         elif self.peek().kind != "EOF":
-            raise self.err(f"行末のはずが「{self.peek().val}」があります")
+            raise self.unexpected(f"行末のはずが「{shown(self.peek())}」があります")
 
     def comma_list(self, item):
         out = [item()]
@@ -233,9 +249,12 @@ class Parser:
             elif kw == "needs":  # needs secret 外部.名前 "理由" ／ needs exposure public|internal "理由" ／ needs instances at_most N "理由"：アプリが環境に要求すること
                 p.needs.append(self.needs_decl(line))
             else:
-                raise ParseError(f"未知の定義「{kw}」です", line)
+                t = self.t[self.i - 1]
+                raise ParseError(f"未知の定義「{kw}」です", line, t.col, t.file,
+                                 def_hint(kw) or f"書ける定義は {'・'.join(TOP_KEYWORDS)} です")
             self.skip_nl()
         p.ltype_names = list(self.ltypes)
+        p.ltype_lines = dict(self.ltype_lines)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
             p.composites.insert(0, virtual_datetime())
@@ -319,6 +338,7 @@ class Parser:
             raise ParseError(f"論理型「{name}」が2つ以上あります", line)
         if self.is_("{"):
             self.ltypes[name] = self.composite(name, line)
+            self.ltype_lines[name] = line
             self.composites.add(name)
             return
         self.expect("=")
@@ -331,6 +351,7 @@ class Parser:
             t.read = self.name()
         self.end_line()
         self.ltypes[name] = t
+        self.ltype_lines[name] = line
 
     def composite(self, name, line) -> Type:
         """ltype 名前 { 成分: 型 … }：成分は、名前をつけた論理型か約束のない組み込みの型。成分はすべて必須"""
@@ -396,10 +417,11 @@ class Parser:
                 on_delete.append((src, fld, pol))
                 self.end_line()
                 continue
+            fline = self.peek().line
             fname = self.name()
             self.expect(":")
             t = self.type()
-            f = Field(fname, t)
+            f = Field(fname, t, line=fline)
             while self.peek().kind == "NAME" and self.peek().val in ("unique", "optional", "required"):
                 m = self.name()
                 if m == "unique":
@@ -768,9 +790,14 @@ class Parser:
     def ret(self) -> Return:
         line = self.peek().line
         self.expect("return")
+        if self.peek().kind != "NAME":
+            raise self.unexpected(f"return のあとに結果の種類が必要です（「{shown(self.peek())}」があります）",
+                                  "処理は必ず結果の種類を返します（return Done、中身があれば return Received(order_id)）")
         v = self.name()
         args = []
         if self.accept("("):
+            if self.is_(")"):
+                raise self.err(f"中身の無い結果は return {v} と書きます（( ) は付けません）")
             args = self.comma_list(self.expr)
             self.expect(")")
         return Return(v, args, line)
@@ -815,6 +842,8 @@ class Parser:
         elif self.accept("if"):
             cond = self.expr()
             s = If(cond, self.if_block(), line)
+            if self.is_("else"):
+                raise self.err("文の if に else は書けません", ELSE_HOW)
         elif self.accept("update"):
             self.expect("{")
             target = self.postfix()
@@ -853,6 +882,8 @@ class Parser:
             self.next()
             s = Delete(self.name(), line)
         elif self.accept("let"):
+            if self.is_("mut") and self.peek(1).kind == "NAME":
+                raise self.err("let に mut は付けません", "let の変数は作り直さず、項目の更新は 名前.項目 = 値 と書きます")
             n = self.name()
             self.expect("=")
             if self.accept("create"):
@@ -870,7 +901,9 @@ class Parser:
         else:
             n = self.name()
             if not self.accept("."):
-                raise self.err(f"文の始まりが分かりません（「{n}」。変数は let で作り、項目の更新は 名前.項目 = 値 と書きます）")
+                t, hint = self.t[self.i - 1], stmt_hint(n)
+                msg = f"文の始まりが分かりません（「{n}」）" if hint else f"文の始まりが分かりません（「{n}」。変数は let で作り、項目の更新は 名前.項目 = 値 と書きます）"
+                raise ParseError(msg, t.line, t.col, t.file, hint)
             f = self.name()
             if self.peek().val in ("+=", "-="):  # x.f += e は x.f = x.f + e（読む項目にも数える）。並列の枝で重なってよい可換な更新の印を残す
                 op = self.next().val
@@ -919,7 +952,7 @@ class Parser:
         if self.accept("is"):
             kw = self.name()
             if kw not in PRED:
-                raise self.err(f"「is」の後ろに「{kw}」は書けません（{'・'.join(PRED)}）")
+                raise self.err(f"「is」の後ろに「{kw}」は書けません（{'・'.join(PRED)}）", FOREIGN_NAMES.get(kw, ""))
             return Pred(l, PRED[kw])
         return l
 
@@ -1037,7 +1070,7 @@ class Parser:
                 self.expect(")")
                 return Call(t.val, args)
             return Name(t.val)
-        raise self.err(f"式のはずが「{t.val or '行末'}」があります")
+        raise self.unexpected(f"式のはずが「{shown(t)}」があります")
 
     # ---- ネクサス（nexus。flow は別名） ----
     def flow(self, line) -> Flow:
@@ -1120,9 +1153,15 @@ class Parser:
                         raise self.err(f"「{op}」は数との比較にだけ使えます")
                     if not self.accept("or"):
                         break
+                if self.is_("and") or self.is_(","):
+                    raise self.unexpected(f"where の1行の中は or でつなぎます（「{self.peek().val}」は書けません）",
+                                          "「かつ」は where の行を分けて書きます（行どうしが and です）")
                 q.conds.append(group)
             elif kw == "filter":
                 f = self.name()
+                if self.peek().kind == "OP" and self.peek().val in CMP:
+                    raise self.err(f"filter に「{self.peek().val}」は書けません",
+                                   "filter は 項目 equals|at_least|at_most|contains|within 入力 の形です（== は equals、>= は at_least、<= は at_most）")
                 op = self.name()
                 if op == "within":
                     n = self.num()
@@ -1141,7 +1180,8 @@ class Parser:
                 f = self.name()
                 d = self.name()
                 if d not in self.ORDERS:
-                    raise self.err("order は「newest」か「oldest」です")
+                    raise self.err("order は「newest」か「oldest」です",
+                                   "newest は大きい順（日時なら新しい順）、oldest は小さい順（古い順）です（asc・desc・by はありません）")
                 q.order = (f, self.ORDERS[d])
             elif kw == "page":  # 1ページ分（最大 N 件）。N は数か、整数の入力の名前
                 if self.peek().kind == "NUM":
@@ -1285,7 +1325,9 @@ class Parser:
                         self.end_line()
                 rs.actions.append(act)
             else:
-                raise self.err("resource の中は「index」「show」「create」「update」「destroy」です")
+                verbs = {"get": "GET は index（一覧）か show（1件）です", "post": "POST は create です", "put": "PUT は update です",
+                         "delete": "DELETE は destroy です", "patch": "PATCH はありません。部分を変えるなら、その部分を別の resource に切り出して update します"}
+                raise self.err("resource の中は「index」「show」「create」「update」「destroy」です", verbs.get(kw.lower(), ""))
             self.end_line()
         return rs
 
@@ -1421,11 +1463,11 @@ def collect_labels(toks: list[Tok]) -> dict:
         if t.kind == "NAME" and t.val == "all" and i + 2 < len(toks) and toks[i + 1].val == "reply":
             target = toks[i + 2]  # all reply A, B：最初の応答の名前に付く
         if target.kind != "NAME":
-            raise ParseError("説明コメント（///）は名前の前に書きます", t.line)
+            raise ParseError("説明コメント（///）は名前の前に書きます", t.line, t.col, t.file)
         new = parse_labels(t.doc)
         old = labels.setdefault(target.val, new)
         if old != new:
-            raise ParseError(f"名前「{target.val}」に別の表示名が付いています（同じ名前の表示名は1つにします）", t.line)
+            raise ParseError(f"名前「{target.val}」に別の表示名が付いています（同じ名前の表示名は1つにします）", t.line, t.col, t.file)
     return labels
 
 
@@ -1440,13 +1482,13 @@ def split_timezone(toks):
         t = toks[i]
         if i in starts and t.kind == "NAME" and t.val == "timezone":
             if found is not None:
-                raise ParseError("timezone は1つだけ宣言できます", t.line)
+                raise ParseError("timezone は1つだけ宣言できます", t.line, t.col, t.file)
             w = toks[i + 1:i + 5]
             if len(w) < 4 or w[0].kind != "OP" or w[0].val not in ("+", "-") or w[1].kind != "NUM" or w[2].val != ":" or w[3].kind != "NUM":
-                raise ParseError("timezone は `timezone +09:00` のように、UTC からのずれを時:分で書きます", t.line)
+                raise ParseError("timezone は `timezone +09:00` のように、UTC からのずれを時:分で書きます", t.line, t.col, t.file)
             secs = int(w[1].val) * 3600 + int(w[3].val) * 60
             if int(w[3].val) > 59 or secs > MAX_TZ:
-                raise ParseError("timezone のずれは、分が 0〜59、全体で ±14:00 までです", t.line)
+                raise ParseError("timezone のずれは、分が 0〜59、全体で ±14:00 までです", t.line, t.col, t.file)
             found = -secs if w[0].val == "-" else secs
             i += 5
             continue
@@ -1456,7 +1498,7 @@ def split_timezone(toks):
     out = []
     for t in keep:
         if t.kind == "NAME" and t.val == "tz_offset":
-            out += [Tok("NUM", str(off), t.line)] if off >= 0 else [Tok("OP", "(", t.line), Tok("NUM", "0", t.line), Tok("OP", "-", t.line), Tok("NUM", str(-off), t.line), Tok("OP", ")", t.line)]
+            out += [Tok("NUM", str(off), t.line, col=t.col, file=t.file)] if off >= 0 else [Tok("OP", "(", t.line, col=t.col, file=t.file), Tok("NUM", "0", t.line, col=t.col, file=t.file), Tok("OP", "-", t.line, col=t.col, file=t.file), Tok("NUM", str(-off), t.line, col=t.col, file=t.file), Tok("OP", ")", t.line, col=t.col, file=t.file)]
         else:
             out.append(t)
     return out, off
@@ -1464,7 +1506,16 @@ def split_timezone(toks):
 
 def parse_toks(toks, origin) -> Program:
     toks, tz = split_timezone(toks)
-    p = Parser(toks).program()
+    ps = Parser(toks)
+    try:
+        p = ps.program()
+    except ParseError as e:
+        if not e.file and not e.col:  # 行だけで作ったエラー：いまの位置の字句から、どのファイルかを補う
+            e.file = ps.peek().file
+        for h in (string_hint(toks), brace_hint(toks)):  # 閉じ忘れの " は、後ろの { } の対応も崩すので先に言う
+            if h and h not in e.hint:
+                e.hint = (e.hint + "。" if e.hint else "") + h
+        raise
     p.tz_offset = tz
     p.labels = collect_labels(toks)
     p.origin = origin

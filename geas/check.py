@@ -7,6 +7,7 @@ from fractions import Fraction
 from math import ceil, floor
 
 from .ast import *  # noqa: F401,F403
+from .foreign import name_hint, type_hint
 from .names import label_gaps, name_problems
 from .parser import parse_chars
 
@@ -36,11 +37,39 @@ CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int
 class Diag:
     level: str
     code: str
-    where: str
-    msg: str
+    where: str  # 人に見せる場所（名前は表示名に置き換え済み。仕様書・差分の HTML に出る）
+    msg: str  # 人に見せる文言（同じ）
+    line: int = 0  # 行番号（分からないときは 0）
+    code_where: str = ""  # コードの名前のままの場所（AI が .geas を直すとき向け。空なら where と同じ）
+    code_msg: str = ""  # コードの名前のままの文言（同じ）
+
+    @property
+    def at(self) -> str:
+        return f"（{self.line}行目）" if self.line else ""
 
     def __str__(self):
-        return f"[{self.level}] {self.where}: {self.msg}（{self.code}）"
+        return f"[{self.level}] {self.where}{self.at}: {self.msg}（{self.code}）"
+
+    def for_code(self) -> str:
+        """名前をコードに書いたとおりに出す（check の出力。AI はこの名前でコードを探して直す）"""
+        return f"[{self.level}] {self.code_where or self.where}{self.at}: {self.code_msg or self.msg}（{self.code}）"
+
+
+def near(name: str, pool) -> str:
+    """綴りの近い名前（打ち間違いの手がかり）。大文字と小文字の違いも拾う。無ければ空"""
+    import difflib
+    cands = {}
+    for x in pool:
+        if x and x != name:
+            cands.setdefault(x.lower(), x)
+    m = difflib.get_close_matches(name.lower(), list(cands), n=1, cutoff=0.75)
+    return f"（近い名前：{cands[m[0]]}）" if m else ""
+
+
+def near_or_all(name: str, pool) -> str:
+    """綴りの近い名前。無ければ、少ないときは全部を並べる（結果の種類など、選ぶ先が決まっているもの）"""
+    pool = [x for x in pool if x]
+    return near(name, pool) or (f"（あるもの：{'・'.join(pool)}）" if 0 < len(pool) <= 12 else "")
 
 
 def tok_of(t: Type) -> str:
@@ -179,15 +208,69 @@ class Checker:
             for f in d.fields:
                 f.type.optional = not (f.required or (f.type.kind == "ID" and f.unique) or f.type.kind == "名前")
         self.inv_rows: dict[int, dict[str, list[tuple[bool, str]]]] = {}  # 不変条件 → 処理 → (示せたか, 理由)
+        self._def_lines = None  # (種類, 名前) → 定義の行。指摘に行番号を付けるため（line_of で初めて作る）
 
-    def d(self, level, code, where, msg):
-        self.diags.append(Diag(level, code, self.p.show_names(where), self.p.show_names(msg)))
+    def d(self, level, code, where, msg, line=0):
+        p = self.p
+        self.diags.append(Diag(level, code, p.show_names(where), p.show_names(msg), line or self.line_of(where),
+                               p.show_code(where), p.show_code(msg)))
+
+    def name_line(self, where: str, name: str) -> int:
+        """「データ 名前」の中の項目の名前なら、その項目の行。それ以外は、場所の定義の行"""
+        if where.startswith("データ "):
+            self.line_of(where)
+            line = self._def_lines.get(("項目", f"{where[4:]}.{name}"))
+            if line:
+                return line
+        return self.line_of(where)
+
+    def line_of(self, where: str) -> int:
+        """指摘の場所（「処理 名前」「データ 名前 / …」「名前.項目」など）から、定義の行を引く。分からなければ 0"""
+        if self._def_lines is None:
+            p, table = self.p, {}
+            for kind, xs in (("データ", p.data), ("状態", p.states), ("結果", p.results), ("外部作用", p.effects), ("部品", p.parts),
+                             ("処理", p.processes), ("フロー", p.flows), ("応答", p.replies), ("トリガ", p.triggers),
+                             ("問い合わせ", p.queries), ("出来事", p.events), ("画面", p.screens), ("リソース", p.resources)):
+                for x in xs:
+                    if getattr(x, "line", 0):
+                        table.setdefault((kind, x.name), x.line)
+            for name, line in p.ltype_lines.items():
+                table.setdefault(("論理型", name), line)
+                table.setdefault(("合成型", name), line)
+            for d in p.data:
+                for f in d.fields:
+                    if f.line:
+                        table.setdefault(("項目", f"{d.name}.{f.name}"), f.line)
+            for r in p.rules:
+                if r.line:
+                    table.setdefault(("rule", r.slot), r.line)
+            for kind, target, _, _, line in p.needs:
+                table.setdefault(("needs", kind + (f" {target}" if target else "")), line)
+            for name, (_, _, _, line) in p.isolations.items():
+                table.setdefault(("保存先", name), line)
+            self._def_lines = table
+        m = re.match(r"(\S+) ([A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z_][A-Za-z0-9_.]*)?)", where)
+        if m:
+            kind, rest = m.group(1), m.group(2)
+            return self._def_lines.get((kind, rest)) or self._def_lines.get((kind, rest.split(" ")[0]), 0)
+        m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)", where)
+        return (self._def_lines.get(("項目", f"{m.group(1)}.{m.group(2)}")) or self._def_lines.get(("データ", m.group(1)), 0)) if m else 0
 
     def key_field(self, dname):
         for f in self.data[dname].fields:
             if f.type.kind == "ID" and f.unique:
                 return f
         return None
+
+    def type_names(self) -> list[str]:
+        """型として書ける名前（組み込み・論理型・状態・合成型）。打ち間違いの手がかりに使う"""
+        builtin = ["id", "text", "time", "bytes", "int", "ratio", "money", "bool", "currency", "raw", "vtime"]
+        return [*builtin, *self.p.ltype_names, *self.states, *self.comps]
+
+    def is_lifecycle(self, t: Type) -> bool:
+        """遷移を持つ状態の型か（通貨のような値の並びは違う）。未定義の型は check_type が指摘するので、ここでは違うとする"""
+        s = self.states.get(t.target) if t.kind == "名前" else None
+        return s is not None and not s.plain
 
     def check_module_deed(self, proc, info):
         """モジュールの処理は状態を持たない：データの読み書き・状態の遷移・採番・外部作用ができない（入力から結果を返すだけ）"""
@@ -201,9 +284,12 @@ class Checker:
     def run(self):
         if self.strict_names:
             for where, msg in name_problems(self.p, self.p.ltype_names):
-                self.diags.append(Diag(ERROR, "名前", where, msg))  # 名前そのものの指摘なので、表示名に置き換えない
+                m = re.search(r"名前「([^」]+)」", msg)
+                line = self.name_line(where, m.group(1) if m else "")
+                self.diags.append(Diag(ERROR, "名前", where, msg, line))  # 名前そのものの指摘なので、表示名に置き換えない
             for where, n in label_gaps(self.p, self.p.ltype_names):
-                self.diags.append(Diag(WARN, "表示名", where, f"「{self.p.origin.get(n, (None, n))[1]}」に表示名（直前の /// ）がありません。仕様書には名前のまま出ます"))
+                self.diags.append(Diag(WARN, "表示名", where, f"「{self.p.origin.get(n, (None, n))[1]}」に表示名（直前の /// ）がありません。仕様書には名前のまま出ます",
+                                       self.name_line(where, n)))
         self.check_defs()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
@@ -262,11 +348,11 @@ class Checker:
         if t.kind == "合成" and not comp_ok:
             self.d(ERROR, "型", where, f"合成型「{t.target}」は、いまは項目・処理の入力と slot・結果の中身・外部作用の引数・応答の中身・トリガの引数にだけ使えます")
         if t.kind == "参照" and t.target not in self.data:
-            self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です")
+            self.d(ERROR, "名前", where, f"参照先のデータ「{t.target}」が未定義です" + near(t.target, self.data))
         if t.kind == "名前" and t.target not in self.states:
-            self.d(ERROR, "名前", where, f"型「{t.target}」が未定義です")
+            self.d(ERROR, "名前", where, f"型「{t.target}」が未定義です" + (type_hint(t.target) or near(t.target, self.type_names())))
         if t.kind == "写像" and t.key != "id" and t.key not in self.data:
-            self.d(ERROR, "名前", where, f"キーのデータ「{t.key}」が未定義です")
+            self.d(ERROR, "名前", where, f"キーのデータ「{t.key}」が未定義です" + near(t.key, self.data))
         if t.kind in ("写像", "集合") and t.value is not None:
             self.check_type(t.value, where, comp_ok)
 
@@ -466,7 +552,7 @@ class Checker:
             for proc, routes in fl.entries:
                 where = f"フロー {fl.name} / {proc}"
                 if proc not in self.procs:
-                    self.d(ERROR, "行き先", where, f"処理「{proc}」が未定義です")
+                    self.d(ERROR, "行き先", where, f"処理「{proc}」が未定義です" + near(proc, self.procs))
                     continue
                 names = [v for v, _ in routes]
                 rm = route_map(routes)
@@ -486,7 +572,7 @@ class Checker:
                             self.d(ERROR, "行き先", where, f"結果「{v}」の行き先がありません")
                     for v in names:
                         if v not in [x for x, _ in rdef.variants]:
-                            self.d(ERROR, "名前", where, f"「{v}」は結果 {rdef.name} にありません")
+                            self.d(ERROR, "名前", where, f"「{v}」は結果 {rdef.name} にありません" + near_or_all(v, [x for x, _ in rdef.variants]))
                 for v, ds in rm.items():  # par の枝の書き込みは、重ならない（または可換な更新だけ）なら許す。実行する順で結果が変わらないため
                     if len(ds) > 1:
                         self.check_par_branches(where, v, [(d, self.infos[d]) for d in ds if d in self.infos])
@@ -554,7 +640,7 @@ class Checker:
             if e.joins is not None:
                 tg = triggers.get(e.joins)
                 if tg is None:
-                    self.d(ERROR, "合流", f"外部作用 {e.name}", f"合流先のトリガ「{e.joins}」が未定義です")
+                    self.d(ERROR, "合流", f"外部作用 {e.name}", f"合流先のトリガ「{e.joins}」が未定義です" + near(e.joins, self.triggers))
                 elif not any(k in ("reply", "all") for k, _, _ in tg.causes):
                     self.d(ERROR, "合流", f"外部作用 {e.name}", f"合流先のトリガ {e.joins} に、応答を受ける行がありません")
             if e.failures and e.no_wait is not None:
@@ -602,14 +688,14 @@ class Checker:
                 self.d(ERROR, "名前", where, "同じ名前の処理があります")
             dt = self.data.get(q.target)
             if dt is None:
-                self.d(ERROR, "名前", where, f"対象のデータ「{q.target}」が未定義です")
+                self.d(ERROR, "名前", where, f"対象のデータ「{q.target}」が未定義です" + near(q.target, self.data))
                 continue
             fields = {f.name: f for f in dt.fields}
             used, ins = set(), dict(q.inputs)
 
             def field_of(fn):
                 if fn not in fields:
-                    self.d(ERROR, "名前", where, f"データ {dt.name} に項目「{fn}」がありません")
+                    self.d(ERROR, "名前", where, f"データ {dt.name} に項目「{fn}」がありません" + near(fn, [f.name for f in dt.fields]))
                     return None
                 used.add(f"{dt.name}.{fn}")
                 return fields[fn]
@@ -659,7 +745,7 @@ class Checker:
                     tdt = self.data[rf.type.target]
                     tf = next((x for x in tdt.fields if x.name == c.field), None)
                     if tf is None:
-                        self.d(ERROR, "名前", where, f"データ {tdt.name} に項目「{c.field}」がありません")
+                        self.d(ERROR, "名前", where, f"データ {tdt.name} に項目「{c.field}」がありません" + near(c.field, [f.name for f in tdt.fields]))
                         continue
                     used.add(f"{tdt.name}.{c.field}")
                     if tf.type.kind not in SELECT_KINDS:
@@ -712,7 +798,7 @@ class Checker:
     def check_wait(self, where, proc, trig):
         tg = self.triggers.get(trig)
         if tg is None:
-            self.d(ERROR, "トリガ", where, f"wait 先のトリガ「{trig}」が未定義です")
+            self.d(ERROR, "トリガ", where, f"wait 先のトリガ「{trig}」が未定義です" + near(trig, self.triggers))
             return
         have = {n for n, _ in self.procs[proc].inputs}
         for n, _ in tg.params:
@@ -892,13 +978,13 @@ class Checker:
             for kind, qn, pn in ev.steps:
                 proc = self.procs.get(pn)
                 if proc is None:
-                    self.d(ERROR, "出来事", where, f"起こす処理「{pn}」が未定義です")
+                    self.d(ERROR, "出来事", where, f"起こす処理「{pn}」が未定義です" + near(pn, self.procs))
                     continue
                 if kind != "各":
                     continue
                 q = self.queries.get(qn)
                 if q is None:
-                    self.d(ERROR, "出来事", where, f"問い合わせ「{qn}」が未定義です")
+                    self.d(ERROR, "出来事", where, f"問い合わせ「{qn}」が未定義です" + near(qn, self.queries))
                     continue
                 if q.select:
                     self.d(ERROR, "出来事", where, f"問い合わせ {qn} は select で列を返すので、出来事の「each」には使えません（IDの列を返す問い合わせにしてください）")
@@ -909,6 +995,8 @@ class Checker:
                 if dt is None:
                     continue
                 key = self.key_field(dt.name)
+                if key is None:  # キーの無いデータは check_defs が指摘する
+                    continue
                 if [(n, show_type(t)) for n, t in proc.inputs] != [(key.name, "ID")]:
                     self.d(ERROR, "出来事", where, f"「each {qn}」は {dt.name} の {key.name} だけを渡すので、処理 {pn} の入力は「{key.name}: ID」だけにしてください")
 
@@ -920,41 +1008,43 @@ class Checker:
         for where in used:
             if where not in self.p.isolations:
                 self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"保存先「{where}」が定義されていません。"
-                                       f"`storage {where} isolation process`（geas のサーバーがプロセスの中で直列にする）か `storage {where} isolation store(種類)`（保存先が直列にする）を書いてください"))
+                                       f"`storage {where} isolation process`（geas のサーバーがプロセスの中で直列にする）か `storage {where} isolation store(種類)`（保存先が直列にする）を書いてください",
+                                       used[where].line))
         for where, (who, kind, why, line) in self.p.isolations.items():
             if where not in used:
-                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"storage「{where}」は、どの entity の store にも使われていません"))
+                self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f"storage「{where}」は、どの entity の store にも使われていません", line))
             elif who == "store" and kind not in VERIFIED_STORES and not why.strip():
                 self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f'保存先の種類「{kind}」は geas が確かめていないので、人の保証として理由を "…" で書いてください'
-                                       f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）"))
+                                       f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）", line))
 
     def check_needs(self):
         """needs（アプリが環境に要求すること）の検査。環境の実際は書かないので、ここで見るのは書き方と、導出した保証との食い違いだけ"""
         from .envreq import NAME_RE, NS_RE, derived_instance_limit, effect_namespaces
         p = self.p
         spaces = effect_namespaces(p)
-        seen, one = set(), {}
+        seen, one, lines = set(), {}, {}
         for kind, target, value, why, line in p.needs:
             where = f"needs {kind}" + (f" {target}" if target else "")
             if kind == "secret":
                 ns, _, nm = target.partition(".")
                 if not (NS_RE.match(ns) and NAME_RE.match(nm)):
-                    self.diags.append(Diag(ERROR, "環境", where, "シークレットの名前は `外部.名前`（外部は UpperCamel、名前は lower_snake の半角英数）で書きます"))
+                    self.diags.append(Diag(ERROR, "環境", where, "シークレットの名前は `外部.名前`（外部は UpperCamel、名前は lower_snake の半角英数）で書きます", line))
                 elif ns not in spaces:
                     self.diags.append(Diag(ERROR, "環境", where, f"「{ns}」という外部作用の名前空間がありません（`effect {ns}.…` で宣言した外部だけが、秘密を使えます）"
-                                           + (f"。ある外部：{'・'.join(spaces)}" if spaces else "")))
+                                           + (f"。ある外部：{'・'.join(spaces)}" if spaces else ""), line))
                 if target in seen:
-                    self.diags.append(Diag(ERROR, "環境", where, f"シークレット {target} の needs が2つ以上あります"))
+                    self.diags.append(Diag(ERROR, "環境", where, f"シークレット {target} の needs が2つ以上あります", line))
                 seen.add(target)
             else:
                 if kind in one:
-                    self.diags.append(Diag(ERROR, "環境", where, f"needs {kind} は1つだけ書けます"))
+                    self.diags.append(Diag(ERROR, "環境", where, f"needs {kind} は1つだけ書けます", line))
                 one[kind] = value
+                lines[kind] = line
         limit = derived_instance_limit(p)
         if limit is not None and isinstance(one.get("instances"), int) and one["instances"] > limit:
             procs = "・".join(w for w, (who, _, _, _) in p.isolations.items() if who == "process")
             self.diags.append(Diag(ERROR, "環境", "needs instances", f"at_most {one['instances']} は、保存先 {procs} の isolation process の保証（同時に動くサーバーは {limit} 台）より緩いので書けません。"
-                                   f"書けるのは、導出した上限より厳しい値だけです。台数を増やすなら、保存先を `isolation store(種類)` にしてください"))
+                                   f"書けるのは、導出した上限より厳しい値だけです。台数を増やすなら、保存先を `isolation store(種類)` にしてください", lines.get("instances", 0)))
         if p.resources and "exposure" not in one:
             self.diags.append(Diag(WARN, "環境", "needs exposure", '公開範囲が書かれていません。`needs exposure public "理由"`（インターネットに公開してよい）か '
                                    '`needs exposure internal "理由"`（公開しない）を書くと、動かす前提に出ます'))
@@ -1011,7 +1101,7 @@ class Checker:
         for res in p.resources:
             where = f"リソース {res.name}"
             if res.under and res.under not in names:
-                self.d(ERROR, "リソース", where, f"親「{res.under}」が未定義です")
+                self.d(ERROR, "リソース", where, f"親「{res.under}」が未定義です" + near(res.under, [r.name for r in self.p.resources]))
             for a in res.actions:
                 w = f"{where} / {a.kind} {a.target}"
                 is_q = a.kind in ("index", "show")
@@ -1022,7 +1112,7 @@ class Checker:
                         self.d(ERROR, "リソース", w, "出来事を起こす create は、結果の種類を持たないので、状態の対応は書けません")
                     continue
                 if tgt is None:
-                    self.d(ERROR, "リソース", w, f"{'問い合わせ' if is_q else '処理'}「{a.target}」が未定義です（{a.kind} が呼べるのは{'問い合わせ' if is_q else '処理'}です）")
+                    self.d(ERROR, "リソース", w, f"{'問い合わせ' if is_q else '処理'}「{a.target}」が未定義です（{a.kind} が呼べるのは{'問い合わせ' if is_q else '処理'}です）" + near(a.target, self.queries if is_q else self.procs))
                     continue
                 if a.target in used:
                     self.d(ERROR, "リソース", w, f"「{a.target}」はすでに {used[a.target]} に割り当てています（1つの動作に呼ぶものは1つ。振り分けが要るなら別のリソースにします）")
@@ -1109,7 +1199,7 @@ class Checker:
             for qn in sc.shows:
                 q = self.queries.get(qn)
                 if q is None:
-                    self.d(ERROR, "画面", where, f"見せる問い合わせ「{qn}」が未定義です")
+                    self.d(ERROR, "画面", where, f"見せる問い合わせ「{qn}」が未定義です" + near(qn, self.queries))
                     continue
                 for n, ty in q.inputs:
                     covered.add(n)
@@ -1118,7 +1208,7 @@ class Checker:
             for tn in sc.opens:
                 t = scr.get(tn)
                 if t is None:
-                    self.d(ERROR, "画面", where, f"開く画面「{tn}」が未定義です")
+                    self.d(ERROR, "画面", where, f"開く画面「{tn}」が未定義です" + near(tn, [x.name for x in self.p.screens]))
                     continue
                 edges[sc.name].add(tn)
                 if not sc.shows:
@@ -1128,7 +1218,7 @@ class Checker:
             for dn, routes in sc.actions:
                 proc = self.procs.get(dn)
                 if proc is None:
-                    self.d(ERROR, "画面", where, f"操作の処理「{dn}」が未定義です")
+                    self.d(ERROR, "画面", where, f"操作の処理「{dn}」が未定義です" + near(dn, self.procs))
                     continue
                 if dn in inner:
                     self.d(ERROR, "画面", where, f"操作の処理「{dn}」は流れの途中の処理（返事・期限・前の処理の結果から進む処理）なので、"
@@ -1167,7 +1257,7 @@ class Checker:
             for f, qn in sc.field_from.items():
                 q, ty = self.queries.get(qn), types.get(f)
                 if q is None:
-                    self.d(ERROR, "画面", where, f"入力欄「{f}」の選ぶ元の問い合わせ「{qn}」が未定義です")
+                    self.d(ERROR, "画面", where, f"入力欄「{f}」の選ぶ元の問い合わせ「{qn}」が未定義です" + near(qn, self.queries))
                 elif ty is not None:
                     ok = ty.kind in ("ID", "参照") or (ty.kind == "写像" and ty.value.kind == "整数" and ty.key == q.target)
                     if not ok:
@@ -1239,7 +1329,7 @@ class Checker:
             form = self.inv_forms[i]
             where = f"不変条件 {text}"
             if inv.data not in self.data:
-                self.d(ERROR, "名前", where, f"データ「{inv.data}」が未定義です")
+                self.d(ERROR, "名前", where, f"データ「{inv.data}」が未定義です" + near(inv.data, self.data))
                 continue
             if form is None:
                 self.d(ERROR, "不変条件", where, "この形の不変条件は、まだ検査できません"
@@ -1249,7 +1339,7 @@ class Checker:
             names = [form[2]] + ([form[4]] if form[0] == "ならば" else [])
             bad = [n for n in names if n not in fields]
             if bad:
-                self.d(ERROR, "名前", where, f"データ {inv.data} に項目「{bad[0]}」がありません")
+                self.d(ERROR, "名前", where, f"データ {inv.data} に項目「{bad[0]}」がありません" + near(bad[0], [f.name for f in self.data[inv.data].fields]))
                 continue
             if form[0] == "ならば":
                 st = self.states.get(fields[form[2]].type.target)
@@ -1377,9 +1467,10 @@ class ProcChecker:
         self.created: set[str] = set()
         self.pos = 0
         self.lookup_data: dict[str, str] = self.info.lookup_vars
+        self.cur_line = 0  # いま検査している文の行（指摘に行を書かなかったときに使う）
 
     def d(self, level, code, msg, line=0):
-        self.ck.d(level, code, self.where + (f"（{line}行目）" if line else ""), msg)
+        self.ck.d(level, code, self.where, msg, line or self.cur_line or self.proc.line)
 
     # ---- 型の推論 ----
     def ty(self, e, env=None) -> str:
@@ -1410,11 +1501,11 @@ class ProcChecker:
                 return env[e.n]
             if e.n in ck.variants:
                 return f"State:{ck.variants[e.n]}"
-            self.d(ERROR, "名前", f"「{e.n}」は定義されていません")
+            self.d(ERROR, "名前", f"「{e.n}」は定義されていません" + (name_hint(e.n) or near(e.n, [*env, *ck.variants])))
             return "?"
         if isinstance(e, Index):
             if e.d not in ck.data:
-                self.d(ERROR, "名前", f"データ「{e.d}」が未定義です")
+                self.d(ERROR, "名前", f"データ「{e.d}」が未定義です" + near(e.d, ck.data))
                 return "?"
             if self.ty(e.e, env) != "ID":
                 self.d(ERROR, "型", f"{e.d}[ ] の中は ID である必要があります")
@@ -1427,19 +1518,21 @@ class ProcChecker:
             if bt.startswith("Comp:"):  # 合成型の成分。入れ子でも、成分は平らに読める
                 pt = next((t for n, t in ck.comps[bt[5:]].parts if n == e.n), None)
                 if pt is None:
-                    self.d(ERROR, "名前", f"合成型 {bt[5:]} に成分「{e.n}」がありません")
+                    self.d(ERROR, "名前", f"合成型 {bt[5:]} に成分「{e.n}」がありません" + near(e.n, [n for n, _ in ck.comps[bt[5:]].parts]))
                     return "?"
                 if pt.optional and not self.writing and (("#成分", show(base)), e.n) not in self.present:
                     self.d(ERROR, "null", f"「{show(e)}」は未指定かもしれない成分です。使う前に確かめてください"
                            f"（if {show(e)} is null {{ return … }}）。未指定にアクセスしうる道があるとエラーです")
                 return tok_of(pt)
+            if bt == "?":  # 元の式の誤りは指摘済み。ここで重ねて言わない
+                return "?"
             if not bt.startswith("Rec:"):
                 self.d(ERROR, "型", f"「{show(e)}」: 「.{e.n}」はデータにしか使えません")
                 return "?"
             dname = bt[4:]
             fld = next((f for f in ck.data[dname].fields if f.name == e.n), None)
             if fld is None:
-                self.d(ERROR, "名前", f"データ {dname} に項目「{e.n}」がありません")
+                self.d(ERROR, "名前", f"データ {dname} に項目「{e.n}」がありません" + near(e.n, [f.name for f in ck.data[dname].fields]))
                 return "?"
             if fld.type.optional and not self.writing and not (
                     isinstance(base, Name) and base.n in self.bindings and (self.bindings[base.n], e.n) in self.present):
@@ -1616,7 +1709,7 @@ class ProcChecker:
         for n, x in e.fields:
             pt = next((t for pn, t in ct.parts if pn == n), None)
             if pt is None:
-                self.d(ERROR, "名前", f"合成型 {e.n} に成分「{n}」がありません", e.line)
+                self.d(ERROR, "名前", f"合成型 {e.n} に成分「{n}」がありません" + near(n, [pn for pn, _ in ct.parts]), e.line)
                 self.ty(x, env)
                 continue
             vt = self.ty(x, env)
@@ -2044,7 +2137,10 @@ class ProcChecker:
             return "Bool"
         if e.op in ("==", "!="):
             if a != b:
-                self.d(ERROR, "型", f"「{show(e)}」: 違う型を比べています")
+                null_cmp = "Null" in (a, b)
+                self.d(ERROR, "型", f"「{show(e)}」: 違う型を比べています"
+                       + ((f"（null かどうかは is null で確かめます：{show(e.l if b == 'Null' else e.r)} is null）" if e.op == "==" else
+                           f"（null でないことは not ({show(e.l if b == 'Null' else e.r)} is null) で確かめます）") if null_cmp else ""))
             return "Bool"
         if e.op in ("+", "-") and "Time" in (a, b) and not (e.op == "-" and a == "Dur"):
             if (a, b) == ("Time", "Dur") or (e.op == "+" and (a, b) == ("Dur", "Time")):
@@ -2094,7 +2190,7 @@ class ProcChecker:
             return
         v = next((x for x in rdef.variants if x[0] == r.variant), None)
         if v is None:
-            self.d(ERROR, "結果", f"「{r.variant}」は結果 {rdef.name} にありません", r.line)
+            self.d(ERROR, "結果", f"「{r.variant}」は結果 {rdef.name} にありません" + near_or_all(r.variant, [x for x, _ in rdef.variants]), r.line)
             return
         self.info.returns.add(r.variant)
         if len(v[1]) != len(r.args):
@@ -2108,8 +2204,10 @@ class ProcChecker:
 
     def run(self) -> ProcInfo:
         ck, proc, info = self.ck, self.proc, self.info
-        if proc.result not in ck.results:
-            self.d(ERROR, "名前", f"結果「{proc.result}」が未定義です")
+        if not proc.result:
+            self.d(ERROR, "名前", "結果の形の宣言がありません（宣言に result 結果の名前 を書き、その結果を result 名前 { 種類, … } で定義します）")
+        elif proc.result not in ck.results:
+            self.d(ERROR, "名前", f"結果「{proc.result}」が未定義です" + near(proc.result, ck.results))
         for n, t in proc.inputs:
             self.env[n] = tok_of(t)
         for n, t in proc.refs:
@@ -2117,12 +2215,22 @@ class ProcChecker:
         self.exist_sets = {}
         for pos, st in enumerate(proc.body):
             self.stmt(st, pos)
+        self.cur_line = 0  # ここからは処理全体の指摘（行は処理の始まり）
         if not (proc.body and isinstance(proc.body[-1], Return)):
-            self.d(ERROR, "結果", "処理の最後は return で終えてください（結果を返さずに終わる道があります）")
+            self.d(ERROR, "結果", "処理の最後は return で終えてください（結果を返さずに終わる道があります）",
+                   proc.body[-1].line if proc.body else 0)
         self.finish()
         return info
 
     def stmt(self, st, pos):
+        saved = self.cur_line
+        self.cur_line = getattr(st, "line", 0) or saved
+        try:
+            self._stmt(st, pos)
+        finally:
+            self.cur_line = saved
+
+    def _stmt(self, st, pos):
         info = self.info
         self.pos = pos
         if isinstance(st, Return):
@@ -2280,9 +2388,11 @@ class ProcChecker:
             if data is None:
                 self.d(ERROR, "型", f"「{st.var}」は、データを引いた変数ではありません", st.line)
                 return
+            if data not in self.ck.data:  # 引いたデータが未定義（引いた所で指摘済み）
+                return
             fld = next((f for f in self.ck.data[data].fields if f.name == st.f), None)
             if fld is None:
-                self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません", st.line)
+                self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません" + near(st.f, [f.name for f in self.ck.data[data].fields]), st.line)
                 return
             passing = self.pass_null(st.e, fld.type)
             self.writing, saved = passing, self.writing
@@ -2325,7 +2435,7 @@ class ProcChecker:
                         lo, hi = iv_of(fld.type)
                         iv = (lo if iv[0] is None else max(iv[0], lo), hi if iv[1] is None else min(iv[1], hi))
                         info.guards.append((f"{data}.{st.f}", st.op, *st.guard))
-                self.check_write(data, st.f, iv, st.line, bind=b)
+                self.check_write(data, st.f, iv, st.line, bind=b, fix=self.step_fix(st, fld) if st.op in ("+=", "-=") and st.guard is None else None)
                 self.forget(data, st.f)
                 if iv[0] is not None:
                     self.facts[(b, st.f)] = iv[0]
@@ -2334,7 +2444,7 @@ class ProcChecker:
             info.writes.add(f"{data}.{st.f}")
             info.write_list.append(f"{data}.{st.f}")
             info.write_ops.setdefault(f"{data}.{st.f}", set()).add(st.op)
-            if fld.type.kind == "名前" and not self.ck.states[fld.type.target].plain:
+            if self.ck.is_lifecycle(fld.type):
                 if not (isinstance(st.e, Name) and st.e.n in self.ck.variants and st.e.n not in self.env):
                     self.d(ERROR, "遷移", f"{data}.{st.f} は状態名で書いてください（「{show(st.e)}」では、どの遷移か確かめられません）", st.line)
                     return
@@ -2432,7 +2542,7 @@ class ProcChecker:
         if dt.keep:
             self.d(ERROR, "削除", f"{data} は keep（削除させない）と宣言されているので、消せません", st.line)
             return
-        states = [f for f in dt.fields if f.type.kind == "名前" and not ck.states[f.type.target].plain]
+        states = [f for f in dt.fields if ck.is_lifecycle(f.type)]
         if states:
             if not dt.removable:
                 self.d(QUESTION, "削除", f"{data} は状態を持つので、消してよい状態を決めてください（entity の中に removable in 状態 と書く。消させないなら keep）", st.line)
@@ -2446,7 +2556,7 @@ class ProcChecker:
     def create(self, st: Create):
         ck, info = self.ck, self.info
         if st.data not in ck.data:
-            self.d(ERROR, "名前", f"データ「{st.data}」が未定義です", st.line)
+            self.d(ERROR, "名前", f"データ「{st.data}」が未定義です" + near(st.data, self.ck.data), st.line)
             return
         dt = ck.data[st.data]
         key = ck.key_field(st.data)
@@ -2459,7 +2569,7 @@ class ProcChecker:
         for n, e in st.fields:
             f = next((x for x in dt.fields if x.name == n), None)
             if f is None:
-                self.d(ERROR, "名前", f"データ {st.data} に項目「{n}」がありません", st.line)
+                self.d(ERROR, "名前", f"データ {st.data} に項目「{n}」がありません" + near(n, [f.name for f in dt.fields]), st.line)
                 continue
             self.writing, saved = self.pass_null(e, f.type), self.writing
             vt = self.ty(e)
@@ -2474,7 +2584,7 @@ class ProcChecker:
             self.fit_unit(e, f.type, f"{st.data}.{n}", st.line, siblings=given)
             self.check_range_fit(e, f.type, f"{st.data}.{n}", st.line)
             self.check_text_fit(e, f.type, f"{st.data}.{n}", st.line)
-            if f.type.kind == "名前" and not self.ck.states[f.type.target].plain:
+            if self.ck.is_lifecycle(f.type):
                 if isinstance(e, Name) and e.n in self.ck.variants and e.n not in self.env:
                     self.check_transition_new(st.data, n, e.n, st.line)
                 else:
@@ -2482,7 +2592,7 @@ class ProcChecker:
         info.writes.add(st.data)
         info.new_ids.append(st.data)
         states = {f.name: given[f.name].n for f in dt.fields
-                  if f.type.kind == "名前" and not self.ck.states[f.type.target].plain and isinstance(given.get(f.name), Name)}
+                  if self.ck.is_lifecycle(f.type) and isinstance(given.get(f.name), Name)}
         lows = {}
         for f in dt.fields:
             e = given.get(f.name, Null())  # 書かなかった項目は null
@@ -2589,16 +2699,42 @@ class ProcChecker:
     def inv_row(self, i, ok, note):
         self.ck.inv_rows.setdefault(i, {}).setdefault(self.proc.name, []).append((ok, note))
 
-    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None, null=False):
+    def step_fix(self, st, fld) -> str:
+        """x.f += v／x.f -= v が項目の範囲を出うるときの直し方。
+        境目の数をそのまま書ける（整数か円の金額で、項目と足す量の範囲が分かっている）ときは、先に確かめる if も示す"""
+        t = fld.type
+        lo, hi = iv_of(t)
+        vlo, vhi = self.interval(st.e.r) if isinstance(st.e, Bin) else (None, None)
+        if st.op == "-=":  # 足す量の範囲にする
+            vlo, vhi = (None if vhi is None else -vhi), (None if vlo is None else -vlo)
+
+        def known(x):  # 書ける大きさの整数か（型に範囲の無い int の端は、示しても役に立たない）
+            return x is not None and x == int(x) and abs(x) < 2**62
+
+        plain = (t.kind == "整数" or (t.kind == "金額" and t.unit == "JPY")) and known(lo) and known(hi)
+        target, tests = f"{st.var}.{st.f}", []
+        if hi is not None and (vhi is None or vhi > 0):
+            tests.append(f"if {target} > {int(hi - vhi)} {{ return … }}" if plain and known(vhi) and vhi <= hi - lo else None)
+        if lo is not None and (vlo is None or vlo < 0):
+            tests.append(f"if {target} < {int(lo - vlo)} {{ return … }}" if plain and known(vlo) and -vlo <= hi - lo else None)
+        if tests and None not in tests:
+            how = "先に " + "、".join(f"`{x}`" for x in tests) + " のように確かめる"
+        else:
+            how = f"項目と{'足す' if st.op == '+=' else '引く'}値の型に ltype で範囲を付けて、先に if で確かめる"
+        if t.kind in ("整数", "金額") and not t.optional:
+            return how + 'か、人が引き受けるなら文の末尾に saturating "理由"（範囲の端で止める）か trust assume "理由"（届かないと承知する）を書きます'
+        return how + "と示せます"
+
+    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None, null=False, fix=None):
         """項目へ範囲 iv の値を書くとき、項目の範囲と、その項目にかかる不変条件が守れるか。
         bind は書く1件の束縛（update では None）。note は値の範囲を示せた理由。grow は「元の値から減らさない」こと。
-        new_state は新規作成のときの状態（状態の項目 → 状態名）"""
+        new_state は新規作成のときの状態（状態の項目 → 状態名）。fix は、範囲を示せないときの直し方（無ければ一般的な案内）"""
         fld = next(f for f in self.ck.data[data].fields if f.name == fname)
         lo, hi = iv_of(fld.type)
         if not null and ((lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi))):
             self.d(ERROR, "範囲", f"{data}.{fname} に書く値が、項目の範囲 {iv_show((lo, hi))} に収まると示せません"
                    f"（書く値の範囲 {iv_show(iv)}。はみ出す例（反例）があります。"
-                   "上限は ltype に書き、合計は集まりの型に要素数の上限（K → V max N）を書くと示せます）", line)
+                   + (fix or "上限は ltype に書き、合計は集まりの型に要素数の上限（K → V max N）を書くと示せます") + "）", line)
         for i, form in enumerate(self.ck.inv_forms):
             if form is None or form[1] != data:
                 continue
@@ -2709,19 +2845,19 @@ class ProcChecker:
         for dname in list(info.exist_reads):
             pass
         # 宣言と本体の突き合わせ
-        def cmp(label, declared, actual):
+        def cmp(kw, does, doesnt, declared, actual):
             declared, actual = set(declared), set(actual)
             for x in sorted(actual - declared):
-                self.d(ERROR, "宣言", f"本体は「{x}」を{label}のに、宣言（{label}）にありません")
+                self.d(ERROR, "宣言", f"本体は「{x}」を{does}のに、宣言の {kw} にありません（{kw} に足してください）")
             for x in sorted(declared - actual):
-                self.d(ERROR, "宣言", f"宣言（{label}）に「{x}」がありますが、本体では{label}ていません")
+                self.d(ERROR, "宣言", f"宣言の {kw} に「{x}」がありますが、本体では{doesnt}（{kw} から外してください）")
 
-        cmp("読む", proc.reads, info.reads)
-        cmp("書く", proc.writes, info.writes)
-        cmp("外部", proc.effects, {e for e, _ in info.effects})
+        cmp("reads", "読む", "読んでいません", proc.reads, info.reads)
+        cmp("writes", "書く", "書いていません", proc.writes, info.writes)
+        cmp("effects", "要求する", "要求していません", proc.effects, {e for e, _ in info.effects})
         declared_tr = set(proc.transitions)
         for tr in sorted(declared_tr - info.transitions):
-            self.d(ERROR, "宣言", f"宣言した遷移 {tr[0]}: {tr[1]} → {tr[2]} が、本体にありません")
+            self.d(ERROR, "宣言", f"宣言した遷移 {tr[0]}: {tr[1]} → {tr[2]} が、本体にありません（transition から外すか、本体で状態を変えてください）")
         dup = {w for w in info.write_list if info.write_list.count(w) > 1}
         for w in sorted(dup):
             self.d(ERROR, "書込", f"1つの処理で「{w}」に2回書いています（要素が重なると結果が順序で変わります）")

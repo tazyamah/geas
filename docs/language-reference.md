@@ -1,6 +1,6 @@
 # Geas 言語リファレンス（AI 向け）
 
-2026-10-28 時点の Python 版（試作）の書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`python -m geas check`）が正本**です。
+Python 版（試作）の書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`python -m geas check`）が正本**です。
 
 ## 1. 全体の決まり
 
@@ -283,3 +283,39 @@ resource Reconnections { create Reconnected }                         // 出来�
 ## 11. 検査の結果の種類
 
 `python -m geas check` は、エラー・警告・問い（QUESTION）を出します。**エラー**は直します。**問い**は、決まっていないことを検査器が見つけたものなので、人に聞いて決めます。**警告**は、表示名の抜けなどです。エラーと問いが無いと、`rust` と `compare` が進みます。
+
+- 指摘の名前は、コードに書いたとおり（`Product.stock`）で、分かるものには行番号（`（30行目）`）が付きます。仕様書（`spec`・`review`）に載るときは、表示名に置き換わります。
+- 打ち間違いらしい名前には `（近い名前：stock）` が、他の言語の型名や値（`string`・`True` など）には geas での書き方が付きます。
+- 最後の行は件数です（`検査: エラーがあります（エラー 1 件・問い 0 件・警告 2 件）`）。問いが残っていると、通っても「人に聞いて決める」と出ます。
+- 構文エラーは、行と列、その行の抜き出しと位置の印（`^`）を出し、他の言語の書き方らしいとき（`&&`・`else`・`;` など）は直し方を続けます。`{` と `}` の対応が崩れていれば、閉じていない `{` の行も出します。
+- `--json` では、指摘ごとに `line`（構文エラーは `col` も）と、見る節と直し方の `hint` が付きます。
+
+## 12. 他の言語から来たときに間違えやすいこと
+
+geas は Rust や TypeScript に似せていますが、次は違います。検査器はどれもエラーにして直し方を出すので、黙って別の意味になることはありません。
+
+| 他の言語の書き方 | geas の書き方 |
+|---|---|
+| `a && b`・`a \|\| b`・`!a` | `a and b`・`a or b`・`not a` |
+| `if 条件 { … } else { … }` | 文の `if` に `else` は無い。成り立つ分岐の中で `return` し、成り立たないときの文を `if` の後ろに続ける。値を選ぶだけなら式の `if 条件 then 式 else 式` |
+| `else if`・`elif`・`match`・`switch` | `if 条件 { … }` を並べる |
+| `x == null`・`x != null` | `x is null`・`not (x is null)`（1件の有無は `D[k] is absent`・`D[k] is present`） |
+| 文末の `;` | 改行（`( )` の中の改行は式の続き） |
+| `=>` | `→` か `->` |
+| `x++`・`x--` | `名前.項目 += 1`（足し引きできるのは項目だけ。変数は作り直さない） |
+| `let mut x`・`var x`・`const x` | `let x = 式` |
+| `string`・`boolean`・`uuid`・`datetime`・`i32` | `text`・`bool`・`id`・`time`・`int`（範囲は `ltype Quantity = int 1..99` と名前を付けて書く） |
+| `float`・`double`・`decimal`・`0.5` | 小数の型も小数の数も無い。金額は `money(JPY)`（最小単位の整数）、割合は `ratio`（定数は rule の値に `10/100`） |
+| `text?`・`Option<T>` | 何も付けない（項目と入力は、書かなければ無いかもしれない扱い）。必ずあるものに `required` |
+| `type X = …`・`enum`・`struct`・`class`・`fn` | `ltype`・`state`／`result`・`entity`（値の組は合成の `ltype`）・`deed`／`convert` |
+| `import` | `use "ファイル.geas"` |
+| `True`・`False`・`None`・`'x'` | `true`・`false`・`null`・`"x"` |
+| `return Done()`・`return` | `return Done`（結果の種類を必ず返す） |
+| `while`・`throw`・`try` | 無い。繰り返しは `for 要素 in 集まり`、失敗は結果の種類を `return` |
+| `/* … */` | `//`（`///` は表示名） |
+| `where a and b`・`where a, b` | `where` の行を分ける（行どうしが and、1行の中は `or`） |
+| `order x asc`・`order x desc` | `order x oldest`（小さい順）・`order x newest`（大きい順） |
+| `filter x >= y` | `filter x at_least y`（`equals`・`at_least`・`at_most`・`contains`・`within`） |
+| `limit 20` | `page 20`（`order` が要る） |
+| resource の `get`・`post`・`put`・`patch`・`delete` | `index`／`show`・`create`・`update`・（PATCH は無い）・`destroy` |
+| 定義の外の定数 | 範囲は `ltype`、サーバーが決める値は `slot` と `rule` |
