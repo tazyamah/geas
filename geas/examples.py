@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """①の具体例を、コンパイルしたコードで実際に動かして確かめる。
 具体例の表から Rust の実行用 bin を生成し、cargo で動かして、結果・変化・外部作用を①の期待と比べる。"""
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,18 +9,24 @@ from pathlib import Path
 from .ast import Type
 from .check import Checker, phys
 from .plan import EXAMPLE, UNSPEC, Finding, n, split_top
-from .rustgen import cargo_toml, library_deps, rust_type
+from .rustgen import cargo_toml, library_deps, rust_str, rust_type
 
 
 class ExampleError(Exception):
     pass
 
 
+def is_int(text: str) -> bool:
+    """半角の数字だけの整数か（全角や他の文字体系の数字は Rust の数として書けない）"""
+    return re.fullmatch(r"-?[0-9]+", text) is not None
+
+
 def lit(t: Type, text: str, ck: Checker) -> str:
+    """計画書の値を Rust の式にする。文字列は必ず rust_str を通す（計画書の値が、生成したコードとして動かないように）"""
     text = text.strip()
     k = t.kind
     if k in ("ID", "参照", "文字列"):
-        return f'"{text}".to_string()'
+        return f'{rust_str(text)}.to_string()'
     if k == "真偽":
         if text not in ("true", "false"):
             raise ExampleError(f"真偽は true か false で書きます（「{text}」）")
@@ -30,21 +37,21 @@ def lit(t: Type, text: str, ck: Checker) -> str:
             raise ExampleError(f"バイト列は 0x に続く16進数で書きます（「{text}」）")
         return "vec![" + ", ".join(f"0x{h[i:i + 2]}u8" for i in range(0, len(h), 2)) + "]"
     if k == "日時":
-        if not text.lstrip("-").isdigit():
+        if not is_int(text):
             raise ExampleError(f"日時は秒の数で書きます（「{text}」）")
         return f"{text}i64"
     if k == "集合":
         if not (text.startswith("{") and text.endswith("}")):
             raise ExampleError(f"集合は {{要素, …}} で書きます（「{text}」）")
         items = [x.strip() for x in split_top(text[1:-1], ",")]
-        return "BTreeSet::from([" + ", ".join(f'"{x}".to_string()' for x in items) + "])"
+        return "BTreeSet::from([" + ", ".join(f'{rust_str(x)}.to_string()' for x in items) + "])"
     if k in ("整数", "金額"):
-        if not text.lstrip("-").isdigit():
+        if not is_int(text):
             raise ExampleError(f"数のはずが「{text}」です")
         return f"{text}{phys(t)}"
     if k == "割合":
         a, _, b = text.partition("/")
-        if not (a.strip().isdigit() and b.strip().isdigit()):
+        if not (is_int(a.strip()) and is_int(b.strip()) and not a.strip().startswith("-") and not b.strip().startswith("-")):
             raise ExampleError(f"割合は 分子/分母 で書きます（「{text}」）")
         return f"Ratio {{ num: {a.strip()}, den: {b.strip()} }}"
     if k == "名前":
@@ -61,7 +68,7 @@ def lit(t: Type, text: str, ck: Checker) -> str:
         pairs = []
         for item in split_top(text[1:-1], ","):
             kk, _, vv = item.partition(":")
-            pairs.append(f'("{kk.strip()}".to_string(), {lit(t.value, vv, ck)})')
+            pairs.append(f'({rust_str(kk.strip())}.to_string(), {lit(t.value, vv, ck)})')
         return f"BTreeMap::from([{', '.join(pairs)}])"
     raise ExampleError(f"型 {k} の値は書けません")
 
@@ -108,7 +115,7 @@ def example_code(ck: Checker, row: dict) -> str:
             extra = set(vals) - {f.name for f in ck.data[dname].fields}
             if extra:
                 raise ExampleError(f"データ {dname} に項目「{sorted(extra)[0]}」がありません")
-            L.append(f'        Store.{dname}.insert("{args[0]}".to_string(), {dname} {{ {", ".join(fields)} }});')
+            L.append(f'        Store.{dname}.insert({rust_str(args[0])}.to_string(), {dname} {{ {", ".join(fields)} }});')
         elif item:
             ctx.update(kv(item))
     ctx = {ck.p.resolve(k, [n for n, _ in proc.refs]): v for k, v in ctx.items()}
@@ -121,7 +128,7 @@ def example_code(ck: Checker, row: dict) -> str:
         key = next((k for k in (f"新{d}ID", f"新{ck.p.show_names(d)}ID") if k in ctx), None)
         if key is None:
             raise ExampleError(f"前提に 採番「新{ck.p.show_names(d)}ID」がありません")
-        fields.append(f'new_{d}_id: "{ctx[key]}".to_string()')
+        fields.append(f'new_{d}_id: {rust_str(ctx[key])}.to_string()')
     L.append(f"        let ctx = {proc.name}Ctx {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
     given = {ck.p.resolve(k, [n for n, _ in proc.inputs]): v for k, v in given.items()}
@@ -135,25 +142,25 @@ def example_code(ck: Checker, row: dict) -> str:
         v = lit(t, given[name], ck)
         ins.append(f"{name}: Some({v})" if getattr(t, "optional", False) else f"{name}: {v}")
     L.append(f"        let Input = {proc.name}Input {{ {', '.join(ins)} }};")
-    eid = row["ID"].strip()
+    eid = rust_str(row["ID"].strip())  # 具体例の ID も計画書の文字列なので、書式の文字列には入れず、引数で渡す
     if q is not None:
         L += [
             "        match ctx.validate().and_then(|_| Input.validate()) {",  # slot も入力も、境界で範囲を確かめる
-            f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
-            f'            Ok(()) => println!("{eid}\\t一覧({{}})\\t\\t", {q.name}(&ctx, &Store, &Input){".iter().map(|x| x.show()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
+            f'            Err(e) => println!("{{}}\\t入力不正({{}})\\t\\t", {eid}, e),',
+            f'            Ok(()) => println!("{{}}\\t一覧({{}})\\t\\t", {eid}, {q.name}(&ctx, &Store, &Input){".iter().map(|x| x.show()).collect::<Vec<_>>()" if q.select else ""}.join(",")),',
             "        }",
             "    }",
         ]
         return "\n".join(L)
     L += [
         "        match ctx.validate().and_then(|_| Input.validate()) {",  # slot も入力も、境界で範囲を確かめる
-        f'            Err(e) => println!("{eid}\\t入力不正({{}})\\t\\t", e),',
+        f'            Err(e) => println!("{{}}\\t入力不正({{}})\\t\\t", {eid}, e),',
         "            Ok(()) => match "+proc.name+"(&ctx, &Store, &Input) {",
-        f'                Err(f) => println!("{eid}\\t異常({{}})\\t\\t", f),',
+        f'                Err(f) => println!("{{}}\\t異常({{}})\\t\\t", {eid}, f),',
         "                Ok(Output) => {",
         "                    let 前 = Store.clone();",
         '                    Store.apply(Output.Write.clone()).expect("書込の適用");',
-        f'                    println!("{eid}\\t{{}}\\t{{}}\\t{{}}", Output.result.show(), 前.diff(&Store).join(";"), '
+        f'                    println!("{{}}\\t{{}}\\t{{}}\\t{{}}", {eid}, Output.result.show(), 前.diff(&Store).join(";"), '
         'Output.effects.iter().map(|e| e.show()).collect::<Vec<_>>().join(";"));',
         "                }",
         "            },",

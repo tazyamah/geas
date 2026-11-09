@@ -1,5 +1,8 @@
 //! Geas が生成したアプリのサーバー。localhost で動き、DB は SQLite。geas rust --host --runtime が、生成物と一緒に配る。
-//! 使い方: geas_server [--port 8787] [--host 127.0.0.1] [--workers 4] [--db app.sqlite] [--pwa ../ui] [--dev ../dev] [--seed 別の最初のデータ.json]
+//! 使い方: geas_server [--port 8787] [--host 127.0.0.1] [--workers 4] [--db app.sqlite] [--pwa ../ui] [--test [--dev ../dev]] [--allow-host 名前] [--seed 別の最初のデータ.json]
+//! --test：テスト用の口（/api/test/…：時計を進める・模擬の設定など）と、resource の宣言を通らない口（/api/deeds/… など）、
+//!         開発用の模擬パネル（--dev のフォルダ）を開く。付けなければ、外から呼べるのは仕様書の URL の表にある口だけ。公開するサーバーには付けない
+//! --allow-host：localhost と IP の書き方のほかに、Host として受ける名前（何度でも書ける。カンマ区切りでもよい）。それ以外の名前の要求は 403
 mod app;
 mod db;
 mod engine;
@@ -28,6 +31,18 @@ fn main() {
     let db_path = arg("--db", "app.sqlite");
     let pwa = PathBuf::from(arg("--pwa", "../ui"));
     let dev = PathBuf::from(arg("--dev", "../dev"));
+    // テスト用の口は、付けたときだけ開く（時計を進める・模擬の返事を変えるなどは、誰が叩いても全員の注文に効く）
+    let test_api = std::env::args().any(|a| a == "--test");
+    // Host として受ける名前。名前で書いた --host も受ける（DNS の付け替えで届いたよそのページの名前は断る）
+    let args: Vec<String> = std::env::args().collect();
+    let mut allow_hosts: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--allow-host")
+        .flat_map(|w| w[1].split(',').map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase()).collect::<Vec<_>>())
+        .filter(|h| !h.is_empty())
+        .collect();
+    allow_hosts.push(host.trim_end_matches('.').to_ascii_lowercase());
+    let opts = Arc::new(http::Opts { test_api, allow_hosts });
     // 最初のデータは生成物に埋め込んである（geas rust --seed）。別のものを使うときだけ --seed
     let seed = match arg("--seed", "").as_str() {
         "" => include_str!("seed.json").to_string(),
@@ -54,16 +69,20 @@ fn main() {
     let addr = format!("{}:{}", host, port);
     let server = Arc::new(tiny_http::Server::http(&addr).expect("ポートを開けません"));
     println!("{}のサーバー: http://{}/  (DB: {})", geas_app::APP_TITLE, addr, db_path);
+    if test_api {
+        println!("--test：テスト用の口（/api/test/…）と開発用の模擬パネルを開いています。公開するサーバーでは付けないでください");
+    }
     let mut handles = Vec::new();
     for _ in 0..workers {
         let server = server.clone();
         let engine = engine.clone();
         let pwa = pwa.clone();
         let dev = dev.clone();
+        let opts = opts.clone();
         handles.push(std::thread::spawn(move || {
             for req in server.incoming_requests() {
                 // 1 件の panic でワーカーを失わない（応答は返らず接続が切れるが、次のリクエストは受けられる）
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| http::handle(req, &engine, &pwa, &dev)));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| http::handle(req, &engine, &pwa, &dev, &opts)));
             }
         }));
     }

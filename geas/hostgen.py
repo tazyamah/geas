@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
-from .rustgen import column_type, opt
+from .rustgen import column_type, opt, rust_str
 from .rest import routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
@@ -328,7 +328,8 @@ def host_source(ck: Checker) -> str:
       '    let r = parse(request)?;\n    let mut s = read_store(r.get("store")?)?;\n'
       f'    call_inner(r.get("name")?.as_str()?, r.get("ctx")?, r.get("input")?, &mut s)\n}}')
     defs = json.dumps(definitions(ck), ensure_ascii=False, separators=(",", ":"))
-    w(f'pub const DEFS_JSON: &str = r####"{defs}"####;')
+    # 定義には表示名など .geas の文字列が入る。生の文字列（r#"…"#）だと、中に "#… があると抜けてコードを差し込めるので、逃がしたリテラルにする
+    w(f'pub const DEFS_JSON: &str = {rust_str(defs)};')
     w(r'''
 fn ret(s: String) -> u64 {
     let b = s.into_bytes().into_boxed_slice();

@@ -138,6 +138,67 @@ def test_削除されるリソースは_事実に数えない():
     assert facts["instances_max"] is None and any("plan に無い" in n for n in notes)
 
 
+def add(plan, address, type_, after, after_unknown=None, expressions=None):
+    plan["resource_changes"].append({"address": address, "type": type_, "name": address.split(".")[-1],
+                                     "change": {"actions": ["create"], "after": after, "after_unknown": after_unknown or {}}})
+    if expressions is not None:
+        plan["configuration"]["root_module"]["resources"].append({"address": address, "expressions": expressions})
+
+
+def test_ECS_別のリソースに書いたセキュリティグループの規則も_公開の口に数える():
+    plan = copy.deepcopy(PLAN)
+    add(plan, "aws_security_group_rule.ssh", "aws_security_group_rule",
+        {"type": "ingress", "from_port": 22, "to_port": 22, "protocol": "tcp", "cidr_blocks": ["0.0.0.0/0"]})
+    add(plan, "aws_vpc_security_group_ingress_rule.v6", "aws_vpc_security_group_ingress_rule",
+        {"from_port": 8787, "to_port": 8787, "ip_protocol": "tcp", "cidr_ipv6": "::/0"})
+    add(plan, "aws_security_group_rule.out", "aws_security_group_rule",
+        {"type": "egress", "from_port": 0, "to_port": 0, "protocol": "-1", "cidr_blocks": ["0.0.0.0/0"]})
+    facts, _ = facts_from_plan(plan)
+    assert sorted(facts["internet_ingress_ports"]) == ["22", "443", "8787"]
+    got = judged(SHOP + 'needs exposure public "一般向け"\n', facts)["exposure"]
+    assert got["判定"] == FAIL and "22" in got["詳細"] and "8787" in got["詳細"]
+
+
+def test_ECS_CIDR_やポートが確定していない入る向きの規則があれば_公開の口は言い切らない():
+    plan = copy.deepcopy(PLAN)
+    add(plan, "aws_security_group_rule.any", "aws_security_group_rule",
+        {"type": "ingress", "from_port": 22, "to_port": 22, "protocol": "tcp"}, {"cidr_blocks": True})
+    facts, notes = facts_from_plan(plan)
+    assert facts["internet_ingress_ports"] is None and any("確定していない" in n for n in notes)
+    assert judged(SHOP + 'needs exposure internal "社内向け"\n', facts)["exposure"]["判定"] == UNKNOWN  # 合格にはしない
+    plan = copy.deepcopy(PLAN)
+    rc(plan, "aws_security_group.app")["change"]["after_unknown"] = {"ingress": True}
+    assert facts_from_plan(plan)[0]["internet_ingress_ports"] is None
+
+
+def test_ECS_internal_を書いていない_LB_はインターネット向きとして_リスナーの口を数える():
+    plan = copy.deepcopy(PLAN)
+    lb = rc(plan, "aws_lb.front")["change"]
+    del lb["after"]["internal"]
+    lb["after_unknown"] = {"internal": True}  # 書かなければ、plan では確定していないと出る（既定は false＝インターネット向き）
+    plan["configuration"]["root_module"]["resources"].append({"address": "aws_lb.front", "expressions": {"load_balancer_type": {"constant_value": "application"}}})
+    facts, _ = facts_from_plan(plan)
+    assert facts["internet_ingress_ports"] == ["443"]
+    assert judged(SHOP + 'needs exposure internal "社内向け"\n', facts)["exposure"]["判定"] == FAIL
+    plan["configuration"]["root_module"]["resources"][-1]["expressions"]["internal"] = {"references": ["var.internal"]}  # 書いてあって確定していない
+    facts, notes = facts_from_plan(plan)
+    assert facts["internet_ingress_ports"] is None and any("internal" in n for n in notes)
+
+
+def test_ECS_リスナーのポートが確定していなければ_公開の口は言い切らない_aws_alb_も読む():
+    plan = copy.deepcopy(PLAN)
+    li = rc(plan, "aws_lb_listener.https")["change"]
+    del li["after"]["port"]
+    li["after_unknown"] = {"port": True}
+    facts, notes = facts_from_plan(plan)
+    assert facts["internet_ingress_ports"] is None and any("ポート" in n for n in notes)
+    alb = copy.deepcopy(PLAN)
+    for r in alb["resource_changes"]:
+        r["type"] = {"aws_lb": "aws_alb", "aws_lb_listener": "aws_alb_listener"}.get(r["type"], r["type"])
+    rc(alb, "aws_lb_listener.https")["change"]["after"]["port"] = 8443
+    assert facts_from_plan(alb)[0]["internet_ingress_ports"] == ["8443"]
+
+
 # ---- CLI ----
 def run(*args):
     return subprocess.run([sys.executable, "-m", "geas", *args], capture_output=True, text=True, cwd=ROOT)
