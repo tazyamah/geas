@@ -205,7 +205,7 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, 
     let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
     let resp = if method == Method::Get && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, &method, path, &body, test_api) {
+    } else if let Some(r) = rest_route(engine, &method, path, &body, test_api, if_none_match(&req).as_deref()) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -244,6 +244,27 @@ fn send(req: Request, resp: Response<std::io::Cursor<Vec<u8>>>) {
     let _ = w.flush();
 }
 
+/// 前に受け取った問い合わせの答えの版（If-None-Match）。画面は、2 秒ごとの引き直しでこれを送る
+fn if_none_match(req: &Request) -> Option<String> {
+    req.headers().iter().find(|h| h.field.equiv("If-None-Match")).map(|h| h.value.as_str().trim().to_string())
+}
+
+/// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
+fn etag_of(version: &str, path: &str) -> String {
+    let h = path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    format!("\"{}-{:x}\"", version, h)
+}
+
+/// 問い合わせの答えが、前に送ったものから変わっていない（304）。本文は送らない
+fn not_modified(tag: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    guard(
+        Response::from_data(Vec::new())
+            .with_status_code(304)
+            .with_header(Header::from_bytes("ETag", tag).unwrap())
+            .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
+    )
+}
+
 /// 画面（screen）の URL（geas_app::screens の url。:名前 は任意の 1 区間）に当てはまるか
 fn is_screen_url(path: &str) -> bool {
     let segs: Vec<&str> = path.trim_end_matches('/').split('/').collect();
@@ -268,8 +289,10 @@ fn routes() -> &'static [Value] {
 
 /// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None。
 /// 流れの途中の処理を呼ぶ URL（定義の internal。仕様書の URL の表で「内部」）は、test_api（--test）のときだけ当てはめる。
-/// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため
-fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, test_api: bool) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+/// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため。
+/// 問い合わせ（index・show）の応答には、答えの版（ETag）を付ける。送られてきた If-None-Match が今の版と同じなら、
+/// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
+fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
     let started = std::time::Instant::now();
     let verb = match method {
         Method::Get => "GET",
@@ -301,13 +324,24 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
         if parsed.is_null() {
             return Some(json_resp(400, json!({ "error": "本文が JSON ではありません" })));
         }
+        let mut etag: Option<String> = None;
         let out: Result<(u16, Value), (u16, String)> = match r["kind"].as_str().unwrap_or("") {
             "index" | "show" => {
                 let mut args = Map::new();
                 if let (Some(c), Some(name)) = (caps.first(), en.defs["queries"][&target]["inputs"][0].as_str()) {
                     args.insert(name.to_string(), Value::String(c.clone()));
                 }
-                en.query(&target, &Value::Object(args)).map(|v| (200, v)).map_err(|m| (400, m))
+                match if_none_match.map(|seen| en.query_version().map(|v| etag_of(&v, path)).map(|now| (seen == now, now))) {
+                    Some(Ok((true, now))) => {
+                        etag = Some(now);
+                        Ok((304, Value::Null))
+                    }
+                    Some(Err(m)) => Err((400, m)),
+                    _ => en.query(&target, &Value::Object(args)).map(|v| {
+                        etag = Some(etag_of(&en.version(), path));
+                        (200, v)
+                    }).map_err(|m| (400, m)),
+                }
             }
             "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(|m| (400, m)),
             "create" | "update" | "destroy" => {
@@ -334,7 +368,11 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
             "log": "geas.route", "ts_ms": now_ms(), "method": verb, "route": r["path"], "target": target,
             "result": v["result"], "status": code, "ms": started.elapsed().as_millis() as u64,
         }));
-        return Some(json_resp(code, v));
+        return Some(match etag {
+            Some(t) if code == 304 => not_modified(&t),
+            Some(t) => json_resp(code, v).with_header(Header::from_bytes("ETag", t.as_str()).unwrap()),
+            None => json_resp(code, v),
+        });
     }
     None
 }

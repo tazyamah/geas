@@ -259,6 +259,27 @@ async function runExtCases(extCases, cal) {
     await outcomeIs(name, r.outcomes[0].name);
   }
   console.log("  ok 基盤の確認（オフライン・開発用の操作パネル）");
+  // 見せている一覧は 2 秒ごとに引き直すが、保存が変わっていなければ、サーバーは 304 で本文を送らず、画面は描き直さない
+  const still = Object.entries(defs.screens.screens).find(([, s]) => s.shows.some((q) => !defs.screens.queries[q].inputs.length) && !(s.url || "").includes(":"));
+  if (still) {
+    const [name, sc] = still, q = sc.shows.find((x) => !defs.screens.queries[x].inputs.length), box = `[data-show="${q}"] .rows`;
+    await settle(cal);
+    const v = await ctx.newPage();
+    await v.goto(base + (sc.url || "/#/" + name));
+    await v.waitForFunction((b) => document.querySelector(b)?.firstElementChild, box, { timeout: cal.budget });
+    for (let tries = 0; ; tries++) {
+      await v.evaluate((b) => { window.__drawn = document.querySelector(b).firstElementChild; }, box);
+      const r = await v.waitForResponse((r) => r.request().method() === "GET" && r.request().headers()["accept"] === "application/json" && new URL(r.url()).pathname === defs.routes.find((x) => x.target === q).path, { timeout: cal.budget + 4000 });
+      await v.waitForTimeout(300);  // 応答のあとの処理（描き直すなら、ここまでに描き直している）
+      if (r.status() === 304) {
+        assert.ok(await v.evaluate((b) => window.__drawn === document.querySelector(b).firstElementChild, box), "変わっていない一覧を描き直しました");
+        break;
+      }
+      assert.ok(tries < 5, `変わっていない一覧の引き直しが 304 になりません（${r.status()}）`);  // 保存が変わった直後なら、次の引き直しで 304 になる
+    }
+    await v.close();
+    console.log("  ok 基盤の確認（変わっていない一覧は送り直さず、描き直さない）");
+  }
   await browser.close();
 
   if (ext.length && flag !== "--no-ext") await runExtCases(ext, cal);

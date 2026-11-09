@@ -20,10 +20,20 @@ async function api(method, path, body, keep) {
   return j;
 }
 const urlOf = (name, args) => ROUTE[name].path.replace(/:[a-z_]+/, encodeURIComponent(Object.values(args || {})[0] ?? ""));  // 条件はパスで渡す（クエリ文字列は使わない）
-const query = async (name, args) => {
-  const j = await api("GET", urlOf(name, args));
-  return (rowsOf[name] = j.rows || (j.ids || []).map((id) => ({ id })));
-};
+// 問い合わせの答えは、URL ごとに版（ETag）と行を覚えておき、引き直すときに版を送る。保存が変わっていなければ、
+// サーバーは 304 で本文を送らず、覚えている行を使う（2 秒ごとの引き直しで、変わっていない一覧を毎回送り直して描き直さない）
+const known = {};
+async function fetchRows(name, args) {
+  const url = urlOf(name, args), had = known[url];
+  const r = await fetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
+  if (r.status === 304 && had) return (rowsOf[name] = had.rows, had);
+  const j = await r.json().catch(() => ({ error: "応答が読めません" }));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  const tag = r.headers.get("ETag"), got = { tag, rows: j.rows || (j.ids || []).map((id) => ({ id })), key: tag && url + " " + tag };
+  if (tag) known[url] = got; else delete known[url];
+  return (rowsOf[name] = got.rows, got);
+}
+const query = async (name, args) => (await fetchRows(name, args)).rows;
 
 function notice(msg, kind) {
   const n = $("#notice");
@@ -96,8 +106,10 @@ async function loadShow(sc, qname) {
   const box = $(`[data-show="${qname}"] .rows`);
   if (!box) return;
   const args = showArgs(sc, qname);
-  if (!args) { box.innerHTML = `<p class="hint">入力すると表示します。</p>`; return; }
-  const rows = await query(qname, args), qd = Q[qname];
+  if (!args) { box.innerHTML = `<p class="hint">入力すると表示します。</p>`; box.dataset.drawn = ""; return; }
+  const got = await fetchRows(qname, args), rows = got.rows, qd = Q[qname];
+  if (got.key && box.dataset.drawn === got.key) return;  // 前に描いた答えと同じ（URL と版が同じ）。描き直さない
+  box.dataset.drawn = got.key || "";
   box.innerHTML = rows.length ? rows.map((r) => rowHtml(qd, r, { opens: sc.opens, slot: sc.slots[0] })).join("") : `<p class="hint">ありません。</p>`;
 }
 

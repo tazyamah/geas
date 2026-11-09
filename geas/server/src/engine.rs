@@ -21,6 +21,11 @@ pub struct Engine {
     store_version: i64,
     /// このトランザクションの中で、メモリ上の保存を書き換えたか（巻き戻すときは、メモリ上の保存も捨てて読み直す）
     dirty: bool,
+    /// メモリ上の保存の世代。処理が行を変えるか、DB から読み直すたびに 1 増える。問い合わせの答えは保存と入力だけで決まる
+    /// （時計は使わない）ので、同じ世代なら同じ答えになる。問い合わせの応答の ETag に使う（`query_version`）
+    generation: u64,
+    /// このプロセスの起動を見分ける値。再起動したあとや、同じ DB を使う別のサーバーの版と取り違えない
+    boot: String,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -30,7 +35,11 @@ fn s(v: &Value, k: &str) -> String {
 impl Engine {
     pub fn new(db: Db) -> R<Engine> {
         let defs: Value = serde_json::from_str(geas_app::host::DEFS_JSON).map_err(|x| x.to_string())?;
-        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0, store: None, store_version: 0, dirty: false })
+        static STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let nth = STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let boot = format!("{:x}.{:x}.{:x}", nanos, std::process::id(), nth);
+        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0, store: None, store_version: 0, dirty: false, generation: 0, boot })
     }
 
     pub fn now(&self) -> i64 {
@@ -61,7 +70,20 @@ impl Engine {
         self.db.each_row(|en, k, row| geas_app::host::load_row(&mut s, en, k, row).map_err(|x| format!("保存の行 {}「{}」が読めません: {}", en, k, x)))?;
         self.store = Some(s);
         self.store_version = version;
+        self.generation += 1;
         Ok(())
+    }
+
+    /// 問い合わせの答えの版。保存を DB の今の内容に合わせてから返すので、同じ問い合わせ（URL）で、この値も同じなら、
+    /// 答えも同じ（サーバーは 304 を返し、問い合わせを実行し直さない）
+    pub fn query_version(&mut self) -> R<String> {
+        self.ensure_store()?;
+        Ok(self.version())
+    }
+
+    /// いまの保存の版（起動ごとの値と世代）。問い合わせを実行した直後に呼ぶと、その答えの版になる
+    pub fn version(&self) -> String {
+        format!("{}-{}", self.boot, self.generation)
     }
 
     /// 生成した host を1回呼ぶ。保存はメモリ上のものを使い、処理が変えた行だけを DB へ書く
@@ -84,6 +106,7 @@ impl Engine {
             }
         }
         if !changed.is_empty() {
+            self.generation += 1;
             // DB と食い違ったメモリ上の保存は使わない（トランザクションの中なら、巻き戻すときに捨てる）
             self.dirty = true;
             if (out.is_err() || written.is_err()) && !self.db.in_transaction() {
@@ -381,6 +404,19 @@ mod tests {
             Ok(())
         });
         assert!(r.is_ok() && en.store.is_some() && !en.dirty);
+    }
+
+    #[test]
+    // 保存の版（問い合わせの ETag のもと）は、保存を読み直したときだけ変わる。同じ版なら、問い合わせの答えも同じ
+    fn version_changes_only_when_the_store_is_reloaded_or_written() {
+        let mut en = engine();
+        let v1 = en.query_version().unwrap();
+        assert_eq!(en.query_version().unwrap(), v1); // 何も変わっていなければ、版も同じ（DB を読み直さない）
+        en.store = None; // 巻き戻しで捨てた保存は、次に読み直し、版も変わる
+        let v2 = en.query_version().unwrap();
+        assert_ne!(v2, v1);
+        assert_eq!(en.version(), v2);
+        assert_ne!(engine().query_version().unwrap(), v1); // 別の起動（別のサーバー）の版とは取り違えない
     }
 
     #[test]

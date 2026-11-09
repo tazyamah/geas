@@ -550,3 +550,41 @@ def test_1KBを超える応答も_書き込みの待ちなしで返る(server):
     conn.close()
     assert r.status == 200 and len(body) > 2048 and len(json.loads(body)["rows"]) == 40
     assert sorted(times)[len(times) // 2] < 0.02, [round(x * 1000, 1) for x in times]
+
+
+def test_問い合わせの応答には版が付き_保存が変わっていなければ304で本文を送らない(built, server):
+    """画面は、見せている一覧を 2 秒ごとに引き直す。保存が変わっていなければ（処理が行を書いていない・別の接続も書いていない）、
+    サーバーは問い合わせを実行せずに 304 を返す（変わっていない一覧を毎回作って送らない）。版は URL ごとに違う"""
+    import http.client
+    import sqlite3
+
+    def get(path, tag=None, accept="application/json"):
+        conn = http.client.HTTPConnection("127.0.0.1", int(server.base.rsplit(":", 1)[1]), timeout=10)
+        conn.request("GET", path, headers={"Accept": accept, **({"If-None-Match": tag} if tag else {})})
+        r = conn.getresponse()
+        body = r.read()
+        conn.close()
+        return r.status, r.getheader("ETag"), body
+
+    pid, _ = server.accept("light")
+    code, tag, body = get("/parcels")
+    assert code == 200 and tag and pid in {p["parcel_id"] for p in json.loads(body)["rows"]}
+    assert get("/parcels", tag) == (304, tag, b"")  # 変わっていない：本文なし
+    code, other, _ = get(f"/parcels/{pid}/details")
+    assert code == 200 and other != tag and get(f"/parcels/{pid}/details", tag)[0] == 200  # 別の URL の版では 304 にならない
+    code, _, page = get(f"/parcels/{pid}/details", other, accept="text/html")  # 画面の URL を開く（殻の HTML）ときは、版を見ない
+    assert code == 200 and page.lstrip().lower().startswith(b"<!doctype html")
+    server.accept("heavy")  # 処理が行を書いた
+    code, tag2, body = get("/parcels", tag)
+    assert code == 200 and tag2 != tag and len(json.loads(body)["rows"]) == 2
+    assert get("/parcels", tag2)[0] == 304
+    db = sqlite3.connect(server.db)  # 別の接続（人の手・別のサーバー）が書いた
+    row = json.loads(db.execute("SELECT v FROM Parcel WHERE k = ?", (pid,)).fetchone()[0])
+    db.execute("UPDATE Parcel SET v = ? WHERE k = ?", (json.dumps(dict(row, kind="medium")), pid))
+    db.commit()
+    db.close()
+    code, tag3, body = get("/parcels", tag2)
+    assert code == 200 and tag3 != tag2 and {p["parcel_id"]: p["kind"] for p in json.loads(body)["rows"]}[pid] == "medium"
+    server.stop()  # 再起動したら、前の版では 304 にならない（DB が止まっている間に書き換えられていても、古い一覧を使わせない）
+    server.start()
+    assert get("/parcels", tag3)[0] == 200
