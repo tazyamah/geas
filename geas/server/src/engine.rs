@@ -88,6 +88,12 @@ impl Engine {
 
     /// 生成した host を1回呼ぶ。保存はメモリ上のものを使い、処理が変えた行だけを DB へ書く
     fn call(&mut self, name: &str, ctx: &Value, input: &Value) -> R<Value> {
+        let out = self.call_text(name, ctx, input)?;
+        serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))
+    }
+
+    /// call と同じだが、host の応答（JSON の文字列）を解析せずに返す
+    fn call_text(&mut self, name: &str, ctx: &Value, input: &Value) -> R<String> {
         self.ensure_store()?;
         let store = self.store.as_mut().ok_or("保存を読めません")?;
         let req = json!({ "name": name, "ctx": ctx, "input": input }).to_string();
@@ -115,7 +121,7 @@ impl Engine {
         }
         let out = out?;
         written?;
-        serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))
+        Ok(out)
     }
 
     fn atomic<T>(&mut self, f: impl FnOnce(&mut Engine) -> R<T>) -> R<T> {
@@ -143,18 +149,27 @@ impl Engine {
 
     // ---- 問い合わせ ----
     pub fn query(&mut self, name: &str, input: &Value) -> R<Value> {
-        let def = self.defs["queries"].get(name).ok_or(format!("問い合わせ「{}」はありません", name))?.clone();
+        serde_json::from_str(&self.query_text(name, input)?).map_err(|x| format!("問い合わせの答えが読めません: {}", x))
+    }
+
+    /// 問い合わせの答え（`{"rows":[…]}` か `{"ids":[…]}`）を、応答の本文の JSON の文字列で返す。
+    /// 行の一覧は、生成した host が書いた JSON をそのまま使い、解析して書き直さない（行の多い一覧で、時間とメモリが行数に比例するため）
+    pub fn query_text(&mut self, name: &str, input: &Value) -> R<String> {
+        let def = self.defs["queries"].get(name).ok_or(format!("問い合わせ「{}」はありません", name))?;
         let refs: Vec<String> = def["refs"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         if !refs.is_empty() {
             return Err(format!("問い合わせ {} は参照 {:?} を要しますが、このサーバーは埋められません", name, refs));
         }
-        let mut resp = self.call(name, &json!({}), input)?;
-        // 行は複製せずに取り出す（行の多い一覧で、全部を写し直さない）
-        if let Some(rows) = resp.get_mut("body").and_then(|b| b.get_mut("rows")).map(Value::take) {
-            Ok(json!({ "rows": rows }))
-        } else {
-            Ok(json!({ "ids": resp["args"].take() }))
+        let mut out = self.call_text(name, &json!({}), input)?;
+        if let Some((from, to)) = rows_body(&out) {
+            // 前後を切り落として、本文だけを残す（写し直さない）
+            out.truncate(to);
+            out.drain(..from);
+            return Ok(out);
         }
+        // 行の無い問い合わせ（ID の並び）
+        let mut resp: Value = serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))?;
+        Ok(json!({ "ids": resp["args"].take() }).to_string())
     }
 
     // ---- 処理とフロー ----
@@ -366,6 +381,19 @@ fn merge(a: &Value, b: &Value) -> Value {
     Value::Object(m)
 }
 
+/// 生成した host の、行のある問い合わせの応答 `{"result":"一覧","args":[],"body":{"rows":[…]},"effects":[]}` から、
+/// 本文 `{"rows":[…]}` の位置を、解析せずに見つける。本文は、host が値を逃がして書いた JSON なので、そのまま応答に使える。
+/// 形が違えば None
+fn rows_body(out: &str) -> Option<(usize, usize)> {
+    const HEAD: &str = r#"{"result":"一覧","args":[],"body":{"rows":["#;
+    const TAIL: &str = r#"]},"effects":[]}"#;
+    if out.len() >= HEAD.len() + TAIL.len() && out.starts_with(HEAD) && out.ends_with(TAIL) {
+        Some((HEAD.len() - r#"{"rows":["#.len(), out.len() - r#","effects":[]}"#.len()))
+    } else {
+        None
+    }
+}
+
 /// Mutex を取る。別のリクエストが panic して汚れていても、続けて使う（書きかけはトランザクションの巻き戻しで消えている）
 pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
@@ -373,8 +401,9 @@ pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lock, Engine, R};
+    use super::{lock, rows_body, Engine, R};
     use crate::db::Db;
+    use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
 
     fn engine() -> Engine {
@@ -417,6 +446,24 @@ mod tests {
         assert_ne!(v2, v1);
         assert_eq!(en.version(), v2);
         assert_ne!(engine().query_version().unwrap(), v1); // 別の起動（別のサーバー）の版とは取り違えない
+    }
+
+    #[test]
+    // 行のある問い合わせの答えは、生成した host が書いた JSON をそのまま返す（解析して書き直さない）。中身は、解析した答えと同じ。
+    // host の応答の形が変わって、解析しない道を通らなくなったら落ちる
+    fn list_answers_are_the_hosts_json_as_is() {
+        let mut en = engine();
+        en.run("accept", &json!({ "kind": "a\"b\\c/é" }), &json!({})).unwrap();
+        let out = en.call_text("parcel_list", &json!({}), &json!({})).unwrap();
+        let (from, to) = rows_body(&out).expect("一覧の応答の形が、rows_body の想定と違います");
+        let text = en.query_text("parcel_list", &json!({})).unwrap();
+        assert_eq!(text, out[from..to]);
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["rows"][0]["kind"], "a\"b\\c/é");
+        assert_eq!(v, en.query("parcel_list", &json!({})).unwrap());
+        // 行の無い問い合わせ（ID の並び）は、これまでどおり ids で返す（受け付けた小包は、決済の返事を待っている）
+        let ids = en.query("waiting_parcels", &json!({})).unwrap();
+        assert_eq!(ids["ids"], json!([v["rows"][0]["parcel_id"]]), "{}", ids);
     }
 
     #[test]

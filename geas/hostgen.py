@@ -18,6 +18,7 @@ JSON_PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
 #![allow(non_snake_case, non_camel_case_types, dead_code, unused_variables, unused_mut)]
 use crate::*;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 #[derive(Clone, Debug)]
 pub enum J { Null, Bool(bool), Num(i128), Str(String), Arr(Vec<J>), Obj(BTreeMap<String, J>) }
@@ -83,12 +84,14 @@ impl<'a> P<'a> {
 }
 pub fn parse(s: &str) -> Result<J, String> { let mut p = P { s: s.as_bytes(), i: 0, d: 0 }; let v = p.value()?; Ok(v) }
 
-pub fn js_str(s: &str) -> String {
-    let mut o = String::from("\"");
+/// 文字列を JSON の文字列にして、o の後ろに書く（行の多い一覧で、値ごとに文字列を作らない）
+pub fn js_str_into(o: &mut String, s: &str) {
+    o.push('"');
     for c in s.chars() { match c { '"' => o.push_str("\\\""), '\\' => o.push_str("\\\\"), '\n' => o.push_str("\\n"), '\r' => o.push_str("\\r"), '\t' => o.push_str("\\t"),
-        c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)), c => o.push(c) } }
-    o.push('"'); o
+        c if (c as u32) < 0x20 => { let _ = write!(o, "\\u{:04x}", c as u32); } c => o.push(c) } }
+    o.push('"');
 }
+pub fn js_str(s: &str) -> String { let mut o = String::with_capacity(s.len() + 2); js_str_into(&mut o, s); o }
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 pub fn b64_encode(b: &[u8]) -> String {
     let mut o = String::with_capacity((b.len() + 2) / 3 * 4);
@@ -195,6 +198,21 @@ def to_j(t: Type, x: str) -> str:
     if k == "写像":
         return f'format!("{{{{{{}}}}}}", {x}.iter().map(|(k, v)| format!("{{}}:{{}}", js_str(k), {to_j(t.value, "v")})).collect::<Vec<_>>().join(","))'
     raise ValueError(f"JSON への対応がない型: {k}")
+
+
+def put_j(t: Type, x: str) -> str:
+    """Rust の値 x を JSON にして、文字列 o の後ろに書く文。to_j と同じ JSON になる（行の多い一覧で、値ごとに文字列を作らない）。
+    よく使う型だけを直接書き、ほかは to_j で作った文字列を足す"""
+    if t.optional:
+        return f'match &{x} {{ None => o.push_str("null"), Some(v) => {{ {put_j(replace(t, optional=False), "v")} }} }}'
+    k = t.kind
+    if k in ("ID", "参照", "文字列", "生"):
+        return f"js_str_into(o, &{x});"
+    if k in ("整数", "金額", "日時", "真偽"):
+        return f'let _ = write!(o, "{{}}", {x});'
+    if k == "名前":
+        return f"js_str_into(o, {x}.name());"
+    return f"o.push_str(&{to_j(t, x)});"
 
 
 CALL_WASM = r'''#[no_mangle]
@@ -326,8 +344,10 @@ def host_source(ck: Checker) -> str:
         if q.select:
             n = q.name
             cols = [(c, column_type(ck, q, c)) for c in q.select]
-            items = ", ".join(f'format!("{{}}:{{}}", js_str("{c.name}"), {to_j(t, f"r.{c.name}")})' for c, t in cols)
-            w(f'fn {n}_row_json(r: &{n}Row) -> String {{\n    format!("{{{{{{}}}}}}", vec![{items}].join(","))\n}}')
+            # 列名は生成のときに JSON の文字列にしておき、値は o の後ろへ直接書く
+            body = " ".join(f'o.push_str({rust_str(("{" if k == 0 else ",") + json.dumps(c.name, ensure_ascii=False) + ":")}); {put_j(t, f"r.{c.name}")}'
+                            for k, (c, t) in enumerate(cols)) + " o.push('}');" if cols else 'o.push_str("{}");'
+            w(f'fn {n}_row_json(o: &mut String, r: &{n}Row) {{\n    {body}\n}}')
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>) -> String {\n"
       '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}]}}", js_str(name), js_arr(&args), body, effects.join(","))\n}')
@@ -346,7 +366,12 @@ def host_source(ck: Checker) -> str:
         inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         if q.select:
-            w(f'            let rows = {n}(&c, Store, &i);\n            Ok(write_result("一覧", Vec::new(), format!("{{{{\\"rows\\":[{{}}]}}}}", rows.iter().map({n}_row_json).collect::<Vec<_>>().join(",")), vec![]))\n        }}')
+            w(f'            let rows = {n}(&c, Store, &i);\n'
+              '            let mut o = String::with_capacity(rows.len().saturating_mul(64).saturating_add(16));\n'
+              '            o.push_str("{\\"rows\\":[");\n'
+              f'            for (k, r) in rows.iter().enumerate() {{ if k > 0 {{ o.push(\',\'); }} {n}_row_json(&mut o, r); }}\n'
+              '            o.push_str("]}");\n'
+              '            Ok(write_result("一覧", Vec::new(), o, vec![]))\n        }')
         else:
             w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![]))\n        }}')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
