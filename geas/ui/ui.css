@@ -26,6 +26,8 @@ label.f input, label.f select { display:block; width:100%; max-width:420px; padd
 .rows { display:flex; flex-direction:column; gap:8px; }
 .rows.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:12px; }
 .row { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; display:flex; gap:6px 12px; }
+/* 画面の外の行は、描くのを見えるまで後回しにする（行の多い一覧で、最初の表示が全部の行のレイアウトを待たない。中身は DOM にあり、検索や読み上げはできる） */
+.row { content-visibility:auto; contain-intrinsic-size:auto 72px; }
 .rows.grid .row, .rows.stack .row, .rows.form .row { flex-direction:column; }
 .rows.list .row { justify-content:space-between; align-items:center; flex-wrap:wrap; }
 .row .main { font-weight:600; }
