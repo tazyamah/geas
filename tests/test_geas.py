@@ -1337,6 +1337,59 @@ fn main() {
     assert outs["確かめない"].startswith("Ok(") and '\\"価格\\":999' in outs["確かめない"], outs["確かめない"]  # assume は人が引き受けた。確かめない
 
 
+OVERFLOW = """ltype Count = int 0..
+
+entity Tray {
+  tray_id: id unique
+  n: Count required
+}
+result PutResult {
+  Done(tray_id: id)
+}
+library triple(x: Count) -> Count from rust "std" "" call "x * 3" guarantee result >= x trust check "3 倍するだけ"
+deed put_tray {
+  input n: Count required
+  writes Tray
+  result PutResult
+  effects none
+
+  let t = create Tray { n: triple(n) }
+  return Done(t.tray_id)
+}
+nexus Filling {
+  put_tray: Done → reply
+}
+"""
+
+
+@needs_cargo
+def test_サーバーとして組んでも_ライブラリの計算の溢れは_panic_として止まる(tmp_path):
+    """サーバーは、生成したクレートを依存にして組む（リリースビルド）。Cargo は組み立ての起点の [profile] しか使わないので、
+    溢れの確認がサーバーの Cargo.toml に無いと、10^19 × 3 は u64 を溢れて 11553255926290448384 に回り込み、保証（result >= x）もすり抜けて書かれる"""
+    from geas.servergen import write_server
+    ck = chk(OVERFLOW)
+    assert ck.ready, ck.diags
+    write_crate(ck, generate(ck), "fn main() {}\n", tmp_path, host=True)
+    write_server(tmp_path)
+    server = tmp_path / "server"
+    # 組み方（Cargo.toml の [profile]）はサーバーのままにし、実行部の代わりに処理を呼ぶだけの main を置く（重い依存は外す）
+    cargo = (server / "Cargo.toml").read_text()
+    assert "geas_app = { path = \"..\" }" in cargo
+    (server / "Cargo.toml").write_text("".join(x for x in cargo.splitlines(keepends=True) if not x.startswith(("rusqlite", "serde_json", "tiny_http"))))
+    (server / "src" / "main.rs").write_text("""use geas_app::host::call;
+fn main() {
+    for n in ["1000", "10000000000000000000"] {
+        println!("{:?}", call(&format!(r#"{{"name":"put_tray","ctx":{{"new_Tray_id":"A"}},"input":{{"n":{}}},"store":{{}}}}"#, n)));
+    }
+}
+""")
+    r = subprocess.run(["cargo", "run", "--release", "--quiet", "--offline"], cwd=server, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    small, big = r.stdout.strip().splitlines()
+    assert small.startswith("Ok(") and '\\"n\\":3000' in small, small
+    assert big.startswith("Err(") and "panic" in big, big  # 回り込んだ値を書かずに止まる
+
+
 @needs_cargo
 def test_ライブラリは版を固定した依存として書き出され_外のクレートも呼べる(tmp_path):
     src = PART.replace('from rust "std" ""', 'from rust "serde_json" "1.0.154"').replace(
