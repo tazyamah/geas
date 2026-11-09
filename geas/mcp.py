@@ -129,6 +129,6 @@ def write_mcp(ck, dest, server: str = "http://localhost:8787") -> None:
     from pathlib import Path
     out = Path(dest) / "mcp"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "tools.json").write_text(json.dumps(tool_defs(ck), ensure_ascii=False, indent=1) + "\n")
+    (out / "tools.json").write_text(json.dumps(tool_defs(ck), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     shutil.copy(Path(__file__).parent / "mcp_bridge.py", out / "bridge.py")
-    (out / "mcp.json").write_text(json.dumps({"mcpServers": {"geas": {"command": "python3", "args": ["bridge.py", "tools.json", server]}}}, indent=2) + "\n")
+    (out / "mcp.json").write_text(json.dumps({"mcpServers": {"geas": {"command": "python3", "args": ["bridge.py", "tools.json", server]}}}, indent=2) + "\n", encoding="utf-8")

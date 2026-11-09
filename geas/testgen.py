@@ -157,7 +157,7 @@ def write_url_tests(ck, plan: dict, dest) -> Path | None:
     out = Path(dest) / "tests"
     out.mkdir(parents=True, exist_ok=True)
     f = out / "test_url_examples.py"
-    f.write_text(HEADER % ("[\n" + "".join(f"    {r!r},\n" for r in rows) + "]"))
+    f.write_text(HEADER % ("[\n" + "".join(f"    {r!r},\n" for r in rows) + "]"), encoding="utf-8")
     return f
 
 
@@ -356,7 +356,7 @@ def _node_env():
     node = shutil.which("node")
     if node is None:
         return None
-    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True).stdout.strip() if shutil.which("npm") else ""
+    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, encoding="utf-8").stdout.strip() if shutil.which("npm") else ""
     env = dict(os.environ, NODE_PATH=root)
     ok = subprocess.run([node, "-e", "require('playwright')"], env=env, capture_output=True).returncode == 0
     return env if ok else None
@@ -396,7 +396,7 @@ def test_ユースケースの手順を画面で通す(tmp_path):
                 time.sleep(0.1)
         here = Path(__file__).resolve().parent
         r = subprocess.run(["node", str(here / "screen_runner.js"), str(here / "screen_cases.json"), url, str(tmp_path)] + ([] if ext_ok else ["--no-ext"]),
-                           env=_node_env(), capture_output=True, text=True, timeout=600)
+                           env=_node_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
         assert r.returncode == 0, r.stdout + r.stderr
     finally:
         proc.terminate()
@@ -412,8 +412,8 @@ def write_screen_tests(ck, plan: dict, dest) -> Path | None:
     import shutil
     out = Path(dest) / "tests"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "screen_cases.json").write_text(_json.dumps(cases, ensure_ascii=False, indent=1) + "\n")
+    (out / "screen_cases.json").write_text(_json.dumps(cases, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     shutil.copy(Path(__file__).parent / "e2e" / "screen_runner.js", out / "screen_runner.js")
     f = out / "test_screen_examples.py"
-    f.write_text(SCREEN_TEST)
+    f.write_text(SCREEN_TEST, encoding="utf-8")
     return f

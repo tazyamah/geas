@@ -74,7 +74,7 @@ def read_base(a) -> tuple[str, str]:
     """前の版のコードの文字列と、その名前（--base のファイル、または --base-git の版）"""
     from . import mutate
     if a.base:
-        return Path(a.base).read_text(), Path(a.base).name
+        return Path(a.base).read_text(encoding="utf-8"), Path(a.base).name
     return mutate.read_git(Path(a.code), a.base_git), f"git {a.base_git}"
 
 
@@ -107,7 +107,7 @@ def run_interview(a) -> int:
         print("コードを書き始めてよい: " + ("はい" if ready else "いいえ（動作要件 R1〜R7 とユースケースが揃うまで）"))
         return 0 if ready else 1
     text = interview.render(led)
-    Path(a.o).write_text(text) if a.o else print(text)
+    Path(a.o).write_text(text, encoding="utf-8") if a.o else print(text)
     return 0
 
 
@@ -115,7 +115,7 @@ def run_mutate(a) -> int:
     from . import mutate
     try:
         if a.base:
-            base, scope = Path(a.base).read_text(), f"{Path(a.base).name} から変わった行だけ"
+            base, scope = Path(a.base).read_text(encoding="utf-8"), f"{Path(a.base).name} から変わった行だけ"
         elif a.base_git:
             base, scope = mutate.read_git(Path(a.code), a.base_git), f"git {a.base_git} から変わった行だけ"
         else:
@@ -126,7 +126,7 @@ def run_mutate(a) -> int:
             if not a.plan:
                 print("--run には --plan 計画書.md が要ります", file=sys.stderr)
                 return 2
-            run_note = mutate.run_examples(a.code, ms, Path(a.plan).read_text())
+            run_note = mutate.run_examples(a.code, ms, Path(a.plan).read_text(encoding="utf-8"))
     except (ParseError, LexError, ModuleError, ValueError) as e:
         print(f"エラー: {e}", file=sys.stderr)
         return 2
@@ -136,7 +136,7 @@ def run_mutate(a) -> int:
     text = mutate.report(ms, Path(a.code).name, scope + ("（具体例も動かして確認）" if a.run and not run_note else ""))
     if run_note:
         print(run_note, file=sys.stderr)
-    Path(a.o).write_text(text) if a.o else print(text)
+    Path(a.o).write_text(text, encoding="utf-8") if a.o else print(text)
     return 0
 
 
@@ -152,9 +152,9 @@ def run_receipt(a) -> int:
     except (ValueError, OSError) as e:
         print(f"前の版を読めません: {e}", file=sys.stderr)
         return 2
-    rows = read_plan(Path(a.plan).read_text()).get("ユースケース", []) if a.plan else None
+    rows = read_plan(Path(a.plan).read_text(encoding="utf-8")).get("ユースケース", []) if a.plan else None
     text = to_markdown(build_receipt(ck, base_ck, a.code, base_text, label, rows))
-    Path(a.o).write_text(text) if a.o else print(text)
+    Path(a.o).write_text(text, encoding="utf-8") if a.o else print(text)
     return 0
 
 
@@ -162,7 +162,7 @@ def run_trace(a) -> int:
     from .trace import read_log, to_markdown, trace
     ck = load(a.code)
     try:
-        text = sys.stdin.read() if a.log == "-" else Path(a.log).read_text()
+        text = sys.stdin.read() if a.log == "-" else Path(a.log).read_text(encoding="utf-8")
     except OSError as e:
         print(f"ログを読めません: {e}", file=sys.stderr)
         return 2
@@ -170,10 +170,10 @@ def run_trace(a) -> int:
     if not entries:
         print("geas のルートのログ（\"log\": \"geas.route\" の行）が見つかりません。", file=sys.stderr)
         return 2
-    rows = read_plan(Path(a.plan).read_text()).get("ユースケース", []) if a.plan else None
+    rows = read_plan(Path(a.plan).read_text(encoding="utf-8")).get("ユースケース", []) if a.plan else None
     t = trace(ck, entries, rows)
     out = to_markdown(t, Path(a.code).name)
-    Path(a.o).write_text(out) if a.o else print(out)
+    Path(a.o).write_text(out, encoding="utf-8") if a.o else print(out)
     return 1 if t["unknown"] else 0
 
 
@@ -188,11 +188,11 @@ def run_bench_cmd(a) -> int:
     if not scores:
         print("ケース集に plan.md を持つフォルダがありません。", file=sys.stderr)
         return 2
-    base = json.loads(Path(a.baseline).read_text()) if a.baseline else None
+    base = json.loads(Path(a.baseline).read_text(encoding="utf-8")) if a.baseline else None
     if a.json:
-        Path(a.json).write_text(bench.to_json(scores))
+        Path(a.json).write_text(bench.to_json(scores), encoding="utf-8")
     text = bench.to_markdown(scores, base)
-    Path(a.o).write_text(text) if a.o else print(text)
+    Path(a.o).write_text(text, encoding="utf-8") if a.o else print(text)
     return 0 if all(s.passed for s in scores) else 1
 
 
@@ -203,7 +203,7 @@ def _facts_from_plan(a):
     if a.adapter not in ADAPTERS:
         return None, f"アダプタ「{a.adapter}」はありません（ある：{'・'.join(ADAPTERS)}）"
     try:
-        plan = json.loads(Path(a.plan).read_text())
+        plan = json.loads(Path(a.plan).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         return None, f"plan を読めません: {e}"
     return ADAPTERS[a.adapter].facts_from_plan(plan, a.service), None
@@ -231,7 +231,7 @@ def run_env_verify(a, ck) -> int:
     notes: list = []
     if a.facts:
         try:
-            facts = json.loads(Path(a.facts).read_text())
+            facts = json.loads(Path(a.facts).read_text(encoding="utf-8"))
             facts = facts.get("facts", facts)
         except (OSError, ValueError) as e:
             print(f"事実を読めません: {e}", file=sys.stderr)
@@ -282,7 +282,17 @@ def check_paths(a) -> list[str]:
     return bad
 
 
+def utf8_stdio():
+    """標準出力と標準エラーを UTF-8 にする。Windows では、リダイレクトした出力が既定で cp932 などになり、
+    geas が書くファイル（UTF-8）と食い違ったり、cp932 に無い文字で落ちたりするため"""
+    for s in (sys.stdout, sys.stderr):
+        enc = (getattr(s, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if enc != "utf8" and hasattr(s, "reconfigure"):
+            s.reconfigure(encoding="utf-8")
+
+
 def main(argv=None) -> int:
+    utf8_stdio()
     ap = argparse.ArgumentParser(prog="geas", description="計画書と .geas を突き合わせ、検査・仕様書・Rust の生成をする（試作の Python 版）",
                                  epilog="ふだんの流れ：check（検査）→ review（人が読む仕様書）→ compare（計画書と突合）→ rust（生成）。"
                                         "詳しくは docs/ai-guide.md")
@@ -414,11 +424,11 @@ def main(argv=None) -> int:
         text = render(ck, build(ck), f"（{Path(a.code).name}）")
         if a.plan:
             from .plan import coverage_markdown
-            text += "\n".join(coverage_markdown(build(ck), read_plan(Path(a.plan).read_text()))) + "\n"
-        Path(a.o).write_text(text) if a.o else print(text)
+            text += "\n".join(coverage_markdown(build(ck), read_plan(Path(a.plan).read_text(encoding="utf-8")))) + "\n"
+        Path(a.o).write_text(text, encoding="utf-8") if a.o else print(text)
         return 0 if ck.ok else 1
     if a.cmd == "review":
-        plan_md = Path(a.plan).read_text() if a.plan else None
+        plan_md = Path(a.plan).read_text(encoding="utf-8") if a.plan else None
         findings = compare_static(build(ck), read_plan(plan_md)) if plan_md else []
         base_ck, base_label, base_text = None, "", None
         try:
@@ -432,9 +442,9 @@ def main(argv=None) -> int:
         if a.diff_o and base_ck is not None:
             from .receipt import build_receipt
             receipt = build_receipt(ck, base_ck, a.code, base_text, base_label, read_plan(plan_md).get("ユースケース", []) if plan_md else None)
-        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"))
+        Path(a.o).write_text(review(ck, plan_md, findings, f"（{Path(a.code).name}）"), encoding="utf-8")
         if a.diff_o:
-            Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label, receipt=receipt))
+            Path(a.diff_o).write_text(review_changes(ck, findings, f"（{Path(a.code).name}）", base_ck=base_ck, base_label=base_label, receipt=receipt), encoding="utf-8")
             print(f"生成しました: {a.diff_o}")
         elif base_ck is not None:
             print("前の版は、--diff-o で出力先を渡したときだけ使います（仕様書には載せません）。", file=sys.stderr)
@@ -447,7 +457,7 @@ def main(argv=None) -> int:
         return 1
     lib = generate(ck)
     if a.cmd == "rust":
-        rows = read_plan(Path(a.plan).read_text()).get("具体例", []) if a.plan else []
+        rows = read_plan(Path(a.plan).read_text(encoding="utf-8")).get("具体例", []) if a.plan else []
         src, problems = runner_source(ck, rows)
         for p in problems:
             print(f"{p.kind}: {p.where}: {p.msg}")
@@ -457,7 +467,7 @@ def main(argv=None) -> int:
             if a.plan:
                 from .testgen import write_url_tests
                 try:
-                    f = write_url_tests(ck, read_plan(Path(a.plan).read_text()), a.o)
+                    f = write_url_tests(ck, read_plan(Path(a.plan).read_text(encoding="utf-8")), a.o)
                 except ValueError as e:
                     print(f"URL の具体例: {e}", file=sys.stderr)
                     return 1
@@ -465,7 +475,7 @@ def main(argv=None) -> int:
                     print(f"URL の具体例のテストを生成しました: {f}")
                 from .testgen import write_screen_tests
                 try:
-                    f = write_screen_tests(ck, read_plan(Path(a.plan).read_text()), a.o)
+                    f = write_screen_tests(ck, read_plan(Path(a.plan).read_text(encoding="utf-8")), a.o)
                 except ValueError as e:
                     print(f"画面の具体例: {e}", file=sys.stderr)
                     return 1
@@ -478,7 +488,7 @@ def main(argv=None) -> int:
             write_ext(ck, a.o, a.server)
         print(f"生成しました: {a.o}")
         return 0
-    plan = read_plan(Path(a.plan).read_text())
+    plan = read_plan(Path(a.plan).read_text(encoding="utf-8"))
     findings = compare_static(build(ck), plan)
     rows = plan.get("具体例", [])
     src, problems = runner_source(ck, rows)
@@ -493,5 +503,5 @@ def main(argv=None) -> int:
     text = report(findings)
     print(text)
     if a.o:
-        Path(a.o).write_text(text)
+        Path(a.o).write_text(text, encoding="utf-8")
     return 1 if any(f.kind != UNSPEC for f in findings) else 0

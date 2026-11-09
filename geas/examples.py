@@ -190,16 +190,16 @@ HOST_MOD = "\n// 窓口（JSON と WASM の境界）は、外の値を読む所�
 
 def write_crate(ck: Checker, lib_src: str, runner_src: str, dest: Path, host: bool = False):
     (dest / "src" / "bin").mkdir(parents=True, exist_ok=True)
-    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host, library_deps(ck)))
-    (dest / "src" / "lib.rs").write_text(lib_src + (HOST_MOD if host else ""))
+    (dest / "Cargo.toml").write_text(cargo_toml("geas_app", host, library_deps(ck)), encoding="utf-8")
+    (dest / "src" / "lib.rs").write_text(lib_src + (HOST_MOD if host else ""), encoding="utf-8")
     if host:
         from .hostgen import host_source
-        (dest / "src" / "host.rs").write_text(host_source(ck))
+        (dest / "src" / "host.rs").write_text(host_source(ck), encoding="utf-8")
         from .screengen import write_ui
         write_ui(ck, dest)
         from .devgen import write_dev
         write_dev(ck, dest)
-    (dest / "src" / "bin" / "plan_examples.rs").write_text(runner_src)
+    (dest / "src" / "bin" / "plan_examples.rs").write_text(runner_src, encoding="utf-8")
 
 
 def run_crate(dest: Path, show=lambda s: s) -> dict[str, tuple[str, str, str]]:
@@ -207,7 +207,7 @@ def run_crate(dest: Path, show=lambda s: s) -> dict[str, tuple[str, str, str]]:
     if shutil.which("cargo") is None:
         raise ExampleError("cargo が無いので具体例を実行できません")
     r = subprocess.run(["cargo", "run", "--quiet", "--offline", "--bin", "plan_examples"], cwd=dest,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise ExampleError("生成した Rust のビルドか実行に失敗しました:\n" + r.stderr[-2000:])
     out = {}

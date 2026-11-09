@@ -40,7 +40,7 @@ def write_ext(ck, dest, server: str = DEFAULT_SERVER) -> None:
     for f in (Path(__file__).parent / "ext").iterdir():
         shutil.copy(f, out / f.name)
     d = defs_of(ck, sc, server)
-    (out / "defs.js").write_text("self.GEAS_EXT = " + json.dumps(d, ensure_ascii=False, indent=1) + ";\n")
+    (out / "defs.js").write_text("self.GEAS_EXT = " + json.dumps(d, ensure_ascii=False, indent=1) + ";\n", encoding="utf-8")
     origin = server.rstrip("/") + "/*"
     other = origin.replace("localhost", "127.0.0.1") if "localhost" in origin else None
     (out / "manifest.json").write_text(json.dumps({
@@ -53,4 +53,4 @@ def write_ext(ck, dest, server: str = DEFAULT_SERVER) -> None:
         "action": {"default_title": d["label"], "default_popup": "popup.html"},
         # 拡張のページは、同梱したスクリプトだけ動かす（インラインのスクリプトや外のスクリプトは動かない）
         "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'self'"},
-    }, ensure_ascii=False, indent=2) + "\n")
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

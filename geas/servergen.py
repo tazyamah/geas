@@ -26,7 +26,7 @@ def write_server(dest, seed: Path | None = None) -> None:
     for f in (src / "src").iterdir():
         shutil.copy(f, out / "src" / f.name)
     shutil.copy(src / "Cargo.lock", out / "Cargo.lock")
-    (out / "Cargo.toml").write_text(CARGO)
-    (out / ".gitignore").write_text("target/\n*.sqlite\n*.sqlite-*\n")
+    (out / "Cargo.toml").write_text(CARGO, encoding="utf-8")
+    (out / ".gitignore").write_text("target/\n*.sqlite\n*.sqlite-*\n", encoding="utf-8")
     # 最初のデータ（DB が空のときだけ入る）。無ければ空
-    (out / "src" / "seed.json").write_text(Path(seed).read_text() if seed else "{}")
+    (out / "src" / "seed.json").write_text(Path(seed).read_text(encoding="utf-8") if seed else "{}", encoding="utf-8")
