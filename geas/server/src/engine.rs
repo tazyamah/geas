@@ -267,13 +267,18 @@ impl Engine {
         Ok(json!({ "fired": dest, "trace": trace }))
     }
 
-    /// 時間の経過：模擬の返事を返し、期限が来た待ちを動かす
+    /// 時間の経過：模擬の返事を返し、期限が来た待ちを動かす。
+    /// 1 件の失敗で、ほかの返事や期限を止めない（失敗したものは巻き戻してあり、記録して次へ進む）。
+    /// 失敗で打ち切ると、同じ回に届いたほかの返事が失われ、先頭で失敗し続ける待ちのうしろの期限が二度と発火しない
     pub fn tick(&mut self) -> R<Vec<Value>> {
         let now = self.now();
         let mut out = Vec::new();
         for j in self.mock.take_due(now) {
-            let r = self.deliver(&j.trigger, &j.trigger_args, &j.reply, &j.content)?;
-            out.push(json!({ "reply": j.reply, "trigger": j.trigger, "args": j.trigger_args, "outcome": r }));
+            let head = json!({ "reply": j.reply, "trigger": j.trigger, "args": j.trigger_args });
+            out.push(match self.deliver(&j.trigger, &j.trigger_args, &j.reply, &j.content) {
+                Ok(r) => merge(&head, &json!({ "outcome": r })),
+                Err(e) => tick_failed(&head, e),
+            });
         }
         for w in self.db.due_waits(now)? {
             let r = self.atomic(|en| {
@@ -288,8 +293,12 @@ impl Engine {
                 let mut trace = Vec::new();
                 en.step(&dest, &w.args, &json!({}), &mut trace, 0)?;
                 Ok(json!({ "fired": dest, "trace": trace }))
-            })?;
-            out.push(json!({ "deadline": w.trigger, "args": w.args, "outcome": r }));
+            });
+            let head = json!({ "deadline": w.trigger, "args": w.args });
+            out.push(match r {
+                Ok(r) => merge(&head, &json!({ "outcome": r })),
+                Err(e) => tick_failed(&head, e),
+            });
         }
         Ok(out)
     }
@@ -315,6 +324,13 @@ impl Engine {
         }
         Ok(json!({ "event": name, "runs": runs }))
     }
+}
+
+/// 返事・期限の 1 件の失敗を、標準エラーに 1 行の JSON で残し、結果の一覧にも載せる（値は載せず、トリガの名前と失敗の理由だけ）
+fn tick_failed(head: &Value, e: String) -> Value {
+    let what = head.get("deadline").or_else(|| head.get("trigger")).cloned().unwrap_or(Value::Null);
+    eprintln!("{}", json!({ "log": "geas.tick", "failed": what, "kind": if head.get("deadline").is_some() { "deadline" } else { "reply" }, "error": e }));
+    merge(head, &json!({ "error": e }))
 }
 
 fn merge(a: &Value, b: &Value) -> Value {

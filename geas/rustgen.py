@@ -219,6 +219,25 @@ def chars_rust(cs: tuple) -> str:
     return "&[" + ", ".join(f"('\\u{{{a:x}}}', '\\u{{{b:x}}}')" for a, b in cs) + "]"
 
 
+def rust_str(s: str) -> str:
+    """文字列を、Rust の文字列リテラル（"…"）にする。.geas や計画書から来た文字列を生成コードに埋めるときは、必ずここを通す。
+    \\ と " と制御文字を逃がすので、どんな文字列でもリテラルの外へ出られない（コードを差し込めない）"""
+    out = []
+    for c in s:
+        if c in '\\"':
+            out.append("\\" + c)
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            out.append(f"\\u{{{ord(c):x}}}")
+        else:
+            out.append(c)
+    return '"' + "".join(out) + '"'
+
+
+def doc_line(s: str) -> str:
+    """文字列を、生成コードの 1 行のコメント（/// …）に入れられる形にする。改行で行を抜けてコードを差し込めないよう、制御文字は空白にする"""
+    return "".join(" " if ord(c) < 0x20 or ord(c) == 0x7F or c in "\u2028\u2029" else c for c in s)
+
+
 def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
     """値 x（Rust の場所の式）の、型の範囲の宣言の検査の行。deref なら x は参照（無いかもしれない値の中身）"""
     chk = []
@@ -590,7 +609,7 @@ class Gen:
         for pt in libs:
             _, _, expr, _, why = pt.lib
             ps = ", ".join(f"{n}: {rust_type(t)}" for n, t in pt.params)
-            self.w(f"    /// {why}\n    pub fn {pt.name}({ps}) -> Result<{rust_type(pt.ret)}, String> {{\n"
+            self.w(f"    /// {doc_line(why)}\n    pub fn {pt.name}({ps}) -> Result<{rust_type(pt.ret)}, String> {{\n"
                    f'        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> {rust_type(pt.ret)} {{ {expr} }})).map_err(|_| "ライブラリが panic しました".to_string())\n    }}')
         self.w("}")
 
@@ -808,7 +827,7 @@ class ProcGen:
             self.info.types.update(self.ck.part_types)
             cond = self.rx(pt.guarantee)
             self.scope = saved
-            checks.append(f'if !({cond}) {{ return Err(Fault::Guarantee("{e.n}", "{show(pt.guarantee)}".to_string())) }}')
+            checks.append(f'if !({cond}) {{ return Err(Fault::Guarantee("{e.n}", {rust_str(show(pt.guarantee))}.to_string())) }}')
         level = pt.lib[3]  # trust：check は毎回、verify は検証ビルドだけ、assume は確かめない（人の保証）
         if level == "verify" and checks:
             checks = ["if cfg!(debug_assertions) { " + " ".join(checks) + " }"]
@@ -900,9 +919,9 @@ class ProcGen:
             if e.op in ("/", "%"):  # 変数で割る：1 以上と示してある（Unproven）か、0 のときの値を使う。i64::MIN / -1 のあふれは Fault
                 f = "checked_div_euclid" if e.op == "/" else "checked_rem_euclid"
                 if e.dflt is None:
-                    return f'({l}).{f}({r}).ok_or(Fault::Unproven("割る数が 1 以上: {show(e)}"))?'
+                    return f'({l}).{f}({r}).ok_or(Fault::Unproven({rust_str("割る数が 1 以上: " + show(e))}))?'
                 return (f'{{ let d_ = {r}; if d_ == 0 {{ {self.rx(e.dflt)} }} '
-                        f'else {{ ({l}).{f}(d_).ok_or(Fault::Overflow("{show(e)}"))? }} }}')
+                        f'else {{ ({l}).{f}(d_).ok_or(Fault::Overflow({rust_str(show(e))}))? }} }}')
             fr = ("Ratio", "Rational")
             if e.op == "*" and lt in fr and rt in fr:
                 return f"mul_ratio({l}, {r})?"
@@ -911,7 +930,7 @@ class ProcGen:
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
                 return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
             if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）
-                return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow("{show(e)}"))?)'
+                return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow({rust_str(show(e))}))?)'
             op = {"かつ": "&&", "または": "||"}.get(e.op, e.op)
             return f"({l} {op} {r})"
         if isinstance(e, (SetB, SumE)):

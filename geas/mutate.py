@@ -87,6 +87,9 @@ def changed_lines(old: str, new: str) -> set[int]:
 
 
 def read_git(code: Path, rev: str) -> str:
+    # 版の指定が - で始まると、git show の付けもの（--output=… でファイルに書くなど）として読まれる。版の名前は - で始まらない
+    if not rev or rev.startswith("-"):
+        raise ValueError(f"前の版の指定が正しくありません（{rev!r}）。HEAD~1 やコミットの ID で書いてください")
     code = code.resolve()
     top = subprocess.run(["git", "-C", str(code.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
     rel = code.relative_to(Path(top).resolve())

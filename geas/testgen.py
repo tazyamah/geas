@@ -382,7 +382,8 @@ def test_ユースケースの手順を画面で通す(tmp_path):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
-    proc = subprocess.Popen([str(exe), "--port", str(port), "--db", str(tmp_path / "app.sqlite"), "--pwa", str(APP / "ui"), "--dev", str(APP / "dev")],
+    # 模擬の返事・時計・開発用の操作パネルを使うので、テスト用の口を開く（--test）
+    proc = subprocess.Popen([str(exe), "--port", str(port), "--db", str(tmp_path / "app.sqlite"), "--pwa", str(APP / "ui"), "--test", "--dev", str(APP / "dev")],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         url = f"http://127.0.0.1:{port}"

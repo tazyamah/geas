@@ -31,7 +31,7 @@ def server(tmp_path_factory):
     work = tmp_path_factory.mktemp("shop")
     proc = subprocess.Popen(
         [str(APP / "generated" / "server" / "target" / "release" / "geas_server"), "--port", str(port), "--db", str(work / "shop.sqlite"),
-         "--pwa", str(APP / "generated" / "ui"), "--dev", str(APP / "generated" / "dev")],
+         "--pwa", str(APP / "generated" / "ui"), "--test", "--dev", str(APP / "generated" / "dev")],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
     for _ in range(50):

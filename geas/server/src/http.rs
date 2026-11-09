@@ -3,11 +3,17 @@
 //!   POST /api/deeds/{名前}  {input, slots}   処理    → {"result","body","trace"}
 //!   POST /api/events/{名前} {input}          出来事  → {"event","runs"}
 //!   GET/POST /api/test/…                     テスト用の操作（模擬の設定・時計・外部作用の記録）
+//!   上の queries・deeds・events・test は、--test で起こしたときだけ開く（resource の宣言を通らずに、どの処理でも名前で呼べるため）。
+//!   付けないときに外から呼べるのは、仕様書の URL の表にある口（下の RESTful な URL）と、画面が使う /api/defs・/api/health だけ。
 //! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
 //!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
 //! 画面の URL（screen 宣言から導いた resource の URL）は、Accept: text/html の GET なら画面（殻）を、それ以外は JSON を返す（形式の違い）。
 //! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
-//! --dev のフォルダ（開発用の模擬操作）は、pwa に無いファイルだけを配る。
+//! --dev のフォルダ（開発用の模擬操作）は、--test のときだけ、pwa に無いファイルだけを配る。
+//! POST は Content-Type: application/json のものだけを受ける。フォームや text/plain の POST は、別のサイトのページからでも
+//! 事前の確認なしに送らせられる（CSRF）。JSON と名乗る要求は、別のサイトからだとブラウザの事前確認（CORS）で止まる。
+//! Host が手元の名前（localhost・IP の書き方）か --allow-host で足した名前でなければ断る。悪意のあるページが DNS の付け替え
+//! （DNS rebinding）で 127.0.0.1 に届いても、ブラウザは Host にそのページの名前を書くので、同じオリジンとして動かされない。
 use crate::engine::Engine;
 use serde_json::{json, Map, Value};
 use std::io::{Read, Write};
@@ -19,48 +25,66 @@ use tiny_http::{Header, Method, Request, Response};
 /// 定義の文字列が HTML に紛れても、インラインのスクリプトやイベントハンドラは動かない（エスケープの漏れの保険）。
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-fn csp() -> Header {
-    Header::from_bytes("Content-Security-Policy", CSP).unwrap()
+/// どの応答にも付ける守りのヘッダ：CSP、中身の種類を推測させない（nosniff）、外へ移るときに URL を渡さない
+fn guard<R: Read>(r: Response<R>) -> Response<R> {
+    r.with_header(Header::from_bytes("Content-Security-Policy", CSP).unwrap())
+        .with_header(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap())
+        .with_header(Header::from_bytes("Referrer-Policy", "same-origin").unwrap())
 }
 
 fn json_resp(code: u16, v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
-    Response::from_string(v.to_string())
-        .with_status_code(code)
-        .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
-        .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
-        .with_header(csp())
+    guard(
+        Response::from_string(v.to_string())
+            .with_status_code(code)
+            .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
+            .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
+    )
 }
 
-fn decode(s: &str) -> String {
+/// %XX を読み戻す。plus なら + を空白にする（クエリ文字列の書き方）。%XX の XX が 16 進の 2 桁でなければ、そのまま残す
+fn percent_decode(s: &str, plus: bool) -> String {
     let b = s.as_bytes();
-    let mut out = Vec::new();
+    let hex = |c: u8| (c as char).to_digit(16);
+    let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        match b[i] {
-            b'+' => out.push(b' '),
-            b'%' if i + 2 < b.len() => {
-                let h = std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or("");
-                if let Ok(v) = u8::from_str_radix(h, 16) {
-                    out.push(v);
-                    i += 2;
-                } else {
-                    out.push(b'%');
-                }
+        match (b[i], b.get(i + 1).and_then(|&c| hex(c)), b.get(i + 2).and_then(|&c| hex(c))) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
             }
-            c => out.push(c),
+            (b'+', _, _) if plus => {
+                out.push(b' ');
+                i += 1;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
         }
-        i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// パスの 1 区間（/:id の値など）を読み戻す。パスの + は空白でなく + のまま
+fn decode(s: &str) -> String {
+    percent_decode(s, false)
 }
 
 fn params(q: &str) -> Value {
     let mut m = Map::new();
     for kv in q.split('&').filter(|x| !x.is_empty()) {
         let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        m.insert(decode(k), Value::String(decode(v)));
+        m.insert(percent_decode(k, true), Value::String(percent_decode(v, true)));
     }
     Value::Object(m)
+}
+
+/// 要求の本文の形が JSON と名乗っているか（Content-Type: application/json。charset などの付記は問わない）
+fn says_json(req: &Request) -> bool {
+    req.headers().iter().any(|h| {
+        h.field.equiv("Content-Type") && h.value.as_str().split(';').next().map_or(false, |t| t.trim().eq_ignore_ascii_case("application/json"))
+    })
 }
 
 fn mime(p: &Path) -> &'static str {
@@ -89,10 +113,11 @@ fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
             { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
         ]
     });
-    Response::from_string(v.to_string())
-        .with_header(Header::from_bytes("Content-Type", "application/manifest+json; charset=utf-8").unwrap())
-        .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap())
-        .with_header(csp())
+    guard(
+        Response::from_string(v.to_string())
+            .with_header(Header::from_bytes("Content-Type", "application/manifest+json; charset=utf-8").unwrap())
+            .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap()),
+    )
 }
 
 fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -105,10 +130,11 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
         p.push(part);
     }
     match std::fs::read(&p) {
-        Ok(bytes) => Response::from_data(bytes)
-            .with_header(Header::from_bytes("Content-Type", mime(&p)).unwrap())
-            .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap())
-            .with_header(csp()),
+        Ok(bytes) => guard(
+            Response::from_data(bytes)
+                .with_header(Header::from_bytes("Content-Type", mime(&p)).unwrap())
+                .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap()),
+        ),
         Err(_) => json_resp(404, json!({ "error": "ファイルがありません" })),
     }
 }
@@ -116,15 +142,63 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
 /// リクエストの本文の上限（バイト）。長さの既定の上限（TEXT_LIMIT 文字）の文字列を数個含められる大きさ
 const MAX_BODY: u64 = 16 * 1024 * 1024;
 
-pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) {
+/// サーバーの起動の付けもので決まる、口の開け方
+pub struct Opts {
+    /// テスト用の口と、resource の宣言を通らない口と、開発用の模擬パネル（dev）を開くか（--test）
+    pub test_api: bool,
+    /// Host として受ける名前（小文字）。localhost・*.localhost・IP の書き方は、ここに無くても受ける（--allow-host）
+    pub allow_hosts: Vec<String>,
+}
+
+/// Host の値から名前を取り出す（ポートと IPv6 の [ ] を外し、小文字にして、末尾の . を落とす）
+fn host_name(v: &str) -> String {
+    let v = v.trim();
+    let name = match v.strip_prefix('[') {
+        Some(r) => r.split(']').next().unwrap_or(""),
+        None => match v.rsplit_once(':') {
+            Some((n, port)) if port.bytes().all(|c| c.is_ascii_digit()) => n,
+            _ => v,
+        },
+    };
+    name.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// この Host で受けてよいか。Host の無い要求（ブラウザ以外）は受ける。
+/// IP の書き方と localhost は、DNS を引かないので付け替えられない。それ以外の名前は --allow-host にあるものだけ
+fn host_allowed(host: Option<&str>, allow: &[String]) -> bool {
+    let Some(h) = host else { return true };
+    let name = host_name(h);
+    name == "localhost" || name.ends_with(".localhost") || name.parse::<std::net::IpAddr>().is_ok() || allow.iter().any(|a| *a == name)
+}
+
+pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &Opts) {
+    let test_api = opts.test_api;
+    let host = req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str().to_string());
+    if !host_allowed(host.as_deref(), &opts.allow_hosts) {
+        let _ = req.respond(json_resp(403, json!({ "error": "この Host の名前では受けていません。その名前で受けるなら、サーバーを --allow-host 名前 で起こしてください" })));
+        return;
+    }
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
     // 本文の大きさに上限を置く（上限を超える本文を丸ごとメモリに読み込まない）。文字列の入力は、境界で長さの既定の上限も確かめる
-    let mut body = String::new();
-    let _ = req.as_reader().take(MAX_BODY + 1).read_to_string(&mut body);
-    if body.len() as u64 > MAX_BODY {
+    let mut raw = Vec::new();
+    if req.as_reader().take(MAX_BODY + 1).read_to_end(&mut raw).is_err() {
+        let _ = req.respond(json_resp(400, json!({ "error": "リクエストの本文を読めません" })));
+        return;
+    }
+    if raw.len() as u64 > MAX_BODY {
         let _ = req.respond(json_resp(413, json!({ "error": "リクエストの本文が大きすぎます" })));
+        return;
+    }
+    // UTF-8 でない本文は、空の本文（{}）とみなさずに断る
+    let Ok(body) = String::from_utf8(raw) else {
+        let _ = req.respond(json_resp(400, json!({ "error": "本文が UTF-8 ではありません" })));
+        return;
+    };
+    // 状態を変えうる POST は、JSON と名乗るものだけ（別のサイトのフォームや text/plain の POST を通さない。CSRF の対策）
+    if method == Method::Post && !says_json(&req) {
+        let _ = req.respond(json_resp(415, json!({ "error": "POST は Content-Type: application/json で送ってください" })));
         return;
     }
     let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
@@ -138,7 +212,7 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
             json_resp(400, json!({ "error": "本文が JSON ではありません" }))
         } else {
             let mut en = crate::engine::lock(engine);
-            let r = route(&mut en, &method, rest, query, &parsed);
+            let r = route(&mut en, &method, rest, query, &parsed, test_api);
             match r {
                 Ok(v) => json_resp(200, v),
                 Err((code, m)) => json_resp(code, json!({ "error": m })),
@@ -148,7 +222,7 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path) 
         manifest()
     } else if method == Method::Get {
         let r = serve_static(pwa, path);
-        if r.status_code().0 == 404 { serve_static(dev, path) } else { r }
+        if r.status_code().0 == 404 && test_api { serve_static(dev, path) } else { r }
     } else {
         json_resp(404, json!({ "error": "ありません" }))
     };
@@ -262,12 +336,14 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -
     None
 }
 
-fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value) -> Result<Value, (u16, String)> {
+fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value, test_api: bool) -> Result<Value, (u16, String)> {
     let bad = |m: String| (400u16, m);
     let parts: Vec<&str> = rest.split('/').collect();
     match (method, parts.as_slice()) {
         (Method::Get, ["health"]) => Ok(json!({ "ok": true })),
         (Method::Get, ["defs"]) => Ok(en.defs.clone()),
+        // ここから下は --test のときだけ。名前でどの処理・問い合わせでも呼べ（仕様書の URL の表を通らない）、時計や模擬も変えられる
+        _ if !test_api => Err((404, format!("口「{}」はありません", rest))),
         (Method::Get, ["queries", name]) => en.query(name, &params(query)).map_err(bad),
         (Method::Post, ["deeds", name]) => {
             let input = body.get("input").cloned().unwrap_or(json!({}));
@@ -308,5 +384,32 @@ fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value
         }
         (Method::Post, ["test", "tick"]) => Ok(json!({ "fired": en.tick().map_err(bad)? })),
         _ => Err((404, format!("口「{}」はありません", rest))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, host_allowed, params};
+
+    #[test]
+    // DNS の付け替えで届いたページの名前は断り、手元の名前・IP の書き方・足した名前は受ける
+    fn only_local_names_ip_literals_and_allowed_hosts_are_accepted() {
+        let allow = vec!["shop.example".to_string()];
+        for ok in ["127.0.0.1:8787", "localhost:8787", "LOCALHOST", "app.localhost:1", "[::1]:8787", "192.168.0.5", "shop.example:443", "Shop.Example."] {
+            assert!(host_allowed(Some(ok), &allow), "{}", ok);
+        }
+        for ng in ["evil.example:8787", "127.0.0.1.evil.example", "localhost.evil.example", "shop.example.evil", "", "0x7f.0.0.1:8787"] {
+            assert!(!host_allowed(Some(ng), &allow), "{}", ng);
+        }
+        assert!(host_allowed(None, &[]));
+    }
+
+    #[test]
+    // パスの区間では + は + のまま（空白にするのはクエリ文字列だけ）。16 進の 2 桁でない % は、そのまま残す
+    fn path_keeps_plus_and_only_valid_percent_escapes_are_decoded() {
+        assert_eq!(decode("a+b%20c"), "a+b c");
+        assert_eq!(decode("%E3%81%82"), "あ");
+        assert_eq!(decode("%+5%zz%4"), "%+5%zz%4");
+        assert_eq!(params("q=a+b%2Bc")["q"], "a b+c");
     }
 }
