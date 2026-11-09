@@ -6,6 +6,7 @@
 //!   上の queries・deeds・events・test は、--test で起こしたときだけ開く（resource の宣言を通らずに、どの処理でも名前で呼べるため）。
 //!   付けないときに外から呼べるのは、仕様書の URL の表にある口（下の RESTful な URL）と、画面が使う /api/defs・/api/health だけ。
 //! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
+//!   流れの途中の処理を呼ぶ URL（routes の internal。仕様書の URL の表で「内部」）は、--test のときだけ答える。
 //!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
 //! 画面の URL（screen 宣言から導いた resource の URL）は、Accept: text/html の GET なら画面（殻）を、それ以外は JSON を返す（形式の違い）。
 //! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
@@ -204,7 +205,7 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, 
     let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
     let resp = if method == Method::Get && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, &method, path, &body) {
+    } else if let Some(r) = rest_route(engine, &method, path, &body, test_api) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -265,8 +266,10 @@ fn routes() -> &'static [Value] {
     })
 }
 
-/// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None
-fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+/// resource 宣言の URL に当てはまれば、その動作を実行する。当てはまらなければ None。
+/// 流れの途中の処理を呼ぶ URL（定義の internal。仕様書の URL の表で「内部」）は、test_api（--test）のときだけ当てはめる。
+/// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため
+fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, test_api: bool) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
     let started = std::time::Instant::now();
     let verb = match method {
         Method::Get => "GET",
@@ -278,7 +281,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str) -
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
     // 当てはまるルートを上から探す。処理の Mutex は、当てはまってから取る（画面のファイルの配信などは、処理中のリクエストを待たない）
     let matched = routes().iter().find_map(|r| {
-        if r["method"] != verb {
+        if r["method"] != verb || (!test_api && r["internal"] == true) {
             return None;
         }
         let ps: Vec<&str> = r["path"].as_str().unwrap_or("").trim_matches('/').split('/').collect();

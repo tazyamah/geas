@@ -161,8 +161,11 @@ def test_MCPのツール定義は_URLの定義から機械的に作られ_仕様
     from geas.mcp import tool_defs
     from geas.review import review
     ck = chk(CODE)
+    from geas.rest import internal_targets
     tools = {t["name"]: t for t in tool_defs(ck)}
-    assert len(tools) == len(ck_routes(ck))  # 1 ルート＝1 ツール
+    inner = internal_targets(ck.p)
+    assert len(tools) == len([r for r in ck_routes(ck) if r[3] not in inner])  # 1 ルート＝1 ツール。流れの途中の処理の URL は、サーバーが外に出さないのでツールにしない
+    assert "create_order_completions" not in tools and "create_order_settlements" not in tools and "create_order_recheck_requests" in tools
     o = tools["create_orders"]["inputSchema"]
     assert o["required"] == ["customer_id", "items", "ship_to", "slots"] and "tax_rate" not in o["properties"]["slots"]["properties"]  # サーバーが決める slot は渡させない
     assert tools["show_product_prices"]["annotations"]["readOnlyHint"] and tools["destroy_products"]["annotations"]["destructiveHint"]

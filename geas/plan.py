@@ -209,8 +209,10 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
         elif want and code != next(v for k, v in want.items() if n(k) == res):
             out.append(Finding(DIFF, where, f"計画: {res}→{code} ／ コード: {res}→{next(v for k, v in want.items() if n(k) == res)}"))
     # ルート（URL。経路ごとの動作・呼ぶもの・結果の種類ごとの HTTP の状態）
-    a = {(r["メソッド"].strip(), r["経路"].strip()): {"動作": r["動作"].strip(), "呼ぶもの": n(r["呼ぶもの"]), "結果→状態": items(r.get("結果→状態", ""))} for r in sect("ルート")}
-    b = {(m, path): {"動作": kind, "呼ぶもの": n(tgt), "結果→状態": items(st)} for m, path, kind, tgt, st in spec["ルート"]}
+    # 「外から」（呼べる／内部）は、計画書の表に列があるときだけ比べる
+    a = {(r["メソッド"].strip(), r["経路"].strip()): {"動作": r["動作"].strip(), "呼ぶもの": n(r["呼ぶもの"]), "結果→状態": items(r.get("結果→状態", "")),
+                                                     **({"外から": n(r["外から"])} if "外から" in r else {})} for r in sect("ルート")}
+    b = {(m, path): {"動作": kind, "呼ぶもの": n(tgt), "結果→状態": items(st), "外から": n(outside)} for m, path, kind, tgt, st, outside in spec["ルート"]}
     if a or not b:
         cmp_map("ルート", a, b, out, lambda k: f"{k[0]} {k[1]}")
     out += check_usecases(spec, sect("ユースケース"))
@@ -308,7 +310,7 @@ def coverage(spec: dict, plan: dict) -> tuple[list[list[str]], int, int]:
             if op != n(VIEW_OP):
                 uc_act.setdefault((op, res), set()).add(uc)
     rows, got = [], 0
-    for m, path, _kind, tgt, st in spec["ルート"]:
+    for m, path, _kind, tgt, st, *_ in spec["ルート"]:
         t = n(tgt)
         variants = [tuple(x.split("→")) for x in st.split(", ") if "→" in x] or [("", "200" if m == "GET" else "－")]
         for v, code in variants:

@@ -297,6 +297,25 @@ def test_テスト用の口と_宣言を通らない口は__test_を付けたと
         s.stop()
 
 
+def test_流れの途中の処理の_URL_は__test_なしでは答えず_流れの中では動く(built, tmp_path):
+    """仕様書の URL の表で「内部」の URL（返事・期限・前の処理の結果から進む処理）は、外から呼ぶと 404。
+    呼べると、決済の返事を待たずに先へ進められる。流れの中（返事がそろったら settle → ship）では、ふつうに動く"""
+    s = Server(built, tmp_path / "inner.sqlite", test_api=False)
+    s.start()
+    try:
+        pid, _ = s.accept()
+        for path in ("/settlements", "/cancellations"):
+            code, j = s.call("POST", path, {"parcel_id": pid})
+            assert code == 404 and "result" not in j, (path, j)  # 処理の結果（NoParcel など）ではなく、口が無い
+        assert s.parcels()[pid]["status"] == "Waiting"  # 外からは進められない
+        until = time.time() + 20
+        while s.parcels()[pid]["status"] == "Waiting" and time.time() < until:  # 模擬の返事（既定で 1 秒後）がそろうのを待つ
+            time.sleep(0.2)
+        assert s.parcels()[pid]["status"] == "Shipped"  # 流れの中では settle → ship が動く
+    finally:
+        s.stop()
+
+
 def test__test_を付けると開発用の模擬パネルとテスト用の口が開く(server):
     assert urllib.request.urlopen(server.base + "/test.html", timeout=5).status == 200
     assert server.call("GET", "/api/test/state")[0] == 200

@@ -36,7 +36,7 @@ SQLite に決めているのは `generated/server/src/db.rs` だけ。別の DB 
 
 ## 口
 
-URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customers/:customer_id/orders`、`/product_prices/:jan` など）。結果の種類ごとの HTTP の状態も宣言どおりです（受付＝201、在庫不足＝422、注文なし＝404 …）。`create` の本文は処理の入力で、slot は `slots` に入れます。クエリ文字列は使いません。下の `/api/…` は、これまでの口で、サーバーを `--test` で起こしたときだけ開きます（宣言を通らずに、どの処理でも名前で呼べるため。[docs/server.md](../../../../docs/server.md) の「外から呼べる口」）。
+URL は、geas の `resource` 宣言（`/products`、`POST /orders`、`/customers/:customer_id/orders`、`/product_prices/:jan` など）。結果の種類ごとの HTTP の状態も宣言どおりです（受付＝201、在庫不足＝422、注文なし＝404 …）。流れの途中の処理（`POST /order_completions`・`POST /order_settlements` など。仕様書の URL の表で「内部（流れの途中）」）は、サーバーを `--test` で起こしたときだけ答えます。`create` の本文は処理の入力で、slot は `slots` に入れます。クエリ文字列は使いません。下の `/api/…` は、これまでの口で、サーバーを `--test` で起こしたときだけ開きます（宣言を通らずに、どの処理でも名前で呼べるため。[docs/server.md](../../../../docs/server.md) の「外から呼べる口」）。
 
 | 口 | 中身 |
 |---|---|

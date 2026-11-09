@@ -322,30 +322,30 @@ flowchart LR
 |---|---|---|
 | 商品 | 消せる | 注文.明細→そのまま残す |
 
-## ルート（URL。結果の種類ごとの HTTP の状態つき）
+## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）
 
-| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 |
-|---|---|---|---|---|
-| POST | /orders | create | 注文 | 受付→201, 在庫不足→422, 商品なし→404, 通貨が違う→422, 顧客なし→404 |
-| GET | /orders | index | 注文一覧 |  |
-| POST | /payment_requests | create | 決済要求 | 要求済→201, 注文なし→404, 状態違い→409, 合計ゼロ→422 |
-| POST | /stock_holds | create | 在庫の確保要求 | 要求済→201, 注文なし→404 |
-| POST | /point_grants | create | ポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404, 上限→409 |
-| POST | /campaign_point_grants | create | キャンペーンポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404, 上限→409 |
-| POST | /order_settlements | create | 決済と在庫の見立て | 承認→201, 決済失敗→201, 在庫を確保できず→201, 注文なし→404, 状態違い→409 |
-| POST | /order_completions | create | 注文の確定 | 反映済→201, 注文なし→404, 状態違い→409, 在庫が足りなかった→422 |
-| POST | /unpaid_cancellations | create | 決済失敗の取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
-| POST | /refund_cancellations | create | 在庫不足の返金と取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
-| POST | /expiry_cancellations | create | 期限切れの取り消し | 反映済→201, 注文なし→404, 状態違い→409 |
-| POST | /order_recheck_requests | create | 決済状況の引き直し | 引き直し済→201, 注文なし→404, 状態違い→409 |
-| GET | /products | index | 商品一覧 |  |
-| PUT | /products/:id | update | 商品の入荷 | 入荷済→200, 商品なし→404, 在庫の上限→409 |
-| DELETE | /products/:id | destroy | 商品の取り下げ | 取り下げ済→200, 商品なし→404 |
-| GET | /customers | index | 顧客一覧 |  |
-| GET | /customers/:customer_id/orders | index | 顧客の注文一覧 |  |
-| GET | /awaiting_payment_orders | index | 決済の返事待ちの注文 |  |
-| GET | /product_prices/:jan | show | JANコードから価格を引く |  |
-| POST | /reconnections | create | つながりが戻った |  |
+| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |
+|---|---|---|---|---|---|
+| POST | /orders | create | 注文 | 受付→201, 在庫不足→422, 商品なし→404, 通貨が違う→422, 顧客なし→404 | 呼べる |
+| GET | /orders | index | 注文一覧 |  | 呼べる |
+| POST | /payment_requests | create | 決済要求 | 要求済→201, 注文なし→404, 状態違い→409, 合計ゼロ→422 | 内部（流れの途中） |
+| POST | /stock_holds | create | 在庫の確保要求 | 要求済→201, 注文なし→404 | 内部（流れの途中） |
+| POST | /point_grants | create | ポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404, 上限→409 | 内部（流れの途中） |
+| POST | /campaign_point_grants | create | キャンペーンポイントの加算 | 加算済→201, 注文なし→404, 顧客なし→404, 上限→409 | 内部（流れの途中） |
+| POST | /order_settlements | create | 決済と在庫の見立て | 承認→201, 決済失敗→201, 在庫を確保できず→201, 注文なし→404, 状態違い→409 | 内部（流れの途中） |
+| POST | /order_completions | create | 注文の確定 | 反映済→201, 注文なし→404, 状態違い→409, 在庫が足りなかった→422 | 内部（流れの途中） |
+| POST | /unpaid_cancellations | create | 決済失敗の取り消し | 反映済→201, 注文なし→404, 状態違い→409 | 内部（流れの途中） |
+| POST | /refund_cancellations | create | 在庫不足の返金と取り消し | 反映済→201, 注文なし→404, 状態違い→409 | 内部（流れの途中） |
+| POST | /expiry_cancellations | create | 期限切れの取り消し | 反映済→201, 注文なし→404, 状態違い→409 | 内部（流れの途中） |
+| POST | /order_recheck_requests | create | 決済状況の引き直し | 引き直し済→201, 注文なし→404, 状態違い→409 | 呼べる |
+| GET | /products | index | 商品一覧 |  | 呼べる |
+| PUT | /products/:id | update | 商品の入荷 | 入荷済→200, 商品なし→404, 在庫の上限→409 | 呼べる |
+| DELETE | /products/:id | destroy | 商品の取り下げ | 取り下げ済→200, 商品なし→404 | 呼べる |
+| GET | /customers | index | 顧客一覧 |  | 呼べる |
+| GET | /customers/:customer_id/orders | index | 顧客の注文一覧 |  | 呼べる |
+| GET | /awaiting_payment_orders | index | 決済の返事待ちの注文 |  | 呼べる |
+| GET | /product_prices/:jan | show | JANコードから価格を引く |  | 呼べる |
+| POST | /reconnections | create | つながりが戻った |  | 呼べる |
 
 ## 不変条件
 
