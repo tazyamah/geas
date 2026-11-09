@@ -350,6 +350,20 @@ def test_条件つきの変更は_Rust_の_if_の中に出る():
     assert "    if (order.status == OrderStatus::Received) {\n        writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));\n    }" in src
 
 
+def test_書いた後に読む項目があるときだけ_変数に写しを持つ():
+    from geas.rustgen import reads_after_writes
+
+    def hit(body):
+        proc = next(x for x in parse(mutate(CODE, GUARD + TAIL, body)).processes if x.name == "request_payment")
+        return reads_after_writes(proc.body, set())
+    assert hit(GUARD + TAIL) == set()  # 書いた項目を後で読まない。写さず、保存の行への参照のまま（実行時の手間を足さない）
+    assert hit(GUARD + "  if order.status == PaymentRequested { return Requested }\n" + TAIL) == {("order", "status")}
+    assert hit(GUARD + "  if order == order { return Requested }\n" + TAIL) == {("order", "status")}  # 1件をまるごと読む
+    # return で終わる道で書いたものは、後ろの文に届かない
+    early = "  if order.total > 1000 {\n    order.status = PaymentRequested\n    return Requested\n  }\n  if order.status == Received { return WrongStatus }\n"
+    assert hit(early + TAIL) == set()
+
+
 # ---- 文の if の else・else if ----
 TAIL = "  request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  return Requested\n"  # GUARD の後ろ
 ELSE = ("  if order.status != Received {\n    return WrongStatus\n  } else if order.total <= 0 {\n    return ZeroTotal\n  } else {\n"

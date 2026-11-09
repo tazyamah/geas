@@ -615,3 +615,117 @@ fn main() {
 """
     got = run_app(BRANCHES, main, tmp_path)
     assert got == ["Added 1 55:Open", "Filled 2 100:Full", "AlreadyShut 0 10:Shut", "NoJar 0 -", "Large", "Small", "NoJar"], got
+
+
+# ---- 書いた後に読む：同じ処理の中では、書いた値が見える（保存への適用は処理の後） ----
+READ_AFTER_WRITE = """ltype Qty = int 0..99
+ltype Big = int 0..200
+
+entity Item {
+  item_id: id unique
+  stock: Qty required
+  total: Big required
+  spare: Qty
+  copy: Qty
+}
+
+result Res { Done, NoItem }
+
+deed refill {
+  input item_id: id required
+  reads Item.stock, Item.spare
+  writes Item.stock, Item.total, Item.spare, Item.copy
+  result Res
+  effects none
+
+  let it = Item[item_id] else { return NoItem }
+  it.stock = 0
+  it.total = it.stock + 200
+  if it.spare is null {
+    it.spare = 5
+  }
+  it.copy = it.spare
+  return Done
+}
+"""
+
+
+def test_書いた後に同じ項目を読むと_書いた値が見える(tmp_path):
+    main = """use geas_app::*;
+fn main() {
+    let mut s = Store::default();
+    s.Item.insert("a".into(), Item { item_id: "a".into(), stock: 99, total: 0, spare: None, copy: None });
+    s.Item.insert("b".into(), Item { item_id: "b".into(), stock: 99, total: 0, spare: Some(7), copy: None });
+    for k in ["a", "b"] {
+        let o = refill(&refillCtx {}, &s, &refillInput { item_id: k.into() }).unwrap();
+        s.apply(o.Write).unwrap();
+        let it = &s.Item[k];
+        println!("{} {} {:?} {:?}", it.stock, it.total, it.spare, it.copy);
+    }
+}
+"""
+    # 書く前の値（99）を読むと、total は 299 になり、範囲 0..200 の外（以前は u8 に切り詰めて 43 を保存していた）
+    assert run_app(READ_AFTER_WRITE, main, tmp_path) == ["0 200 Some(5) Some(5)", "0 200 Some(7) Some(7)"]
+
+
+# 1件をまるごと比べる（x == y）ときも、書いた値で比べる。create で作った1件とも比べられる
+WHOLE_RECORD = """ltype Qty = int 0..99
+
+entity Item {
+  item_id: id unique
+  stock: Qty required
+}
+
+result Res { Done, NoItem, Same }
+
+deed twin {
+  input a: id required
+  input b: id required
+  reads Item
+  writes Item.stock
+  result Res
+  effects none
+
+  let x = Item[a] else { return NoItem }
+  let y = Item[b] else { return NoItem }
+  x.stock = 0
+  if x == y {
+    return Same
+  }
+  return Done
+}
+
+deed fresh {
+  input b: id required
+  reads Item
+  writes Item
+  result Res
+  effects none
+
+  let y = Item[b] else { return NoItem }
+  let c = create Item { stock: 3 }
+  if c == y {
+    return Same
+  }
+  return Done
+}
+"""
+
+
+def test_書いた後に_1件をまるごと比べると_書いた値で比べる(tmp_path):
+    main = """use geas_app::*;
+fn main() {
+    let mut s = Store::default();
+    s.Item.insert("a".into(), Item { item_id: "a".into(), stock: 5 });
+    s.Item.insert("z".into(), Item { item_id: "z".into(), stock: 0 });
+    for k in ["a", "z"] {
+        let o = twin(&twinCtx {}, &s, &twinInput { a: k.into(), b: k.into() }).unwrap();
+        println!("{:?}", o.result);
+    }
+    let o = fresh(&freshCtx { new_Item_id: "n".into() }, &s, &freshInput { b: "a".into() }).unwrap();
+    println!("{:?}", o.result);
+}
+"""
+    # x は在庫を 0 に書いた。y は同じ1件を別の変数で引いたもので、書いた値は映らない。
+    # 在庫 5 の a なら違い、もともと 0 の z なら同じ（以前は書く前の値で比べて a も Same。create で作った1件と比べるとビルドできなかった）
+    assert run_app(WHOLE_RECORD, main, tmp_path) == ["Done", "Same", "Done"]

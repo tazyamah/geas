@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Rust の生成。検査器を通ったコードだけを受け付ける。【処理】は純粋な関数
 （文脈, 保存データ, 入力）→（結果, 書込の列, 外部作用の要求の列）として生成し、実行は基盤に任せる。"""
-from dataclasses import replace
+from dataclasses import is_dataclass, replace
 
 from .ast import *  # noqa: F401,F403
 from .parser import parse_chars
@@ -741,6 +741,48 @@ class Gen:
         self.w("];\n")
 
 
+def reads_in(x):
+    """式（や文の中の式）が読む (変数, 項目)。変数をまるごと読むところ（x == y など）は (変数, None)"""
+    if isinstance(x, Attr) and isinstance(x.e, Name):
+        yield (x.e.n, x.n)
+    elif isinstance(x, Name):
+        yield (x.n, None)
+    elif is_dataclass(x) and not isinstance(x, type):
+        for v in vars(x).values():
+            yield from reads_in(v)
+    elif isinstance(x, (list, tuple)):
+        for v in x:
+            yield from reads_in(v)
+
+
+def written_reads(x, done: set) -> set[tuple[str, str]]:
+    """x が読むもののうち、書いた後のもの。まるごと読むなら、その変数で書いた項目すべて"""
+    hit = set()
+    for v, f in reads_in(x):
+        hit |= {w for w in done if w[0] == v} if f is None else {(v, f)} & done
+    return hit
+
+
+def reads_after_writes(stmts: list, done: set) -> set[tuple[str, str]]:
+    """書いた後に読む (変数, 項目)。done は、そこまでのどれかの道で書いた (変数, 項目)（書き足していく）"""
+    hit = set()
+    for st in stmts:
+        if isinstance(st, If):
+            hit |= written_reads(st.cond, done)
+            then_done, else_done = set(done), set(done)
+            hit |= reads_after_writes(st.body, then_done) | reads_after_writes(st.els or [], else_done)
+            for body, d in ((st.body, then_done), (st.els or [], else_done)):
+                if not always_returns(body):  # return で終わる道の書き込みは、後ろの文に届かない
+                    done |= d
+        elif isinstance(st, ForEach):
+            hit |= written_reads(st.binder, done) | reads_after_writes(st.body, done)
+        else:
+            hit |= written_reads(st, done)
+            if isinstance(st, SetField):
+                done.add((st.var, st.f))
+    return hit
+
+
 class ProcGen:
     def __init__(self, g: Gen, proc: Process):
         self.g, self.ck, self.proc = g, g.ck, proc
@@ -751,6 +793,11 @@ class ProcGen:
         self.ind = 1
         self.null_inputs: set[str] = set()
         self.in_loop = False
+        # 書いた後に読む項目は、変数に手元の写しを持たせて書き換え、読むと書いた値が見えるようにする（検査器もそう示す）。
+        # 保存への書き込みは、これまでどおり writes にためて、処理の後に適用する
+        self.local_fields = reads_after_writes(proc.body, set())
+        self.copied = {v for v, _ in self.local_fields}
+        self.owned: set[str] = set()  # 1件を値で持つ変数（写しと、create で作ったもの）。ほかの変数は保存の行への参照
 
     def L(self, s=""):
         self.lines.append("    " * self.ind + s)
@@ -856,8 +903,8 @@ class ProcGen:
                     return x
                 if kind == "ref":  # slot も入力と同じく、整数と金額は i128 で計算する
                     return self.wrap(tok, x)
-                if tok.startswith("Rec:"):
-                    return x
+                if tok.startswith("Rec:"):  # 1件をまるごと使う（x == y）。参照にそろえる
+                    return f"(&{x})" if e.n in self.owned else x
                 return self.wrap(tok, x)
             return f"{self.ck.variants[e.n]}::{e.n}"
         if isinstance(e, Attr):
@@ -1029,8 +1076,11 @@ class ProcGen:
         elif isinstance(st, Assign):
             if isinstance(st.e, Index):
                 d = st.e.d
-                self.L(f"let {st.name} = match Store.{d}.get(&({self.rx(st.e.e)})) {{")
-                self.L("    Some(r) => r,")
+                mut = st.name in self.copied
+                self.L(f"let {'mut ' if mut else ''}{st.name} = match Store.{d}.get(&({self.rx(st.e.e)})) {{")
+                self.L("    Some(r) => r.clone()," if mut else "    Some(r) => r,")
+                if mut:
+                    self.owned.add(st.name)
                 if st.absent and self.in_loop:
                     self.L(f"    None => {{ effects.truncate(束の始め); return {self.ret_expr(st.absent)}; }}")
                 elif st.absent:
@@ -1086,7 +1136,10 @@ class ProcGen:
                 v = self.conv(ft, self.rx(st.e), f"{d}.{st.f}")
             else:
                 v = self.field_value(ft, st.e, f"{d}.{st.f}")
-            self.L(f"writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
+            if (st.var, st.f) in self.local_fields:  # 後で読むので、手元の写しも書いた値にする
+                self.L(f"{{ let 書く値 = {v}; {st.var}.{st.f} = 書く値.clone(); writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), 書く値)); }}")
+            else:
+                self.L(f"writes.push(Write::{d}_{st.f}({st.var}.{key}.clone(), {v}));")
         elif isinstance(st, Delete):
             d = self.info.lookup_vars[st.var]
             self.L(f"writes.push(Write::{d}_Del({st.var}.{self.g.key(d)}.clone()));")
@@ -1094,7 +1147,7 @@ class ProcGen:
             dt = self.ck.data[st.data]
             key = self.ck.key_field(st.data)
             given = dict(st.fields)
-            self.L(f"let {st.name} = {st.data} {{")
+            self.L(f"let {'mut ' if st.name in self.copied else ''}{st.name} = {st.data} {{")
             for f in dt.fields:
                 if f is key:
                     v = f"ctx.new_{st.data}_id.clone()"
@@ -1104,6 +1157,7 @@ class ProcGen:
             self.L("};")
             self.L(f"writes.push(Write::{st.data}_New({st.name}.clone()));")
             self.scope[st.name] = ("local", f"Rec:{st.data}")
+            self.owned.add(st.name)
         elif isinstance(st, ForEach):
             head, body, saved = self.bind_lines(st.binder, "")
             self.L("let 束の始め = effects.len();")
