@@ -5,6 +5,7 @@
 //!   GET/POST /api/test/…                     テスト用の操作（模擬の設定・時計・外部作用の記録）
 //!   上の queries・deeds・events・test は、--test で起こしたときだけ開く（resource の宣言を通らずに、どの処理でも名前で呼べるため）。
 //!   付けないときに外から呼べるのは、仕様書の URL の表にある口（下の RESTful な URL）と、画面が使う /api/defs・/api/health だけ。
+//!   そのときの /api/defs は、画面と外から呼べる URL だけを返す（定義の全部は --test のときだけ）。
 //! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
 //!   流れの途中の処理を呼ぶ URL（routes の internal。仕様書の URL の表で「内部」）は、--test のときだけ答える。
 //!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
@@ -200,7 +201,8 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
         return json_resp(403, json!({ "error": "この Host の名前では受けていません。その名前で受けるなら、サーバーを --allow-host 名前 で起こしてください" }));
     }
     let (path, query) = req.url.split_once('?').unwrap_or((req.url.as_str(), ""));
-    let method = req.method.as_str();
+    // HEAD は GET と同じに答える（本文を落とすのは運び方の側）
+    let method = if req.method == "HEAD" { "GET" } else { req.method.as_str() };
     // 本文の大きさに上限を置く。文字列の入力は、境界で長さの既定の上限も確かめる
     if req.body.len() as u64 > MAX_BODY {
         return json_resp(413, json!({ "error": "リクエストの本文が大きすぎます" }));
@@ -257,6 +259,18 @@ pub fn is_screen_url(path: &str) -> bool {
         let pat: Vec<&str> = s.url.trim_end_matches('/').split('/').collect();
         !s.url.is_empty() && pat.len() == segs.len() && pat.iter().zip(&segs).all(|(p, a)| p.starts_with(':') || p == a)
     })
+}
+
+/// 失敗の理由から HTTP の状態を決める。入力の誤りは 400 で理由を返す。サーバーの中の失敗（DB・保存・host の応答）は 500 で、
+/// 理由（実体の名前やキーを含む）は標準エラーのログだけに出し、外へは決まった文言を返す
+fn failure(m: String) -> (u16, String) {
+    const INTERNAL: [&str; 6] = ["DB", "保存", "host の応答", "内部の異常", "問い合わせの答え", "待ちの記録"];
+    if INTERNAL.iter().any(|p| m.starts_with(p)) {
+        eprintln!("{}", json!({ "log": "geas.error", "ts_ms": now_ms(), "error": m }));
+        (500, "サーバーの中で失敗しました".to_string())
+    } else {
+        (400, m)
+    }
 }
 
 fn now_ms() -> u64 {
@@ -320,15 +334,15 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                         etag = Some(now);
                         Ok((304, Value::Null))
                     }
-                    Some(Err(m)) => Err((400, m)),
+                    Some(Err(m)) => Err(failure(m)),
                     _ => en.query_text(&target, &Value::Object(args)).map(|s| {
                         etag = Some(etag_of(&en.version(), path));
                         text = Some(s);
                         (200, Value::Null)
-                    }).map_err(|m| (400, m)),
+                    }).map_err(failure),
                 }
             }
-            "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(|m| (400, m)),
+            "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(failure),
             "create" | "update" | "destroy" => {
                 let mut input = parsed.clone();
                 if let (Some(c), Some(k)) = (caps.first(), r["id_input"].as_str().filter(|k| !k.is_empty())) {  // /…/:id の ID は、処理の ID の入力になる
@@ -340,7 +354,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                 en.run(&target, &input, &slots).map(|v| {
                     let code = v["result"].as_str().and_then(|k| r["statuses"][k].as_u64()).unwrap_or(200) as u16;
                     (code, v)
-                }).map_err(|m| (400, m))
+                }).map_err(failure)
             }
             k => Err((501, format!("動作 {} は実装していません", k))),
         };
@@ -369,11 +383,23 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
 }
 
 fn route(en: &mut Engine, method: &str, rest: &str, query: &str, body: &Value, test_api: bool) -> Result<Value, (u16, String)> {
-    let bad = |m: String| (400u16, m);
+    let bad = failure;
     let parts: Vec<&str> = rest.split('/').collect();
     match (method, parts.as_slice()) {
-        ("GET", ["health"]) => Ok(json!({ "ok": true })),
-        ("GET", ["defs"]) => Ok(en.defs.clone()),
+        // DB に届かなければ 503（プロセスが生きているだけでは ok にしない）
+        ("GET", ["health"]) => match en.db.data_version() {
+            Ok(_) => Ok(json!({ "ok": true })),
+            Err(m) => {
+                eprintln!("{}", json!({ "log": "geas.error", "ts_ms": now_ms(), "error": m }));
+                Err((503, "保存に届きません".to_string()))
+            }
+        },
+        ("GET", ["defs"]) if test_api => Ok(en.defs.clone()),
+        // 画面が使う分だけ（画面と、外から呼べる URL）。流れの途中の処理・外部作用の通信先・シークレットの名前・模擬の設定は出さない
+        ("GET", ["defs"]) => Ok(json!({
+            "screens": en.defs["screens"],
+            "routes": en.defs["routes"].as_array().map(|a| a.iter().filter(|r| r["internal"] != true).cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        })),
         // ここから下は --test のときだけ。名前でどの処理・問い合わせでも呼べ（仕様書の URL の表を通らない）、時計や模擬も変えられる
         _ if !test_api => Err((404, format!("口「{}」はありません", rest))),
         ("GET", ["queries", name]) => en.query(name, &params(query)).map_err(bad),

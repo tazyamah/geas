@@ -74,3 +74,13 @@ def test_MCPの橋渡しは_標準入出力をUTF_8で読み書きする(tmp_pat
     out = [json.loads(x) for x in r.stdout.decode("utf-8").splitlines()]
     assert out[0]["result"]["tools"][0]["description"] == "注文する"
     assert "存在しない" in out[1]["error"]["message"]
+
+
+def test_MCPの橋渡しは_読めない行で止まらず_誤りを返して続ける(tmp_path):
+    tools = tmp_path / "tools.json"
+    tools.write_text("[]", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(ROOT / "geas" / "mcp_bridge.py"), str(tools), "http://127.0.0.1:9"],
+                       input='not json\n[1, 2]\n{"jsonrpc": "2.0", "id": 7, "method": "ping"}\n', capture_output=True, text=True, encoding="utf-8", timeout=30)
+    out = [json.loads(x) for x in r.stdout.splitlines()]
+    assert r.returncode == 0, r.stderr
+    assert [o.get("error", {}).get("code") for o in out] == [-32700, -32600, None] and out[2]["id"] == 7
