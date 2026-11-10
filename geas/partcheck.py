@@ -235,7 +235,7 @@ def fingerprint(pt) -> str:
 
 def toolchain() -> str:
     try:
-        return subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["rustc", "--version"], capture_output=True, text=True, encoding="utf-8").stdout.strip()
     except OSError:
         return ""
 
