@@ -208,13 +208,15 @@ def build_raw(ck: Checker) -> dict:
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret),
                    "= " + show(pt.body) if pt.body is not None else (show(pt.guarantee) if pt.guarantee is not None else "戻り値の範囲"))
                   for pt in p.parts if not pt.external or pt.name in ck.used_libs]
+    from .partcheck import load_ledger, status_text
+    ledger = load_ledger(getattr(ck, "code_path", None))  # 部品の境界値の検査（geas parts --record）の結果。宣言を実際に呼んで確かめたかを添える
     for pt in p.parts:  # 根の言語のライブラリを呼ぶ部品は、中身を検査器が見られない。呼ぶ先と、戻り値を確かめる段階を人の保証に出す
         if pt.external and pt.name in ck.used_libs:
             crate, version, expr, level, why = pt.lib
             where = crate if crate == "std" else f"{crate} {version}"
             spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}", show_type(pt.ret),
                                   {"check": "戻り値を毎回確かめる", "verify": "戻り値を検証ビルドだけ確かめる", "assume": "戻り値を確かめない"}[level]
-                                  + "（panic は異常で止まる。無限ループ・メモリ枯渇は防げない）", why))
+                                  + "（panic は異常で止まる。無限ループ・メモリ枯渇は防げない）。" + status_text(pt, ledger), why))
     spec["保証の強さ"] = guarantee_levels(ck, spec)
     spec["指定"] = [(f"{x['処理']}.丸め", f"{SHOW_JA.get(m, m)}({SHOW_JA.get(u, u)})") for x in procs for m, u in x["丸め"]]
     spec["名前"] = [(n, " / ".join(f"{k or '既定'}: {v}" for k, v in ls.items())) for n, ls in p.labels.items()]
