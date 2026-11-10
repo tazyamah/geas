@@ -17,34 +17,59 @@
 //! （DNS rebinding）で 127.0.0.1 に届いても、ブラウザは Host にそのページの名前を書くので、同じオリジンとして動かされない。
 use crate::engine::Engine;
 use serde_json::{json, Map, Value};
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tiny_http::{Header, Method, Request, Response};
+
+/// 経路の処理に渡す要求。どの運び方（HTTP・窓の IPC）でも同じ形にして、経路の処理は運び方を知らない
+pub struct Req {
+    /// GET・POST・PUT・DELETE・HEAD など（大文字）
+    pub method: String,
+    /// パスとクエリ文字列（/orders?x=1）
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Req {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
+}
+
+/// 経路の処理の答え
+pub struct Resp {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Resp {
+    fn with(mut self, k: &str, v: &str) -> Resp {
+        self.headers.push((k.to_string(), v.to_string()));
+        self
+    }
+}
 
 /// 画面と API の応答に付ける Content-Security-Policy。スクリプトと通信先は、このサーバーのものだけ。
 /// 定義の文字列が HTML に紛れても、インラインのスクリプトやイベントハンドラは動かない（エスケープの漏れの保険）。
 const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /// どの応答にも付ける守りのヘッダ：CSP、中身の種類を推測させない（nosniff）、外へ移るときに URL を渡さない
-fn guard<R: Read>(r: Response<R>) -> Response<R> {
-    r.with_header(Header::from_bytes("Content-Security-Policy", CSP).unwrap())
-        .with_header(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap())
-        .with_header(Header::from_bytes("Referrer-Policy", "same-origin").unwrap())
+fn guard(r: Resp) -> Resp {
+    r.with("Content-Security-Policy", CSP).with("X-Content-Type-Options", "nosniff").with("Referrer-Policy", "same-origin")
 }
 
-fn json_resp(code: u16, v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
+fn resp(status: u16, content_type: &str, cache: &str, body: Vec<u8>) -> Resp {
+    guard(Resp { status, headers: Vec::new(), body }.with("Content-Type", content_type).with("Cache-Control", cache))
+}
+
+fn json_resp(code: u16, v: Value) -> Resp {
     json_text_resp(code, v.to_string())
 }
 
 /// JSON の文字列を、そのまま本文にした応答（問い合わせの答えは、生成した host が書いた JSON を解析し直さずに返す）
-fn json_text_resp(code: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
-    guard(
-        Response::from_string(body)
-            .with_status_code(code)
-            .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
-            .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
-    )
+fn json_text_resp(code: u16, body: String) -> Resp {
+    resp(code, "application/json; charset=utf-8", "no-store", body.into_bytes())
 }
 
 /// %XX を読み戻す。plus なら + を空白にする（クエリ文字列の書き方）。%XX の XX が 16 進の 2 桁でなければ、そのまま残す
@@ -87,10 +112,8 @@ fn params(q: &str) -> Value {
 }
 
 /// 要求の本文の形が JSON と名乗っているか（Content-Type: application/json。charset などの付記は問わない）
-fn says_json(req: &Request) -> bool {
-    req.headers().iter().any(|h| {
-        h.field.equiv("Content-Type") && h.value.as_str().split(';').next().map_or(false, |t| t.trim().eq_ignore_ascii_case("application/json"))
-    })
+fn says_json(req: &Req) -> bool {
+    req.header("Content-Type").map_or(false, |v| v.split(';').next().map_or(false, |t| t.trim().eq_ignore_ascii_case("application/json")))
 }
 
 fn mime(p: &Path) -> &'static str {
@@ -106,7 +129,7 @@ fn mime(p: &Path) -> &'static str {
 }
 
 /// インストール用の manifest。名前とテーマ色は、Geas の screen 宣言（design）から来る
-fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
+fn manifest() -> Resp {
     let first = geas_app::screens.first();
     let accent = first.map(|s| s.accent).unwrap_or("#0b5cad");
     let bg = if first.map(|s| s.mode) == Some("dark") { "#151918" } else { "#f6f7f5" };
@@ -119,14 +142,10 @@ fn manifest() -> Response<std::io::Cursor<Vec<u8>>> {
             { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
         ]
     });
-    guard(
-        Response::from_string(v.to_string())
-            .with_header(Header::from_bytes("Content-Type", "application/manifest+json; charset=utf-8").unwrap())
-            .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap()),
-    )
+    resp(200, "application/manifest+json; charset=utf-8", "no-cache", v.to_string().into_bytes())
 }
 
-fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+fn serve_static(root: &Path, url_path: &str) -> Resp {
     let rel = if url_path == "/" { "index.html" } else { url_path.trim_start_matches('/') };
     let mut p = PathBuf::from(root);
     for part in rel.split('/') {
@@ -136,17 +155,13 @@ fn serve_static(root: &Path, url_path: &str) -> Response<std::io::Cursor<Vec<u8>
         p.push(part);
     }
     match std::fs::read(&p) {
-        Ok(bytes) => guard(
-            Response::from_data(bytes)
-                .with_header(Header::from_bytes("Content-Type", mime(&p)).unwrap())
-                .with_header(Header::from_bytes("Cache-Control", "no-cache").unwrap()),
-        ),
+        Ok(bytes) => resp(200, mime(&p), "no-cache", bytes),
         Err(_) => json_resp(404, json!({ "error": "ファイルがありません" })),
     }
 }
 
 /// リクエストの本文の上限（バイト）。長さの既定の上限（TEXT_LIMIT 文字）の文字列を数個含められる大きさ
-const MAX_BODY: u64 = 16 * 1024 * 1024;
+pub const MAX_BODY: u64 = 16 * 1024 * 1024;
 
 /// サーバーの起動の付けもので決まる、口の開け方
 pub struct Opts {
@@ -177,40 +192,31 @@ fn host_allowed(host: Option<&str>, allow: &[String]) -> bool {
     name == "localhost" || name.ends_with(".localhost") || name.parse::<std::net::IpAddr>().is_ok() || allow.iter().any(|a| *a == name)
 }
 
-pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &Opts) {
+/// 1 つの要求を処理して答えを返す。運び方（HTTP の待ち受け・窓の IPC）には依存しない。
+/// 本文の大きさの上限（MAX_BODY）を超えるときの打ち切りは運び方の側の仕事で、ここでも超えていれば 413 で断る
+pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &Opts) -> Resp {
     let test_api = opts.test_api;
-    let host = req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str().to_string());
-    if !host_allowed(host.as_deref(), &opts.allow_hosts) {
-        let _ = req.respond(json_resp(403, json!({ "error": "この Host の名前では受けていません。その名前で受けるなら、サーバーを --allow-host 名前 で起こしてください" })));
-        return;
+    if !host_allowed(req.header("Host"), &opts.allow_hosts) {
+        return json_resp(403, json!({ "error": "この Host の名前では受けていません。その名前で受けるなら、サーバーを --allow-host 名前 で起こしてください" }));
     }
-    let url = req.url().to_string();
-    let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-    let method = req.method().clone();
-    // 本文の大きさに上限を置く（上限を超える本文を丸ごとメモリに読み込まない）。文字列の入力は、境界で長さの既定の上限も確かめる
-    let mut raw = Vec::new();
-    if req.as_reader().take(MAX_BODY + 1).read_to_end(&mut raw).is_err() {
-        let _ = req.respond(json_resp(400, json!({ "error": "リクエストの本文を読めません" })));
-        return;
-    }
-    if raw.len() as u64 > MAX_BODY {
-        let _ = req.respond(json_resp(413, json!({ "error": "リクエストの本文が大きすぎます" })));
-        return;
+    let (path, query) = req.url.split_once('?').unwrap_or((req.url.as_str(), ""));
+    let method = req.method.as_str();
+    // 本文の大きさに上限を置く。文字列の入力は、境界で長さの既定の上限も確かめる
+    if req.body.len() as u64 > MAX_BODY {
+        return json_resp(413, json!({ "error": "リクエストの本文が大きすぎます" }));
     }
     // UTF-8 でない本文は、空の本文（{}）とみなさずに断る
-    let Ok(body) = String::from_utf8(raw) else {
-        let _ = req.respond(json_resp(400, json!({ "error": "本文が UTF-8 ではありません" })));
-        return;
+    let Ok(body) = String::from_utf8(req.body.clone()) else {
+        return json_resp(400, json!({ "error": "本文が UTF-8 ではありません" }));
     };
     // 状態を変えうる POST は、JSON と名乗るものだけ（別のサイトのフォームや text/plain の POST を通さない。CSRF の対策）
-    if method == Method::Post && !says_json(&req) {
-        let _ = req.respond(json_resp(415, json!({ "error": "POST は Content-Type: application/json で送ってください" })));
-        return;
+    if method == "POST" && !says_json(&req) {
+        return json_resp(415, json!({ "error": "POST は Content-Type: application/json で送ってください" }));
     }
-    let wants_html = req.headers().iter().any(|h| h.field.equiv("Accept") && h.value.as_str().contains("text/html"));
-    let resp = if method == Method::Get && wants_html && is_screen_url(path) {
+    let wants_html = req.header("Accept").map_or(false, |v| v.contains("text/html"));
+    if method == "GET" && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, &method, path, &body, test_api, if_none_match(&req).as_deref()) {
+    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim())) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -218,40 +224,19 @@ pub fn handle(mut req: Request, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, 
             json_resp(400, json!({ "error": "本文が JSON ではありません" }))
         } else {
             let mut en = crate::engine::lock(engine);
-            let r = route(&mut en, &method, rest, query, &parsed, test_api);
-            match r {
+            match route(&mut en, method, rest, query, &parsed, test_api) {
                 Ok(v) => json_resp(200, v),
                 Err((code, m)) => json_resp(code, json!({ "error": m })),
             }
         }
-    } else if method == Method::Get && path == "/manifest.webmanifest" {
+    } else if method == "GET" && path == "/manifest.webmanifest" {
         manifest()
-    } else if method == Method::Get {
+    } else if method == "GET" {
         let r = serve_static(pwa, path);
-        if r.status_code().0 == 404 && test_api { serve_static(dev, path) } else { r }
+        if r.status == 404 && test_api { serve_static(dev, path) } else { r }
     } else {
         json_resp(404, json!({ "error": "ありません" }))
-    };
-    send(req, resp);
-}
-
-/// 応答を 1 回の書き込みで送る。tiny_http の respond は 1KB ずつ書くので、1KB を超える応答では
-/// 2 回目の書き込みが Nagle のアルゴリズムと相手の遅延 ACK に挟まれ、毎回 40ms ほど待つ。
-/// 中身は respond と同じ（状態行・ヘッダ・本文の作り方は tiny_http のまま）で、書き出す回数だけが違う
-fn send(req: Request, resp: Response<std::io::Cursor<Vec<u8>>>) {
-    let mut buf = Vec::new();
-    let head_only = *req.method() == Method::Head;
-    if resp.raw_print(&mut buf, req.http_version().clone(), req.headers(), head_only, None).is_err() {
-        return;
     }
-    let mut w = req.into_writer();
-    let _ = w.write_all(&buf);
-    let _ = w.flush();
-}
-
-/// 前に受け取った問い合わせの答えの版（If-None-Match）。画面は、2 秒ごとの引き直しでこれを送る
-fn if_none_match(req: &Request) -> Option<String> {
-    req.headers().iter().find(|h| h.field.equiv("If-None-Match")).map(|h| h.value.as_str().trim().to_string())
 }
 
 /// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
@@ -261,13 +246,8 @@ fn etag_of(version: &str, path: &str) -> String {
 }
 
 /// 問い合わせの答えが、前に送ったものから変わっていない（304）。本文は送らない
-fn not_modified(tag: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    guard(
-        Response::from_data(Vec::new())
-            .with_status_code(304)
-            .with_header(Header::from_bytes("ETag", tag).unwrap())
-            .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
-    )
+fn not_modified(tag: &str) -> Resp {
+    guard(Resp { status: 304, headers: Vec::new(), body: Vec::new() }.with("ETag", tag).with("Cache-Control", "no-store"))
 }
 
 /// 画面（screen）の URL（geas_app::screens の url。:名前 は任意の 1 区間）に当てはまるか
@@ -297,13 +277,10 @@ fn routes() -> &'static [Value] {
 /// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため。
 /// 問い合わせ（index・show）の応答には、答えの版（ETag）を付ける。送られてきた If-None-Match が今の版と同じなら、
 /// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
-fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
+fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>) -> Option<Resp> {
     let started = std::time::Instant::now();
     let verb = match method {
-        Method::Get => "GET",
-        Method::Post => "POST",
-        Method::Put => "PUT",
-        Method::Delete => "DELETE",
+        "GET" | "POST" | "PUT" | "DELETE" => method,
         _ => return None,
     };
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
@@ -384,30 +361,30 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
             None => json_resp(code, v),
         };
         return Some(match etag {
-            Some(t) => resp.with_header(Header::from_bytes("ETag", t.as_str()).unwrap()),
+            Some(t) => resp.with("ETag", t.as_str()),
             None => resp,
         });
     }
     None
 }
 
-fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value, test_api: bool) -> Result<Value, (u16, String)> {
+fn route(en: &mut Engine, method: &str, rest: &str, query: &str, body: &Value, test_api: bool) -> Result<Value, (u16, String)> {
     let bad = |m: String| (400u16, m);
     let parts: Vec<&str> = rest.split('/').collect();
     match (method, parts.as_slice()) {
-        (Method::Get, ["health"]) => Ok(json!({ "ok": true })),
-        (Method::Get, ["defs"]) => Ok(en.defs.clone()),
+        ("GET", ["health"]) => Ok(json!({ "ok": true })),
+        ("GET", ["defs"]) => Ok(en.defs.clone()),
         // ここから下は --test のときだけ。名前でどの処理・問い合わせでも呼べ（仕様書の URL の表を通らない）、時計や模擬も変えられる
         _ if !test_api => Err((404, format!("口「{}」はありません", rest))),
-        (Method::Get, ["queries", name]) => en.query(name, &params(query)).map_err(bad),
-        (Method::Post, ["deeds", name]) => {
+        ("GET", ["queries", name]) => en.query(name, &params(query)).map_err(bad),
+        ("POST", ["deeds", name]) => {
             let input = body.get("input").cloned().unwrap_or(json!({}));
             let slots = body.get("slots").cloned().unwrap_or(json!({}));
             en.run(name, &input, &slots).map_err(bad)
         }
-        (Method::Post, ["events", name]) => en.event(name, &body.get("input").cloned().unwrap_or(json!({}))).map_err(bad),
+        ("POST", ["events", name]) => en.event(name, &body.get("input").cloned().unwrap_or(json!({}))).map_err(bad),
         // ---- テスト用 ----
-        (Method::Get, ["test", "state"]) => {
+        ("GET", ["test", "state"]) => {
             let waits: Vec<Value> = en.db.all_waits().map_err(bad)?.into_iter().map(|w| json!({ "trigger": w.trigger, "args": w.args, "collected": w.collected, "deadline": w.deadline })).collect();
             let jobs: Vec<Value> = en.mock.jobs.iter().map(|j| json!({ "due": j.due, "effect": j.effect, "reply": j.reply, "trigger": j.trigger, "args": j.trigger_args })).collect();
             let s = &en.mock.settings;
@@ -421,7 +398,7 @@ fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value
                 "dropped": en.mock.dropped, "waits": waits, "jobs": jobs, "effects": en.db.recent_effects(30).map_err(bad)?
             }))
         }
-        (Method::Post, ["test", "settings"]) => {
+        ("POST", ["test", "settings"]) => {
             let known: Vec<String> = en.defs["mock"]["replies"].as_object().into_iter().flatten().map(|(k, _)| k.clone()).collect();
             let s = &mut en.mock.settings;
             if let Some(x) = body.get("delay_secs").and_then(|x| x.as_i64()) { s.delay_secs = x.clamp(0, 600); }
@@ -432,12 +409,12 @@ fn route(en: &mut Engine, method: &Method, rest: &str, query: &str, body: &Value
             }
             Ok(json!({ "ok": true }))
         }
-        (Method::Post, ["test", "advance"]) => {
+        ("POST", ["test", "advance"]) => {
             en.clock_offset += body.get("secs").and_then(|x| x.as_i64()).unwrap_or(0).clamp(0, 86_400);
             let fired = en.tick().map_err(bad)?;
             Ok(json!({ "fired": fired }))
         }
-        (Method::Post, ["test", "tick"]) => Ok(json!({ "fired": en.tick().map_err(bad)? })),
+        ("POST", ["test", "tick"]) => Ok(json!({ "fired": en.tick().map_err(bad)? })),
         _ => Err((404, format!("口「{}」はありません", rest))),
     }
 }

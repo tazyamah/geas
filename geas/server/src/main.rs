@@ -9,8 +9,47 @@ mod engine;
 mod http;
 mod mock;
 
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// tiny_http の要求を、運び方によらない形（http::Req）にして処理し、答えを返す。
+/// 本文は上限（MAX_BODY）を 1 バイト超えるところまでしか読まない（超える本文を丸ごとメモリに読み込まない。超えた分は処理側が 413 で断る）
+fn serve(mut req: tiny_http::Request, engine: &Mutex<engine::Engine>, pwa: &std::path::Path, dev: &std::path::Path, opts: &http::Opts) {
+    let mut raw = Vec::new();
+    if req.as_reader().take(http::MAX_BODY + 1).read_to_end(&mut raw).is_err() {
+        let _ = req.respond(tiny_http::Response::from_string(r#"{"error":"リクエストの本文を読めません"}"#).with_status_code(400));
+        return;
+    }
+    let r = http::Req {
+        method: req.method().as_str().to_string(),
+        url: req.url().to_string(),
+        headers: req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect(),
+        body: raw,
+    };
+    let out = http::handle(r, engine, pwa, dev, opts);
+    send(req, out);
+}
+
+/// 応答を 1 回の書き込みで送る。tiny_http の respond は 1KB ずつ書くので、1KB を超える応答では
+/// 2 回目の書き込みが Nagle のアルゴリズムと相手の遅延 ACK に挟まれ、毎回 40ms ほど待つ。
+/// 中身は respond と同じ（状態行・ヘッダ・本文の作り方は tiny_http のまま）で、書き出す回数だけが違う
+fn send(req: tiny_http::Request, out: http::Resp) {
+    let mut resp = tiny_http::Response::from_data(out.body).with_status_code(out.status);
+    for (k, v) in &out.headers {
+        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    let mut buf = Vec::new();
+    let head_only = *req.method() == tiny_http::Method::Head;
+    if resp.raw_print(&mut buf, req.http_version().clone(), req.headers(), head_only, None).is_err() {
+        return;
+    }
+    let mut w = req.into_writer();
+    let _ = w.write_all(&buf);
+    let _ = w.flush();
+}
 
 fn arg(name: &str, default: &str) -> String {
     let a: Vec<String> = std::env::args().collect();
@@ -82,7 +121,7 @@ fn main() {
         handles.push(std::thread::spawn(move || {
             for req in server.incoming_requests() {
                 // 1 件の panic でワーカーを失わない（応答は返らず接続が切れるが、次のリクエストは受けられる）
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| http::handle(req, &engine, &pwa, &dev, &opts)));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| serve(req, &engine, &pwa, &dev, &opts)));
             }
         }));
     }
