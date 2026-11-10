@@ -97,6 +97,19 @@ def items(p) -> list[dict]:
         if kind == "secret":
             out.append(_item(f"secret.{target}", "機密", f"シークレット {target} が環境にあり、plan に平文の値が書かれていない",
                              f"人が書いた（{why}）", ["plan", "実環境"], ["シークレットの有無", "plan の値"], why=why, cond={"secret": target}))
+    # ---- ファイル操作 ----
+    for e in p.effects:
+        if e.file:
+            verb = {"write": "新規に書ける", "overwrite": "書ける", "read": "読める", "delete": "消せる"}[e.file.op]
+            out.append(_item(f"file.{e.name.replace(' ', '')}", "到達性", f"外部作用 {e.name} が触る場所（実行時に入力されるパス（{e.file.dir}）の下の {e.file.rest}）を、アプリの利用者の権限で{verb}",
+                             f"導出（外部作用 {e.name} の over file）", ["実環境"], ["フォルダの実体", "権限"], cond={"file_access": e.file.op}))
+    # ---- 環境変数・データ用フォルダ ----
+    for kind, target, _, why, _ in needs:
+        if kind == "env":
+            out.append(_item(f"env.{target}", "環境", f"環境変数 {target} が設定されている", f"人が書いた（{why}）", ["実環境"], ["環境変数の有無"], why=why, cond={"env": target}))
+    for os_name, path, _ in p.data_folders:
+        out.append(_item(f"datafolder.{os_name or 'relative'}", "安全性", f"データ用フォルダ（{os_name or '相対パス'}：{path}）が、書き込めて、再起動や入れ替えで消えない領域にある",
+                         "人が書いた（data_folder）", ["実環境"], ["フォルダの実体", "書き込みの権限"], cond={"writable_folder": path}))
     # ---- 公開 ----
     for kind, _, value, why, _ in needs:
         if kind == "exposure":

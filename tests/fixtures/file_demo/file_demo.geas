@@ -1,0 +1,144 @@
+app "ファイル書き出し"
+ltype Dir = path
+ltype Body = text 1..280
+ltype Bytes = int 0..1000000
+
+entity Note {
+  note_id: id unique
+  body: Body required
+  status: NoteStatus
+  size: Bytes
+}
+
+state NoteStatus {
+  initial Draft
+  middle Exporting
+  final Exported, ExportFailed
+}
+
+result WriteResult { Written(note_id: id) }
+result AskResult { Asked, NoNote, WrongStatus }
+result MoveResult { Applied, NoNote, WrongStatus }
+result FinishResult { Applied, NotSaved(note_id: id), NoNote, WrongStatus }
+
+effect Files. export(note_id: id, dir: Dir, content: Body) replies ExportSettled over file {
+  write "{dir}/note.txt" from content
+  ok → Done take size from bytes
+  exists → Refused
+  not_found → Refused
+  denied → Refused
+  failed → Refused
+}
+
+reply ExportSettled(size: Bytes) {
+  Done gives size
+  Refused
+}
+
+deed write_note {
+  input body: Body required
+  writes Note
+  transition Note: (new) → Draft
+  result WriteResult
+  effects none
+
+  let n = create Note { body: body, status: Draft }
+  return Written(n.note_id)
+}
+
+deed export_note {
+  input note_id: id required, dir: Dir required
+  reads Note.body, Note.status
+  writes Note.status
+  transition Note: Draft → Exporting
+  result AskResult
+  effects Files.export
+
+  let n = Note[note_id] else { return NoNote }
+  if n.status != Draft { return WrongStatus }
+  n.status = Exporting
+  request Files.export(note_id, dir, n.body, idempotency_key = note_id)
+  return Asked
+}
+
+deed finish_export {
+  input note_id: id required, size: Bytes
+  reads Note.status
+  writes Note.status, Note.size
+  transition Note: Exporting → Exported
+  result FinishResult
+  effects none
+
+  let n = Note[note_id] else { return NoNote }
+  if n.status != Exporting { return WrongStatus }
+  let sz = size else { return NotSaved(note_id) }
+  n.status = Exported
+  n.size = sz
+  return Applied
+}
+
+deed give_up {
+  input note_id: id required
+  reads Note.status
+  writes Note.status
+  transition Note: Exporting → ExportFailed
+  result MoveResult
+  effects none
+
+  let n = Note[note_id] else { return NoNote }
+  if n.status != Exporting { return WrongStatus }
+  n.status = ExportFailed
+  return Applied
+}
+
+query note_list {
+  from Note
+  select note_id, body, status, size
+  reads Note.note_id, Note.body, Note.status, Note.size
+}
+
+trigger ExportWait(note_id: id) {
+  reply ExportSettled → finish_export
+  deadline now + 2 min → give_up
+}
+
+nexus Writing {
+  write_note: Written → reply
+}
+
+nexus Exporting {
+  export_note: Asked → wait ExportWait, NoNote → reply, WrongStatus → reply
+}
+
+nexus Finishing {
+  finish_export: Applied → reply, NotSaved → give_up, NoNote → reply, WrongStatus → reply
+  give_up: Applied → reply, NoNote → reply, WrongStatus → reply
+}
+
+resource Notes {
+  create write_note {
+    Written → 201
+  }
+  index note_list
+}
+
+resource NoteExports {
+  create export_note {
+    Asked → 201
+    NoNote → 404
+    WrongStatus → 409
+  }
+}
+
+screen NoteList entry {
+  show note_list
+  field body
+  action write_note {
+    Written → stay
+  }
+  design {
+    layout form
+    accent "#2e7d32"
+    mode light
+  }
+}

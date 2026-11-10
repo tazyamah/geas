@@ -2,6 +2,7 @@
 """構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。
 キーワードは英語。構文木の中身（型の種類や結果の行き先など）は、仕様書の言葉に合わせた日本語のまま持つ。"""
 import copy
+import re
 from pathlib import Path
 
 from .ast import *  # noqa: F401,F403
@@ -104,6 +105,7 @@ class Parser:
         self.i = 0
         self.ltypes: dict[str, Type] = {}
         self.ltype_lines: dict[str, int] = {}  # 論理型の名前 → 宣言した行
+        self.auto_parts: list = []  # ltype 名前 = path が言語として足す、raw から変換する convert
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
         self.composites: set[str] = {"vtime"}  # 合成型の名前（Make の見分けに使う）
         self.used_builtin: set[str] = set()  # 使われた組み込みの合成型
@@ -221,6 +223,16 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
+            elif kw == "path":  # path 名前 = absolute { windows "…" macos "…" linux "…" } ／ path 名前 = relative "…"：パスの値
+                pd = self.path_decl(line)
+                if any(x[0] == pd[0] for x in p.paths):
+                    raise ParseError(f"パス「{pd[0]}」が2つ以上あります", line)
+                p.paths.append(pd)
+            elif kw == "data_folder":  # data_folder パスの名前：アプリのデータ用フォルダ（DB・ログ・シークレット）
+                if p.data_folder is not None:
+                    raise ParseError("data_folder は 1 つだけ書けます", line)
+                p.data_folder = (self.name(), line)
+                self.end_line()
             elif kw == "resident":  # resident { tooltip "…" ／ start hidden ／ menu "ラベル" → 画面 }：常駐（タスクトレイ・メニューバー）
                 if p.resident is not None:
                     raise ParseError("resident は 1 つだけ書けます", line)
@@ -258,6 +270,7 @@ class Parser:
                                  def_hint(kw) or f"書ける定義は {'・'.join(TOP_KEYWORDS)} です")
             self.skip_nl()
         p.ltype_names = list(self.ltypes)
+        p.parts.extend(self.auto_parts)
         p.ltype_lines = dict(self.ltype_lines)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
@@ -266,17 +279,54 @@ class Parser:
             p.states.append(State("Currency", initial="JPY", middle=["USD", "EUR"], plain=True))
         self.apply_stores(p, stores)
         self.add_sync_state(p)
+        if p.data_folder is not None:
+            name, ln = p.data_folder
+            hit = next((x for x in p.paths if x[0] == name), None)
+            if hit is None:
+                raise ParseError(f"data_folder の「{name}」というパス（path）がありません" + (f"。ある物：{'・'.join(x[0] for x in p.paths)}" if p.paths else ""), ln)
+            p.data_folders = hit[2]
         return p
+
+    def path_decl(self, line):
+        """path 名前 = absolute { windows "…" … } ／ relative "…"。(名前, 種類, [(OS, パス, 行)], 行)。相対パスの OS は空（OS を問わない。exe のあるフォルダが起点）"""
+        name = self.name()
+        self.expect("=")
+        kind = self.name()
+        entries = []
+        if kind == "absolute":
+            self.block_open()
+            while not self.accept("}"):
+                ln = self.peek().line
+                os_name = self.name()
+                if os_name not in ("windows", "macos", "linux"):
+                    raise self.err("absolute の中は、windows・macos・linux のどれかに続けて、その OS の書き方のパスを書きます（例：windows \"%APPDATA%\\\\アプリ名\"）")
+                t = self.next()
+                if t.kind != "STR" or not t.val.strip():
+                    raise self.err(f'{os_name} のあとには、パスを "…" で書きます')
+                entries.append((os_name, t.val, ln))
+                self.end_line()
+            self.end_line()
+        elif kind == "relative":
+            t = self.next()
+            if t.kind != "STR" or not t.val.strip():
+                raise self.err('relative のあとには、パスを "…" で書きます（exe のあるフォルダが起点）')
+            entries.append(("", t.val, line))
+            self.end_line()
+        else:
+            raise ParseError('path は `path 名前 = absolute { windows "…" macos "…" linux "…" }` か `path 名前 = relative "…"` と書きます', line)
+        return name, kind, entries, line
 
     def needs_decl(self, line):
         """needs の 1 行。(種類, 対象, 値, 理由, 行)。環境の実際は書かず、アプリが成り立つ条件だけを書く。理由は必須（仕様書の「動かす前提」に出る）"""
         usage = ('needs は `needs secret 外部.名前 "理由"`、`needs exposure public "理由"`（または internal）、'
-                 '`needs instances at_most N "理由"` のどれかで書きます')
+                 '`needs instances at_most N "理由"`、`needs env 環境変数名 "理由"` のどれかで書きます')
         t = self.peek()
         kind = self.name() if t.kind == "NAME" else ""
         target, value = "", ""
         if kind == "secret":
             target = self.dotted()
+        elif kind == "env":
+            target = self.name()
         elif kind == "exposure":
             value = self.name()
             if value not in ("public", "internal"):
@@ -346,6 +396,17 @@ class Parser:
             self.composites.add(name)
             return
         self.expect("=")
+        if self.peek().kind == "NAME" and self.peek().val == "path":  # ltype 名前 = path：実行時にユーザーが入力するパス（実行中の OS の書式だけ）
+            self.next()
+            self.end_line()
+            import re as _re
+            reader = _re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() + "_os_path"  # UpperCamel → lower_snake（部品の名前の決まり）
+            t = Type("文字列", range=Range(1, 4096))
+            t.read = reader
+            self.auto_parts.append(Part(reader, [("r", Type("生"))], Type("文字列", range=Range(1, 4096), read=reader), None, line, Call("os_path", [Name("r")]), {}, requires=[]))
+            self.ltypes[name] = t
+            self.ltype_lines[name] = line
+            return
         self.in_ltype = True
         t = self.type()
         self.in_ltype = False
@@ -606,11 +667,15 @@ class Parser:
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
         failures, joins, replies, no_wait = [], None, None, None
-        http = None
+        http = file = None
         while self.peek().kind == "NAME" and self.peek().val in ("failures", "joins", "replies", "no_wait", "over"):  # 後ろの指定は、順不同
             kw = self.name()
-            if kw == "over":  # over http { … }：実通信（ブロックは行の最後に置く）
-                http = self.http_decl(self.peek().line)
+            if kw == "over":  # over http { … } ／ over file { … }：実通信・ファイル操作（ブロックは行の最後に置く）
+                if self.peek().kind == "NAME" and self.peek().val == "file":
+                    self.next()
+                    file = self.file_decl(self.peek().line)
+                else:
+                    http = self.http_decl(self.peek().line)
                 break
             if kw == "failures":
                 failures = self.comma_list(self.name)
@@ -623,12 +688,12 @@ class Parser:
                 if t.kind != "STR":
                     raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
                 no_wait = t.val
-        if http is None:
+        if http is None and file is None:
             self.end_line()
-        return EffectDecl(name, params, line, failures, no_wait, joins, replies, http)
+        return EffectDecl(name, params, line, failures, no_wait, joins, replies, http, file)
 
     def resident_decl(self, line) -> ResidentDecl:
-        """resident { tooltip "説明" ／ start shown|hidden ／ menu "ラベル" → 画面名 }"""
+        """resident { tooltip "説明" ／ start shown|hidden ／ click toggle|menu ／ menu "ラベル" → 画面名 ／ menu "ラベル" → fire 出来事名 ／ separator }"""
         r = ResidentDecl(line=line)
         self.block_open()
         while not self.accept("}"):
@@ -643,17 +708,67 @@ class Parser:
                 r.start = self.name()
                 if r.start not in ("shown", "hidden"):
                     raise self.err("start のあとには shown（窓を開いて始める）か hidden（アイコンだけで始める）を書きます")
+            elif kw == "click":
+                r.click = self.name()
+                if r.click not in ("toggle", "menu"):
+                    raise self.err("click のあとには toggle（左クリックで窓を開閉する）か menu（左クリックでもメニューを出す）を書きます")
+            elif kw == "separator":
+                r.menu.append(("", "separator", "", ln))
             elif kw == "menu":
                 t = self.next()
                 if t.kind != "STR":
                     raise self.err('menu のあとには、項目のラベルを "…" で書きます（例：menu "つぶやきを書く" → TweetList）')
                 self.expect("→")
-                r.menu.append((t.val, self.name(), ln))
+                if self.accept("fire"):
+                    r.menu.append((t.val, "event", self.name(), ln))
+                else:
+                    r.menu.append((t.val, "screen", self.name(), ln))
             else:
-                raise self.err(f"resident の中に「{kw}」は書けません（tooltip・start・menu）")
+                raise self.err(f"resident の中に「{kw}」は書けません（tooltip・start・click・menu・separator）")
             self.end_line()
         self.end_line()
         return r
+
+    def file_decl(self, line) -> FileDecl:
+        """over file { write "{場所}/相対パス" from 内容の引数（新規に作る）／ overwrite … from …（作るか置き換える）／ read "{場所}/相対パス" ／ delete "{場所}/相対パス" ／ ok → 種類 [take 名前 from content|bytes] ／ exists・not_found・denied・failed → 種類 }"""
+        f = FileDecl(line=line)
+        self.block_open()
+        while not self.accept("}"):
+            ln = self.peek().line
+            kw = self.name()
+            if kw in ("write", "overwrite", "read", "delete"):
+                if f.op:
+                    raise ParseError("write・overwrite・read・delete は 1 つだけ書けます", ln)
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err(f'{kw} のあとには、場所を "{{引数}}/ファイル名" の形で書きます')
+                f.op = kw
+                m = re.fullmatch(r"\{([a-z][a-z0-9_]*)\}/(.+)", t.val)
+                if not m:
+                    raise ParseError(f'{kw} の場所「{t.val}」は、"{{引数}}/ファイル名" の形で書きます（引数は path 型。先頭の {{ }} が場所、あとは相対パス）', ln)
+                f.dir, f.rest = m.group(1), m.group(2)
+                if kw in ("write", "overwrite"):
+                    if not self.accept("from"):
+                        raise self.err(f"{kw} のあとには、from 内容の引数 が要ります")
+                    f.src = self.name()
+            elif kw in ("ok", "exists", "not_found", "denied", "failed"):
+                if kw in f.rows:
+                    raise ParseError(f"{kw} が 2 つあります", ln)
+                self.expect("→")
+                outcome = self.name()
+                takes = []
+                while self.accept("take"):
+                    n = self.name()
+                    if not self.accept("from"):
+                        raise self.err("take のあとには、take 名前 from content（ファイルの中身。read のとき）か take 名前 from bytes（バイト数）を書きます")
+                    takes.append((n, self.name()))
+                    self.accept(",")
+                f.rows[kw] = (outcome, takes)
+            else:
+                raise self.err(f"over file の中に「{kw}」は書けません（write・overwrite・read・delete・ok・exists・not_found・denied・failed）")
+            self.end_line()
+        self.end_line()
+        return f
 
     def http_decl(self, line) -> HttpDecl:
         """over http { METHOD "https://…" ／ bearer 外部.名前 ／ body 引数, … ／ status 201 → 種類 [take 中身 from "道すじ"] ／ status 400..499 → 種類 ／ status other → 種類 }"""

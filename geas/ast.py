@@ -90,6 +90,17 @@ class HttpDecl:
 
 
 @dataclass
+class FileDecl:
+    """外部作用のファイル操作（over file { … }）。触れるのは、宣言した場所（path 型の引数が指す場所の下の、書いたファイル）だけ"""
+    op: str = ""  # write（新規に作る。すでにあれば exists）・overwrite（作るか置き換える）・read・delete（あるファイルを消す）
+    dir: str = ""  # 場所の引数の名前（path 型）
+    rest: str = ""  # 場所の下のファイルの相対パス（/ 区切り）
+    src: str = ""  # write のとき、書く内容の引数の名前（文字列）
+    rows: dict = field(default_factory=dict)  # 結果：ok・exists・not_found・denied・failed → (結果の種類, [(応答の中身の名前, 取り出すもの content|bytes)])
+    line: int = 0
+
+
+@dataclass
 class EffectDecl:
     name: str  # 決済.請求
     params: list[tuple[str, Type]]
@@ -99,6 +110,7 @@ class EffectDecl:
     joins: Optional[str] = None  # 返事が合流するトリガの名前。要求する処理が待たなくても、同じ並列の枝がそのトリガを待つ
     replies: Optional[str] = None  # この外部作用に返ってくる応答（reply）の名前。開発用の模擬が、その結果の種類（outcome）から返事を作る
     http: Optional[HttpDecl] = None  # 実通信（over http { … }）。書かなければ、実際には外へ出ない（模擬だけ）
+    file: Optional[FileDecl] = None  # ファイル操作（over file { … }）。http とは同時に書けない
 
 
 @dataclass
@@ -252,7 +264,9 @@ class ResidentDecl:
     メニューの項目は、入口の画面（entry、引数なし）を開く。終了の項目は、言語が常に足す"""
     tooltip: str = ""  # アイコンに載せる説明（省略はアプリ名）
     start: str = "shown"  # shown（窓を開いて始める）か hidden（アイコンだけで始める）
-    menu: list = field(default_factory=list)  # [(ラベル, 画面名, 行)]
+    click: str = "toggle"  # アイコンの左クリック：toggle（窓の開閉）か menu（右クリックと同じメニューを出す）
+    # 右クリックのメニュー：[(ラベル, 種類, 対象, 行)]。種類は screen（対象は入口の画面）・event（対象は出来事の名前。起こす）・separator（区切り線。ラベルと対象は空）
+    menu: list = field(default_factory=list)
     line: int = 0
 
 
@@ -298,6 +312,9 @@ class Program:
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     ltype_lines: dict = field(default_factory=dict)  # 論理型の名前 → 宣言した行（検査の指摘に付ける）
     isolations: dict = field(default_factory=dict)  # 保存先の名前 → (process|store, 種類, 理由, 行)。リクエストの直列を誰が保証するか（`isolation 保存先 by …`）
+    paths: list = field(default_factory=list)  # パスの値（path 名前 = absolute {…} ／ relative "…"）：[(名前, 種類, [(OS（windows|macos|linux。相対パスは空）, パス, 行)], 行)]
+    data_folder: Optional[tuple] = None  # データ用フォルダに使うパスの名前と行（data_folder 名前）
+    data_folders: list = field(default_factory=list)  # data_folder が指すパスの、[(OS, パス, 行)]（パース後に解決する）
     resident: Optional[ResidentDecl] = None  # 常駐の宣言（なければ、窓を閉じたら終了する）
     needs: list = field(default_factory=list)  # アプリが環境に要求すること（`needs secret|exposure|instances …`）。(種類, 対象, 値, 理由, 行)
     title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う

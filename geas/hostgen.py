@@ -244,13 +244,33 @@ def mock_def(ck: Checker) -> dict:
     }
 
 
+def data_folder_def(ck):
+    """データ用フォルダの定義：OS ごとのパス。relative は OS なしの行（相対パス。exe のあるフォルダが起点）。実行時、窓つき exe が自分の OS の行を選んで展開する"""
+    if not ck.p.data_folders:
+        return None
+    return {(os_name or "relative"): path for os_name, path, _ in ck.p.data_folders}
+
+
 def resident_def(ck, screens: dict):
-    """常駐の定義。窓つき exe が、トレイのアイコンとメニューを作る（メニューの項目は、画面の URL を開く）"""
+    """常駐の定義。窓つき exe が、トレイのアイコンと右クリックのメニューを作る（画面の項目は URL を開き、出来事の項目は出来事を起こす）"""
     r = ck.p.resident
     if r is None:
         return None
-    return {"tooltip": r.tooltip or screens["title"], "start": r.start,
-            "menu": [{"label": label, "screen": name, "url": screens["screens"][name]["url"]} for label, name, _ in r.menu]}
+    menu = []
+    for label, kind, target, _ in r.menu:
+        if kind == "separator":
+            menu.append({"kind": "separator"})
+        elif kind == "screen":
+            menu.append({"kind": "screen", "label": label, "screen": target, "url": screens["screens"][target]["url"]})
+        else:
+            menu.append({"kind": "event", "label": label, "event": target})
+    return {"tooltip": r.tooltip or screens["title"], "start": r.start, "click": r.click, "menu": menu}
+
+
+def file_def(e) -> dict:
+    """over file の定義：操作・場所の引数・相対パス・書く内容の引数・結果の種類（ok・exists・not_found・denied・failed）。実行時、worker が宣言した場所にだけ触る"""
+    f = e.file
+    return {"op": f.op, "dir": f.dir, "rest": f.rest, "from": f.src, "rows": {k: {"outcome": o, "take": {n: src for n, src in t}} for k, (o, t) in f.rows.items()}}
 
 
 def http_def(e) -> dict:
@@ -275,12 +295,13 @@ def definitions(ck: Checker) -> dict:
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
-        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {})} for e in p.effects},
+        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {}), **({"file": file_def(e)} if e.file else {})} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
         "rules": {f.slot: [{"when": [list(c) for c in conds], "value": val} for conds, val in f.rows] for f in p.rules},
         "mock": mock_def(ck),
         "screens": screens_def(ck),
         "resident": resident_def(ck, screens_def(ck)),
+        "data_folder": data_folder_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
                     **({"internal": True} if tgt in inner else {})}

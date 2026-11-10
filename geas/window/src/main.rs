@@ -6,7 +6,10 @@
 //! --db を付けなければ、利用者のデータ用フォルダ（Windows: %APPDATA%、macOS: ~/Library/Application Support、
 //!        それ以外: $XDG_DATA_HOME か ~/.local/share）の下のアプリ名のフォルダに置く。
 //! resident を宣言したアプリは、トレイのアイコンに常駐する（窓を閉じても終了しない。同じ保存先では 1 つだけ起動できる）
+//! --console：ターミナルの窓にログ（標準エラー）を出す（Windows。付けなければ窓だけで起動し、ログはデータ用フォルダの log.txt に追記する。--selftest は --console を含む）
 //! --selftest：窓を開き、画面が定義を IPC で受けて描かれるのを確かめて、終了コード 0（成功）か 1 で終わる（試験用）
+// Windows では、ターミナルの窓を出さない窓だけのアプリとして組む。ターミナルが要るときは --console（下の console モジュール）
+#![cfg_attr(windows, windows_subsystem = "windows")]
 use geas_server::http::{self, Opts, Req};
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -50,6 +53,10 @@ mod tray {
         pub quit: MenuId,
         /// メニューの項目 → 開く画面の URL（パス）
         pub screens: Vec<(MenuId, String)>,
+        /// メニューの項目 → 起こす出来事の名前
+        pub events: Vec<(MenuId, String)>,
+        /// 左クリックの動き：true なら窓の開閉、false ならメニューを出す
+        pub toggle: bool,
     }
 
     /// 最初の画面の色（accent）の丸いアイコン。画像の部品は使わず、色から作る
@@ -73,18 +80,33 @@ mod tray {
         let menu = Menu::new();
         let open = MenuItem::new("開く", true, None);
         menu.append(&open).map_err(|e| e.to_string())?;
-        let mut screens = Vec::new();
+        let (mut screens, mut events) = (Vec::new(), Vec::new());
+        let mut sep = false;
         for m in def["menu"].as_array().into_iter().flatten() {
+            if m["kind"] == "separator" {
+                menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+                continue;
+            }
+            // 「開く」と宣言した項目のあいだに区切りを入れる（最初の宣言項目の前）
+            if !sep {
+                menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+                sep = true;
+            }
             let item = MenuItem::new(m["label"].as_str().unwrap_or(""), true, None);
             menu.append(&item).map_err(|e| e.to_string())?;
-            screens.push((item.id().clone(), m["url"].as_str().unwrap_or("/").to_string()));
+            if m["kind"] == "event" {
+                events.push((item.id().clone(), m["event"].as_str().unwrap_or("").to_string()));
+            } else {
+                screens.push((item.id().clone(), m["url"].as_str().unwrap_or("/").to_string()));
+            }
         }
         menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
         let quit = MenuItem::new("終了", true, None);
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = icon(accent).ok_or("アイコンを作れません")?;
         let tooltip = def["tooltip"].as_str().unwrap_or("");
-        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip(tooltip).with_icon(icon).build().map_err(|e| e.to_string())?;
+        let toggle = def["click"] != "menu";
+        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_menu_on_left_click(!toggle).with_tooltip(tooltip).with_icon(icon).build().map_err(|e| e.to_string())?;
         let p1 = proxy.clone();
         TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
@@ -94,8 +116,58 @@ mod tray {
         tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
             let _ = proxy.send_event(super::UserEvent::Menu(e.id));
         }));
-        Ok(Tray { _icon: tray, open: open.id().clone(), quit: quit.id().clone(), screens })
+        Ok(Tray { _icon: tray, open: open.id().clone(), quit: quit.id().clone(), screens, events, toggle })
     }
+}
+
+/// Windows でターミナルの窓を出すか（--console）、出さずにログをファイルへ流すか。他の OS では何もしない（端末から起動すればそこに出る）
+#[cfg(windows)]
+mod console {
+    use std::os::windows::io::AsRawHandle;
+    extern "system" {
+        fn AttachConsole(pid: u32) -> i32;
+        fn AllocConsole() -> i32;
+        fn SetStdHandle(which: u32, h: *mut core::ffi::c_void) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+
+    extern "system" {
+        fn MessageBoxW(hwnd: *mut core::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    }
+
+    pub fn message_box(text: &str) {
+        let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        unsafe {
+            MessageBoxW(core::ptr::null_mut(), w(text).as_ptr(), w("起動できません").as_ptr(), 0x10);
+        }
+    }
+
+    /// show：ターミナルの窓を使う（ターミナルから起動されていればそこへ、なければ新しい窓を開く）。
+    /// そうでなければ、標準エラーを log_file へ追記する（開けなければ捨てる）
+    pub fn setup(show: bool, log_file: &std::path::Path) {
+        unsafe {
+            if show {
+                if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                    AllocConsole();
+                }
+            } else if let Some(dir) = log_file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(log_file) {
+                    SetStdHandle(STD_ERROR_HANDLE, f.as_raw_handle() as *mut _);
+                    std::mem::forget(f); // 閉じない（プロセスの終わりまで標準エラーとして使う）
+                }
+            }
+        }
+    }
+}
+
+/// 起動できないときの終わり方。Windows はターミナルの窓がないので、メッセージの窓で知らせる
+fn fatal(msg: &str) -> ! {
+    eprintln!("{}", msg);
+    #[cfg(windows)]
+    console::message_box(&format!("{}\n\n{}", geas_app::APP_TITLE, msg));
+    std::process::exit(1)
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -103,8 +175,8 @@ fn arg(name: &str) -> Option<String> {
     a.iter().position(|x| x == name).and_then(|i| a.get(i + 1).cloned())
 }
 
-/// 利用者のデータ用フォルダ。環境変数だけで決める（外部の部品を足さない）
-fn data_dir() -> PathBuf {
+/// 既定のデータ用フォルダ（data_folder の宣言がないとき）。環境変数だけで決める（外部の部品を足さない）
+fn default_data_dir() -> PathBuf {
     let home = || std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(home)
@@ -116,6 +188,84 @@ fn data_dir() -> PathBuf {
     // フォルダ名に使えない文字は _ にする
     let name: String = geas_app::APP_TITLE.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
     base.join(name)
+}
+
+/// 環境変数を読む。未設定か空なら、エラー（黙って別の場所に逃げない）
+fn env_value(name: &str) -> Result<String, String> {
+    match std::env::var(name) {
+        Ok(v) if !v.is_empty() => Ok(v),
+        _ => Err(format!("環境変数 {} が設定されていません（data_folder で使っています）", name)),
+    }
+}
+
+/// Windows のパス：%名前% を環境変数の値に置き換える
+fn expand_windows(path: &str) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = path;
+    while let Some(a) = rest.find('%') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        let b = after.find('%').ok_or_else(|| format!("data_folder の % が閉じていません: {}", path))?;
+        out.push_str(&env_value(&after[..b])?);
+        rest = &after[b + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// mac・Linux のパス：先頭の ~、$名前、${名前} を置き換える
+fn expand_unix(path: &str) -> Result<String, String> {
+    let mut s = path.to_string();
+    if s == "~" || s.starts_with("~/") {
+        s = format!("{}{}", env_value("HOME")?, &s[1..]);
+    }
+    let mut out = String::new();
+    let cs: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i] == '$' {
+            let (name, next) = if cs.get(i + 1) == Some(&'{') {
+                let end = cs[i + 2..].iter().position(|c| *c == '}').ok_or_else(|| format!("data_folder の ${{ が閉じていません: {}", path))?;
+                (cs[i + 2..i + 2 + end].iter().collect::<String>(), i + 3 + end)
+            } else {
+                let mut k = i + 1;
+                while k < cs.len() && (cs[k].is_ascii_alphanumeric() || cs[k] == '_') {
+                    k += 1;
+                }
+                (cs[i + 1..k].iter().collect::<String>(), k)
+            };
+            out.push_str(&env_value(&name)?);
+            i = next;
+        } else {
+            out.push(cs[i]);
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+/// 利用者のデータ用フォルダ。data_folder の宣言があれば、この OS の行（なければ OS なしの相対パス。exe のあるフォルダが起点）を展開し、
+/// 作って、書き込めるかを確かめる。環境変数が未設定・書けないときは、別の場所に逃げず、エラー
+fn data_dir() -> Result<PathBuf, String> {
+    let defs: serde_json::Value = serde_json::from_str(geas_app::host::DEFS_JSON).map_err(|e| e.to_string())?;
+    let df = &defs["data_folder"];
+    if !df.is_object() {
+        return Ok(default_data_dir());
+    }
+    let os = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let dir = if let Some(p) = df[os].as_str() {
+        PathBuf::from(if cfg!(windows) { expand_windows(p)? } else { expand_unix(p)? })
+    } else if let Some(rel) = df["relative"].as_str() {
+        let exe = std::env::current_exe().map_err(|e| format!("exe の場所を取れません: {}", e))?;
+        exe.parent().ok_or("exe のあるフォルダを取れません")?.join(rel)
+    } else {
+        return Err(format!("data_folder に、この OS（{}）の行も、OS なしの相対パスの行もありません（組むときに --target を指定してください）", os));
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("データ用フォルダ {} を作れません: {}", dir.display(), e))?;
+    let probe = dir.join(format!(".geas_write_test_{}", std::process::id()));
+    std::fs::write(&probe, b"").map_err(|e| format!("データ用フォルダ {} に書き込めません: {}", dir.display(), e))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(dir)
 }
 
 /// この窓の画面の URL か。スキームとホストが、画面を配っているもの（geas://localhost、Windows は http://geas.localhost）と
@@ -171,7 +321,12 @@ fn call(msg: &str, engine: &std::sync::Mutex<geas_server::engine::Engine>, opts:
 }
 
 fn main() {
-    let dir = data_dir();
+    let dir = match data_dir() {
+        Ok(d) => d,
+        Err(e) => fatal(&e),
+    };
+    #[cfg(windows)]
+    console::setup(std::env::args().any(|a| a == "--console" || a == "--selftest"), &dir.join("log.txt"));
     let db_path = arg("--db").unwrap_or_else(|| {
         std::fs::create_dir_all(&dir).expect("データ用のフォルダを作れません");
         dir.join("app.sqlite").to_string_lossy().into_owned()
@@ -302,10 +457,13 @@ fn main() {
             }
             #[cfg(feature = "resident")]
             Event::UserEvent(UserEvent::TrayClick) => {
-                let shown = window.is_visible();
-                window.set_visible(!shown);
-                if !shown {
-                    window.set_focus();
+                // 左クリックでメニューを出す宣言（click menu）のときは、窓を開閉しない
+                if tray_state.as_ref().map_or(false, |t| t.toggle) {
+                    let shown = window.is_visible();
+                    window.set_visible(!shown);
+                    if !shown {
+                        window.set_focus();
+                    }
                 }
             }
             #[cfg(feature = "resident")]
@@ -321,6 +479,13 @@ fn main() {
                         let _ = webview.load_url(&format!("{}{}", base, url));
                         window.set_visible(true);
                         window.set_focus();
+                    } else if let Some((_, name)) = t.events.iter().find(|(m, _)| *m == id) {
+                        // 出来事を、窓の外（トレイ）から起こす。窓は出さない。結果は標準エラーに 1 行
+                        let r = geas_server::engine::lock(&engine).event(name, &serde_json::json!({}));
+                        match r {
+                            Ok(v) => eprintln!("{}", serde_json::json!({ "log": "geas.resident", "event": name, "runs": v["runs"].as_array().map_or(0, |a| a.len()) })),
+                            Err(e) => eprintln!("{}", serde_json::json!({ "log": "geas.resident", "event": name, "error": e })),
+                        }
                     }
                 }
             }

@@ -30,7 +30,7 @@ def unit_label(u: str) -> str:
 
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
-RAW_OPS = ("len", "only", "text", "positions", "digit", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
+RAW_OPS = ("len", "only", "text", "positions", "digit", "os_path", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -305,6 +305,7 @@ class Checker:
         self.check_isolations()
         self.check_needs()
         self.check_resident()
+        self.check_data_folders()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -846,6 +847,63 @@ class Checker:
                 self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
             if e.http is not None:
                 self.check_http(e, reps)
+            if e.file is not None:
+                self.check_file(e, reps)
+
+    def check_file(self, e, reps):
+        """over file { … }（外部作用のファイル操作）：場所は path 型の引数が指す場所の下の、書いた相対パスだけ。結果（ok・exists・not_found・denied・failed）が、応答の結果の種類に結ばれる"""
+        import re
+        f, where = e.file, f"外部作用 {e.name} / over file"
+        params = dict(e.params)
+        if not f.op:
+            self.d(ERROR, "ファイル", where, 'write・overwrite（"{場所の引数}/ファイル名" from 内容の引数）、read・delete（"{場所の引数}/ファイル名"）のどれかの行が要ります')
+            return
+        t = params.get(f.dir)
+        if t is None:
+            self.d(ERROR, "ファイル", where, f"場所の引数「{f.dir}」は、外部作用の引数にありません")
+        elif not (t.kind == "文字列" and t.read and t.read.endswith("_os_path")):
+            self.d(ERROR, "ファイル", where, f"場所の引数「{f.dir}」は、実行時に入力されるパスの型（ltype 名前 = path）にしてください。OS の書式を確かめた値だけが、場所になれます")
+        segs = f.rest.split("/")
+        if any(s in ("", ".", "..") or not re.fullmatch(r"[^\\/:*?\"<>|\x00-\x1f]+", s) for s in segs) or len(f.rest) > 200:
+            self.d(ERROR, "ファイル", where, f"ファイル名「{f.rest}」は、/ 区切りの相対パスで書きます（空の区切り・. ・.. ・\\ ・ : * ? \" < > | と制御文字は使えません。200 文字まで）")
+        if f.op in ("write", "overwrite"):
+            s = params.get(f.src)
+            if s is None:
+                self.d(ERROR, "ファイル", where, f"{f.op} の内容「{f.src}」は、外部作用の引数にありません")
+            elif s.kind != "文字列":
+                self.d(ERROR, "ファイル", where, f"{f.op} の内容「{f.src}」は {s.kind} 型です（文字列だけ書けます）")
+            elif f.src == f.dir:
+                self.d(ERROR, "ファイル", where, "場所の引数と内容の引数は別にしてください")
+        if e.replies is None:
+            self.d(ERROR, "ファイル", where, "結果を結果の種類に結ぶので、外部作用に replies 応答名 が要ります")
+            return
+        rp = reps.get(e.replies)
+        if rp is None:
+            return
+        outcomes = {on: gives for on, gives in rp.outcomes} or {"Normal": [n for n, _ in rp.params]}
+        have = {n: ty for n, ty in rp.params}
+        for need in ("ok", "failed"):
+            if need not in f.rows:
+                self.d(ERROR, "ファイル", where, f"{need} → 種類 が要ります（" + ("成功のとき" if need == "ok" else "そのほかの失敗のとき（書いていない失敗は、これになる）") + "の結果の種類。決めずに黙って捨てない）")
+        for kind, (o, takes) in f.rows.items():
+            if kind == "exists" and f.op != "write":
+                self.d(ERROR, "ファイル", where, "exists（すでにある）は write のときだけ書けます")
+            if o not in outcomes:
+                self.d(ERROR, "ファイル", where, f"結果の種類「{o}」は、応答 {rp.name} にありません")
+                continue
+            for n, src in takes:
+                if kind != "ok":
+                    self.d(ERROR, "ファイル", where, f"take は、ok だけに書けます（{kind} → {o} take {n} from {src}）")
+                elif src not in ("content", "bytes") or (src == "content" and f.op != "read") or f.op == "delete":
+                    self.d(ERROR, "ファイル", where, f"take {n} from {src}：取り出せるのは、content（ファイルの中身。read のとき）と bytes（バイト数。write・overwrite・read のとき）です")
+                elif n not in outcomes[o]:
+                    self.d(ERROR, "ファイル", where, f"take「{n}」は、結果の種類「{o}」の gives にありません")
+                elif have.get(n) is None or have[n].kind != ("文字列" if src == "content" else "整数"):
+                    self.d(ERROR, "ファイル", where, f"take「{n}」は、{src} を入れるので、応答の中身は{'文字列' if src == 'content' else '整数'}型にしてください")
+            took = {n for n, _ in takes}
+            for g in outcomes[o]:
+                if g in have and g not in took:
+                    self.d(ERROR, "ファイル", where, f"結果の種類「{o}」は {g} を gives で持つので、`take {g} from content|bytes` で取り出してください（{kind} の結果の種類に中身が要らないなら、gives のない種類に結んでください）")
 
     HTTP_BODY_KINDS = ("ID", "文字列", "整数", "真偽")
 
@@ -1081,30 +1139,113 @@ class Checker:
                                        f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）", line))
 
     def check_resident(self):
-        """resident（常駐）：メニューが開く画面は、入口（entry か最初の画面）で、引数を持たないこと"""
+        """resident（常駐）：メニューが開く画面は入口（entry か最初の画面）で引数なし。起こす出来事は、入力なしで動くもの（each だけ）"""
         r = self.p.resident
         if r is None:
             return
         scr = {s.name: s for s in self.p.screens}
+        evs = {e.name: e for e in self.p.events}
         first = self.p.screens[0].name if self.p.screens else ""
         if not self.p.screens:
             self.d(ERROR, "常駐", "resident", "常駐の窓が開く画面（screen）がありません")
         if len(r.tooltip) > 64:
             self.d(ERROR, "常駐", "resident / tooltip", "tooltip は 64 文字までです（アイコンに載せる短い説明）")
-        labels = [m[0] for m in r.menu]
+        items = [m for m in r.menu if m[1] != "separator"]
+        labels = [m[0] for m in items]
         if len(set(labels)) != len(labels):
             self.d(ERROR, "常駐", "resident / menu", "menu のラベルが重なっています")
-        for label, name, line in r.menu:
+        if r.menu and (r.menu[0][1] == "separator" or r.menu[-1][1] == "separator"):
+            self.d(ERROR, "常駐", "resident / menu", "separator を、メニューの先頭や末尾には置けません（「開く」「終了」の前後にも、言語が区切りを入れます）")
+        if any(a[1] == b[1] == "separator" for a, b in zip(r.menu, r.menu[1:])):
+            self.d(ERROR, "常駐", "resident / menu", "separator が続いています")
+        for label, kind, target, line in items:
             where = f"resident / menu「{label}」"
             if not label.strip() or len(label) > 40:
                 self.d(ERROR, "常駐", where, "menu のラベルは 1〜40 文字で書きます", line)
-            s = scr.get(name)
-            if s is None:
-                self.d(ERROR, "常駐", where, f"画面「{name}」がありません", line)
-            elif not (s.entry or name == first) or s.params:
-                self.d(ERROR, "常駐", where, f"画面「{name}」は開けません（メニューが開けるのは、入口の画面（entry か最初の画面）で、引数を持たないものだけです）", line)
+            if kind == "screen":
+                s = scr.get(target)
+                if s is None:
+                    self.d(ERROR, "常駐", where, f"画面「{target}」がありません", line)
+                elif not (s.entry or target == first) or s.params:
+                    self.d(ERROR, "常駐", where, f"画面「{target}」は開けません（メニューが開けるのは、入口の画面（entry か最初の画面）で、引数を持たないものだけです）", line)
+            else:
+                e = evs.get(target)
+                if e is None:
+                    self.d(ERROR, "常駐", where, f"出来事「{target}」がありません（fire のあとには、event で宣言した名前を書きます）", line)
+                elif any(k != "各" for k, _, _ in e.steps):
+                    self.d(ERROR, "常駐", where, f"出来事「{target}」は、外から入力を受ける（external）ので、メニューからは起こせません（each だけの出来事を起こせます）", line)
         if any(l.strip() in ("終了", "開く") for l in labels):
             self.d(ERROR, "常駐", "resident / menu", "「開く」（窓を出す）と「終了」の項目は、言語が常に足します。書かないでください")
+
+    # 環境変数：その OS で、ふつう必ず設定されている名前。これ以外は、`needs env 名前 "理由"` で宣言する（あるかどうかは環境しか知らない）
+    SURE_ENV = {
+        "windows": {"APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "PROGRAMDATA", "PUBLIC", "HOMEDRIVE", "HOMEPATH", "SYSTEMDRIVE",
+                    "SYSTEMROOT", "WINDIR", "USERNAME", "COMPUTERNAME", "PROGRAMFILES", "ALLUSERSPROFILE"},
+        "macos": {"HOME", "USER", "TMPDIR"},
+        "linux": {"HOME", "USER"},
+    }
+
+    def check_data_folders(self):
+        """path（パスの値）と data_folder の検査。absolute の中の行は、その OS のパスの書き方の絶対パス。relative は、相対パス（exe のあるフォルダが起点）。
+        使う環境変数は、その OS で必ずある名前か、needs env で宣言した名前だけ。環境で実際にあるか・書けるかは、起動時に確かめる"""
+        import re
+        declared = {t.upper() for k, t, _, _, _ in self.p.needs if k == "env"}
+        flat = []
+        for pname, pkind, entries, pline in self.p.paths:
+            if pkind == "absolute" and not entries:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", f"path {pname}", "absolute の中に、OS の行がありません", pline))
+            seen = set()
+            for os_name, path, line in entries:
+                if os_name in seen:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", f"path {pname}", f"{os_name} の行が2つ以上あります", line))
+                seen.add(os_name)
+                flat.append((pname, os_name, path, line))
+        for pname, os_name, path, line in flat:
+            where = f"path {pname}" + (f" / {os_name}" if os_name else "")
+            if not path.strip() or "\n" in path or "\0" in path:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", where, "パスが空か、改行・NUL を含んでいます", line))
+                continue
+            win_var = re.findall(r"%([^%]*)%", path)
+            unix_var = re.findall(r"\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", path)
+            drive = re.match(r"^[A-Za-z]:[\\/]", path) is not None
+            if not os_name:
+                absolute = path[0] in "/\\~%$" or drive
+                if absolute or win_var or unix_var:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "relative のパスは、相対パス（exe のあるフォルダが起点）だけです。"
+                                           "絶対パスや環境変数は、`absolute { windows \"…\" … }` で、その OS の書き方で書きます", line))
+                elif "\\" in path or ".." in re.split(r"[/]", path):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "相対パスは `/` 区切りで書きます（`\\` と `..` は使えません。exe のあるフォルダの外へ出られないようにするため）", line))
+                continue
+            sure = self.SURE_ENV[os_name]
+            if os_name == "windows":
+                if re.search(r"\$\{|^~|^/(?!/)", path) or (unix_var and not win_var and re.search(r"^\$", path)):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は、Windows のパスの書き方（`%APPDATA%\\名前`、`C:\\…`）で書きます。`$名前`・`~`・`/…` は mac・Linux の書き方です", line))
+                    continue
+                if not (drive or path.startswith("\\\\") or re.match(r"^%[^%]+%", path)):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は絶対パス（`C:\\…`、`\\\\サーバー\\…`、先頭が `%名前%`）で書きます。相対パスは、relative で書きます", line))
+                    continue
+                names = win_var
+            else:
+                if win_var or drive or "\\" in path:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は、mac・Linux のパスの書き方（`$名前`、`${{名前}}`、先頭の `~`、`/…`、区切りは `/`）で書きます。"
+                                           "`%名前%`・`C:\\`・`\\` は Windows の書き方です", line))
+                    continue
+                if not (path.startswith("/") or path == "~" or path.startswith("~/") or path.startswith("$")):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は絶対パス（先頭が `/`、`~`、`$名前`）で書きます。相対パスは、relative で書きます", line))
+                    continue
+                if path.startswith("~") and path not in ("~",) and not path.startswith("~/"):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "`~` は、自分のホームだけです（`~名前` は使えません）", line))
+                    continue
+                names = [a or b for a, b in unix_var]
+            if os_name == "windows" and path.count("%") % 2:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", where, "% が閉じていません（`%名前%` の形で書きます）", line))
+            for nm in names:
+                key = nm.upper() if os_name == "windows" else nm
+                if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", nm):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"環境変数の名前「{nm}」が書けません（半角英数と _ だけ）", line))
+                elif key not in sure and key.upper() not in declared:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"環境変数 {nm} は、{os_name} で必ず設定されているとは限りません。"
+                                           f'`needs env {nm} "理由"` で、アプリが要求することとして宣言してください（未設定のときは、起動時にエラーで止まります）', line))
 
     def check_needs(self):
         """needs（アプリが環境に要求すること）の検査。環境の実際は書かないので、ここで見るのは書き方と、導出した保証との食い違いだけ"""
@@ -1124,6 +1265,13 @@ class Checker:
                 if target in seen:
                     self.diags.append(Diag(ERROR, "環境", where, f"シークレット {target} の needs が2つ以上あります", line))
                 seen.add(target)
+            elif kind == "env":
+                import re as _re
+                if not _re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", target):
+                    self.diags.append(Diag(ERROR, "環境", where, "環境変数の名前は、半角英数と _ で書きます", line))
+                if target.upper() in seen:
+                    self.diags.append(Diag(ERROR, "環境", where, f"環境変数 {target} の needs が2つ以上あります", line))
+                seen.add(target.upper())
             else:
                 if kind in one:
                     self.diags.append(Diag(ERROR, "環境", where, f"needs {kind} は1つだけ書けます", line))
@@ -2161,8 +2309,8 @@ class ProcChecker:
 
     def raw_op(self, e: Call, env) -> str:
         """raw の操作：len(r)＝文字数、only(r, "文字種")＝文字種だけか、text(r)＝文字列として取り出す"""
-        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2, "to_raw": 1, "raw_cat": 2}[e.n]
-        if e.n in ("only", "text", "positions", "digit") and not getattr(self, "raw_convert", False):
+        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2, "os_path": 1, "to_raw": 1, "raw_cat": 2}[e.n]
+        if e.n in ("only", "text", "positions", "digit", "os_path") and not getattr(self, "raw_convert", False):
             self.d(ERROR, "型", f"{e.n}( ) は、raw から変換する convert の中でだけ使えます（処理の中で raw に使えるのは len・to_raw・raw_cat です）")
             return "?"
         if len(e.args) != n:

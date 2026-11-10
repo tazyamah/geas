@@ -3,9 +3,11 @@
 pub mod app;
 pub mod db;
 pub mod engine;
+pub mod fileio;
 pub mod http;
 pub mod mock;
 pub mod net;
+pub mod ospath;
 
 use std::sync::{Arc, Mutex};
 
@@ -43,8 +45,8 @@ pub fn warn_secret_perms(path: &std::path::Path) {
     let _ = path;
 }
 
-/// 時間の経過（模擬の返事・期限）を進め、宣言した実通信（over http）を送るスレッドを起こす。
-/// 通信は 1 件ごとに別のスレッドで送る（遅い相手が、期限の発火や他の処理を止めない）。送るのはコミットのあとで、返事は次の tick が届ける
+/// 時間の経過（模擬の返事・期限）を進め、宣言した実通信（over http）・ファイル操作（over file）を行うスレッドを起こす。
+/// 通信とファイル操作は 1 件ごとに別のスレッドで送る（遅い相手が、期限の発火や他の処理を止めない）。送るのはコミットのあとで、返事は次の tick が届ける
 pub fn spawn_ticker(engine: Arc<Mutex<engine::Engine>>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -60,11 +62,17 @@ pub fn spawn_ticker(engine: Arc<Mutex<engine::Engine>>) {
             }
             en.take_outbound()
         };
-        for (o, req) in sends {
+        for (o, send) in sends {
             let engine = engine.clone();
-            std::thread::spawn(move || {
-                let r = net::send(&req);
-                engine::lock(&engine).finish_outbound(&o, r);
+            std::thread::spawn(move || match send {
+                engine::Send::Http(req) => {
+                    let r = net::send(&req);
+                    engine::lock(&engine).finish_outbound(&o, r);
+                }
+                engine::Send::File(op) => {
+                    let d = fileio::run(&op);
+                    engine::lock(&engine).finish_file(&o, d);
+                }
             });
         }
     });
