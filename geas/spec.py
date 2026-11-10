@@ -160,7 +160,8 @@ def build_raw(ck: Checker) -> dict:
     spec["通信"] = [(e.name, f"{e.http.method} {e.http.url}", e.http.bearer or "なし", "、".join(k if k == n else f"{k}←{n}" for k, n in e.http.body) or "なし",
                   " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" for lo, hi, o, _ in e.http.statuses) + (f" ／ その他 → {e.http.other[0]}" if e.http.other else ""))
                  for e in p.effects if e.http]
-    spec["データ用フォルダ"] = [(f"データ用フォルダ（{os_name or '相対パス：exe のあるフォルダが起点'}）", path) for os_name, path, _ in p.data_folders]
+    spec["データ用フォルダ"] = ([("データ用フォルダ", f"パス {p.data_folder[0]}")] if p.data_folder else []) + [
+        (f"パス {n}（{os_name or '相対：exe のあるフォルダが起点'}）", path) for n, _, es, _ in p.paths for os_name, path, _ in es]
     r = p.resident
     spec["常駐"] = [] if r is None else [
         ("アイコンの説明", r.tooltip or "アプリ名"), ("始めかた", "窓を開いて始める" if r.start == "shown" else "アイコンだけで始める（窓は隠れている）"),

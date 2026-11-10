@@ -340,7 +340,7 @@ def main(argv=None) -> int:
     r.add_argument("code", help=".geas ファイル")
     r.add_argument("-o", required=True, help="crate を書き出すフォルダ")
     r.add_argument("--standalone", action="store_true", help="窓つき exe（geas_window の crate。画面と処理を 1 つの実行ファイルにし、通信路を使わない）も、生成物の window/ に置く（--host --runtime と一緒に）")
-    r.add_argument("--target", choices=("windows", "macos", "linux"), help="窓つき exe を組む OS（--standalone のとき。省けば、いま動いている OS）。data_folder を宣言したアプリは、この OS の行か、OS なしの相対パスの行が要る")
+    r.add_argument("--target", choices=("windows", "macos", "linux"), help="窓つき exe を組む OS（--standalone のとき。省けば、いま動いている OS）。path 名前 = absolute { … } を宣言したアプリは、すべてにこの OS の行が要る")
     r.add_argument("--plan", help="具体例の実行用 bin も生成する（--host --runtime と一緒なら、URL の具体例の HTTP テストも）")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
     r.add_argument("--runtime", action="store_true", help="サーバーの実行部（geas_server の crate）も、生成物の server/ に置く（--host と一緒に）")
@@ -460,10 +460,12 @@ def main(argv=None) -> int:
         print(counts_line(ck), file=sys.stderr)
         print("検査にエラーか問いが残っているので、続けません（問いに答えて、コードか計画書に反映してください）。", file=sys.stderr)
         return 1
-    if a.cmd == "rust" and a.standalone and ck.p.data_folders:
+    if a.cmd == "rust" and a.standalone and ck.p.paths:
+        # 組む OS では、すべての絶対パス（absolute）が、その OS の行を持つこと
         target = a.target or {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
-        if not any(o in (target, "") for o, _, _ in ck.p.data_folders):
-            print(f'data_folder に、組む OS（{target}）の行も、OS なしの相対パスの行もありません。`data_folder on {target} "…"` を書くか、--target で組む OS を指定してください', file=sys.stderr)
+        lack = [n for n, k, es, _ in ck.p.paths if k == "absolute" and not any(o == target for o, _, _ in es)]
+        if lack:
+            print(f'パス {"・".join(lack)} に、組む OS（{target}）の行がありません。`{target} "…"` を書くか、--target で組む OS を指定してください', file=sys.stderr)
             return 1
     lib = generate(ck)
     if a.cmd == "rust":

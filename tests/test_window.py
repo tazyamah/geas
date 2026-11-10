@@ -130,7 +130,7 @@ def test_常駐のアプリは_同じ保存先で1つだけ起動できる(built
 def test_data_folder_は_環境変数を展開して作り_未設定なら止まる(built, tmp_path_factory, tmp_path):
     import os
     src = SRC.read_text(encoding="utf-8")
-    src += '\nneeds env GEAS_TEST_DATA "試験で置き場を渡す"\ndata_folder on linux "$GEAS_TEST_DATA/app"\n'
+    src += '\nneeds env GEAS_TEST_DATA "試験で置き場を渡す"\npath D = absolute {\n  linux "$GEAS_TEST_DATA/app"\n}\ndata_folder D\n'
     code = tmp_path / "df.geas"
     code.write_text(src, encoding="utf-8")
     out = tmp_path_factory.mktemp("window_df")

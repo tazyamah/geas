@@ -221,8 +221,16 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
-            elif kw == "data_folder":  # data_folder [on windows|macos|linux] "パス"：アプリのデータ用フォルダ（DB・ログ・シークレット）
-                p.data_folders.append(self.data_folder_decl(line))
+            elif kw == "path":  # path 名前 = absolute { windows "…" macos "…" linux "…" } ／ path 名前 = relative "…"：パスの値
+                pd = self.path_decl(line)
+                if any(x[0] == pd[0] for x in p.paths):
+                    raise ParseError(f"パス「{pd[0]}」が2つ以上あります", line)
+                p.paths.append(pd)
+            elif kw == "data_folder":  # data_folder パスの名前：アプリのデータ用フォルダ（DB・ログ・シークレット）
+                if p.data_folder is not None:
+                    raise ParseError("data_folder は 1 つだけ書けます", line)
+                p.data_folder = (self.name(), line)
+                self.end_line()
             elif kw == "resident":  # resident { tooltip "…" ／ start hidden ／ menu "ラベル" → 画面 }：常駐（タスクトレイ・メニューバー）
                 if p.resident is not None:
                     raise ParseError("resident は 1 つだけ書けます", line)
@@ -268,20 +276,42 @@ class Parser:
             p.states.append(State("Currency", initial="JPY", middle=["USD", "EUR"], plain=True))
         self.apply_stores(p, stores)
         self.add_sync_state(p)
+        if p.data_folder is not None:
+            name, ln = p.data_folder
+            hit = next((x for x in p.paths if x[0] == name), None)
+            if hit is None:
+                raise ParseError(f"data_folder の「{name}」というパス（path）がありません" + (f"。ある物：{'・'.join(x[0] for x in p.paths)}" if p.paths else ""), ln)
+            p.data_folders = hit[2]
         return p
 
-    def data_folder_decl(self, line):
-        """data_folder の 1 行。(OS, パス, 行)。OS を付けない行は相対パス用（exe のあるフォルダが起点）"""
-        os_name = ""
-        if self.accept("on"):
-            os_name = self.name()
-            if os_name not in ("windows", "macos", "linux"):
-                raise ParseError("on のあとには windows・macos・linux のどれかを書きます", line)
-        t = self.next()
-        if t.kind != "STR" or not t.val.strip():
-            raise ParseError('data_folder のあとには、パスを "…" で書きます（例：data_folder on windows "%APPDATA%\\アプリ名"）', line)
-        self.end_line()
-        return os_name, t.val, line
+    def path_decl(self, line):
+        """path 名前 = absolute { windows "…" … } ／ relative "…"。(名前, 種類, [(OS, パス, 行)], 行)。相対パスの OS は空（OS を問わない。exe のあるフォルダが起点）"""
+        name = self.name()
+        self.expect("=")
+        kind = self.name()
+        entries = []
+        if kind == "absolute":
+            self.block_open()
+            while not self.accept("}"):
+                ln = self.peek().line
+                os_name = self.name()
+                if os_name not in ("windows", "macos", "linux"):
+                    raise self.err("absolute の中は、windows・macos・linux のどれかに続けて、その OS の書き方のパスを書きます（例：windows \"%APPDATA%\\\\アプリ名\"）")
+                t = self.next()
+                if t.kind != "STR" or not t.val.strip():
+                    raise self.err(f'{os_name} のあとには、パスを "…" で書きます')
+                entries.append((os_name, t.val, ln))
+                self.end_line()
+            self.end_line()
+        elif kind == "relative":
+            t = self.next()
+            if t.kind != "STR" or not t.val.strip():
+                raise self.err('relative のあとには、パスを "…" で書きます（exe のあるフォルダが起点）')
+            entries.append(("", t.val, line))
+            self.end_line()
+        else:
+            raise ParseError('path は `path 名前 = absolute { windows "…" macos "…" linux "…" }` か `path 名前 = relative "…"` と書きます', line)
+        return name, kind, entries, line
 
     def needs_decl(self, line):
         """needs の 1 行。(種類, 対象, 値, 理由, 行)。環境の実際は書かず、アプリが成り立つ条件だけを書く。理由は必須（仕様書の「動かす前提」に出る）"""

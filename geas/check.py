@@ -1129,16 +1129,22 @@ class Checker:
     }
 
     def check_data_folders(self):
-        """data_folder（データ用フォルダ）の検査。OS 付きの行は、その OS のパスの書き方の絶対パス。OS なしの行は、相対パス（exe のあるフォルダが起点）。
+        """path（パスの値）と data_folder の検査。absolute の中の行は、その OS のパスの書き方の絶対パス。relative は、相対パス（exe のあるフォルダが起点）。
         使う環境変数は、その OS で必ずある名前か、needs env で宣言した名前だけ。環境で実際にあるか・書けるかは、起動時に確かめる"""
         import re
-        seen = set()
         declared = {t.upper() for k, t, _, _, _ in self.p.needs if k == "env"}
-        for os_name, path, line in self.p.data_folders:
-            where = f"data_folder{' on ' + os_name if os_name else ''}"
-            if os_name in seen:
-                self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"data_folder{' on ' + os_name if os_name else '（OS なし）'} が2つ以上あります", line))
-            seen.add(os_name)
+        flat = []
+        for pname, pkind, entries, pline in self.p.paths:
+            if pkind == "absolute" and not entries:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", f"path {pname}", "absolute の中に、OS の行がありません", pline))
+            seen = set()
+            for os_name, path, line in entries:
+                if os_name in seen:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", f"path {pname}", f"{os_name} の行が2つ以上あります", line))
+                seen.add(os_name)
+                flat.append((pname, os_name, path, line))
+        for pname, os_name, path, line in flat:
+            where = f"path {pname}" + (f" / {os_name}" if os_name else "")
             if not path.strip() or "\n" in path or "\0" in path:
                 self.diags.append(Diag(ERROR, "データ用フォルダ", where, "パスが空か、改行・NUL を含んでいます", line))
                 continue
@@ -1148,8 +1154,8 @@ class Checker:
             if not os_name:
                 absolute = path[0] in "/\\~%$" or drive
                 if absolute or win_var or unix_var:
-                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "OS を付けない data_folder は、相対パス（exe のあるフォルダが起点）だけです。"
-                                           "絶対パスや環境変数は、`data_folder on windows|macos|linux \"…\"` で、その OS の書き方で書きます", line))
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "relative のパスは、相対パス（exe のあるフォルダが起点）だけです。"
+                                           "絶対パスや環境変数は、`absolute { windows \"…\" … }` で、その OS の書き方で書きます", line))
                 elif "\\" in path or ".." in re.split(r"[/]", path):
                     self.diags.append(Diag(ERROR, "データ用フォルダ", where, "相対パスは `/` 区切りで書きます（`\\` と `..` は使えません。exe のあるフォルダの外へ出られないようにするため）", line))
                 continue
@@ -1159,7 +1165,7 @@ class Checker:
                     self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は、Windows のパスの書き方（`%APPDATA%\\名前`、`C:\\…`）で書きます。`$名前`・`~`・`/…` は mac・Linux の書き方です", line))
                     continue
                 if not (drive or path.startswith("\\\\") or re.match(r"^%[^%]+%", path)):
-                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は絶対パス（`C:\\…`、`\\\\サーバー\\…`、先頭が `%名前%`）で書きます。相対パスは、OS なしの行に書きます", line))
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は絶対パス（`C:\\…`、`\\\\サーバー\\…`、先頭が `%名前%`）で書きます。相対パスは、relative で書きます", line))
                     continue
                 names = win_var
             else:
@@ -1168,7 +1174,7 @@ class Checker:
                                            "`%名前%`・`C:\\`・`\\` は Windows の書き方です", line))
                     continue
                 if not (path.startswith("/") or path == "~" or path.startswith("~/") or path.startswith("$")):
-                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は絶対パス（先頭が `/`、`~`、`$名前`）で書きます。相対パスは、OS なしの行に書きます", line))
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は絶対パス（先頭が `/`、`~`、`$名前`）で書きます。相対パスは、relative で書きます", line))
                     continue
                 if path.startswith("~") and path not in ("~",) and not path.startswith("~/"):
                     self.diags.append(Diag(ERROR, "データ用フォルダ", where, "`~` は、自分のホームだけです（`~名前` は使えません）", line))

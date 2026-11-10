@@ -28,7 +28,7 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 
 ## 保存先
 
-`.geas` の `data_folder`（OS ごとのパスの書き方。[language-reference.md](language-reference.md) の「データ用フォルダ」）で、DB・ログ・シークレットを置くフォルダを宣言できます。
+`.geas` の `path`（OS ごとのパスの書き方を持つ値）と `data_folder`（[language-reference.md](language-reference.md) の「パスの値とデータ用フォルダ」）で、DB・ログ・シークレットを置くフォルダを宣言できます。
 
 （Windows のログ：`log.txt` が同じフォルダに出ます。`--console` で窓に出せます。）
 
