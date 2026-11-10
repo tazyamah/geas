@@ -17,6 +17,8 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 - Linux では、窓とその補助プロセスが IP のソケット（待ち受けも接続も）を 1 つも持たないことを、`tests/test_window.py` で確かめています。
 - 外へ出る通信は、`effect` に `over http { … }` を宣言した外部作用だけが、宣言した先に Rust 側から出します（リダイレクトには従いません。書き方は [language-reference.md](language-reference.md) の「外とのやりとり」）。宣言がないアプリには、通信の部品（ureq）が依存にも実行ファイルにも入りません。通信しうる先は、仕様書とレビュー画面の「外へ出る通信」の表と、「動かす前提」の到達性の行に出ます。見本は `tests/fixtures/solo_tweet`（X への投稿。試験は手元の模擬の X）。
 
+- ファイルへの操作は、`effect` に `over file` を宣言した外部作用だけが、宣言した場所・ファイルに、Rust 側から行います（[language-reference.md](language-reference.md) の「ファイル操作」）。宣言のない外部作用は、ファイルに触りません（ファイルを扱う部品は std だけで、依存は増えません）。
+
 ## 常駐
 
 `resident { … }` を宣言すると、タスクトレイ（macOS はメニューバー）に居続けます。窓を閉じても終了せず隠し、アイコンのクリックか、右クリックのメニューの「開く」で出します。右クリックのメニューには、画面を開く項目、出来事を起こす項目、区切り線を宣言できます。書き方は [language-reference.md](language-reference.md) の「常駐（resident）」。

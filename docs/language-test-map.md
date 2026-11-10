@@ -59,6 +59,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 6. 期限・返事の処理の切り離し（1 件の失敗でほかを止めない） | ◎ | `test_runtime.py` の「期限の待ちが1件失敗し続けても…」 |
 | 11. MCP（AI から使う口。ツール定義・REST への中継） | ◎／○ | `test_screens.py` の「MCP のツール定義は URL の定義から機械的に作られ…」「MCP の橋渡しはツールの呼び出しを REST に中継する」（中継先は模擬のサーバー）。実サーバーに中継して動かす確認は無い（✕） |
 | 6. 外部作用の実通信（`over http`：宣言した先だけ・認証・状態の結び方・リダイレクト不従・シークレット無しは送らない） | ◎ | `test_http_effect.py`（手元の模擬の X に向けて、つぶやきの見本を動かす）、`test_http_check.py`（検査） |
+| 6. 外部作用のファイル操作（`over file`：write・overwrite・read・delete。宣言した場所・ファイルだけ・すでにあれば書かない・無い場所は失敗として結ぶ・OS の書式でない場所は入力不正） | ○ | `test_file_effect.py`（実際のフォルダに、ノートの見本を動かす。write・既存・無い場所・不正な場所。overwrite・delete・read は fileio の単体試験で、サーバーを通す試験は write だけ）、`test_file_check.py`（検査）、`test_user_path.py`（実行時入力のパス） |
 | 窓つき exe（画面から処理への呼び出しは IPC、IP のソケットを持たない） | ◎ | `test_window.py`（xvfb と WebKitGTK が無い環境ではスキップ） |
 | 常駐（`resident`：検査・仕様書、トレイのアイコン作成、重複起動の断り） | ◎／○ | `test_resident_check.py`、`test_window.py`。実トレイのクリック・隠れる動きは未確認（○） |
 | サーバーの再起動で、待ち・時計の先・ID の採番が続く | ◎ | `test_runtime.py` の「再起動しても…」 |

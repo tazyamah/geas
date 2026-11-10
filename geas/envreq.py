@@ -97,6 +97,12 @@ def items(p) -> list[dict]:
         if kind == "secret":
             out.append(_item(f"secret.{target}", "機密", f"シークレット {target} が環境にあり、plan に平文の値が書かれていない",
                              f"人が書いた（{why}）", ["plan", "実環境"], ["シークレットの有無", "plan の値"], why=why, cond={"secret": target}))
+    # ---- ファイル操作 ----
+    for e in p.effects:
+        if e.file:
+            verb = {"write": "新規に書ける", "overwrite": "書ける", "read": "読める", "delete": "消せる"}[e.file.op]
+            out.append(_item(f"file.{e.name.replace(' ', '')}", "到達性", f"外部作用 {e.name} が触る場所（実行時に入力されるパス（{e.file.dir}）の下の {e.file.rest}）を、アプリの利用者の権限で{verb}",
+                             f"導出（外部作用 {e.name} の over file）", ["実環境"], ["フォルダの実体", "権限"], cond={"file_access": e.file.op}))
     # ---- 環境変数・データ用フォルダ ----
     for kind, target, _, why, _ in needs:
         if kind == "env":

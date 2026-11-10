@@ -52,6 +52,7 @@ TABLE = {
     "外部作用": ("§6 外とのやりとり", "外への作用の宣言（trust・冪等）を足す"),
     "通信": ("§6 外とのやりとり（effect の over http）", "通信先を https://ホスト名/パス にし、認証は needs secret で宣言し、返事の状態をすべて結果の種類に結ぶ（status other が必須）"),
     "データ用フォルダ": ("§9 データ用フォルダ（data_folder）", "absolute の中の行は、その OS のパスの書き方の絶対パス。relative は相対パス（exe のあるフォルダが起点）。必ずあるとは限らない環境変数は needs env で宣言する"),
+    "ファイル": ("§6 外部作用の「ファイル操作（over file）」", "場所は path 型の引数の下の相対パス 1 つ。操作は write（新規だけ）・overwrite・read・delete のどれか 1 つ。ok と failed は必須。結果が gives を持つなら take で取り出す"),
     "常駐": ("§9 画面（screen）の「常駐（resident）」", "メニューは、入口の画面（引数なし）を開く項目だけ。tooltip は 64 文字まで。終了の項目は言語が足す"),
     "環境": ("§4 処理（deed）の「動かす前提 needs」", "needs の書き方（secret・exposure・instances と理由）を直す。環境の実際は書かない"),
 }

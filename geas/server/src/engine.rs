@@ -17,6 +17,12 @@ pub struct Outbound {
     pub routed: Option<(String, Value)>,
 }
 
+/// コミットのあとに行う外への操作 1 件：通信（over http）かファイル操作（over file）
+pub enum Send {
+    Http(crate::net::Request),
+    File(crate::fileio::FileOp),
+}
+
 pub struct Engine {
     pub db: Db,
     pub defs: Value,
@@ -282,7 +288,7 @@ impl Engine {
         let now = self.now();
         self.db.log_effect(now, &name, &args, &idem, target.as_deref())?;
         // 実通信（over http）を宣言した外部作用は、模擬ではなく待ち行列へ。コミットされたあとに worker が送る
-        if self.defs["effects"][&name]["http"].is_object() {
+        if self.defs["effects"][&name]["http"].is_object() || self.defs["effects"][&name]["file"].is_object() {
             let reply = self.defs["mock"]["effects"][&name]["reply"].as_str().unwrap_or("").to_string();
             self.outbox.push(Outbound { effect: name, args, reply, routed });
             return Ok(());
@@ -292,11 +298,17 @@ impl Engine {
     }
 
     /// 送る通信を取り出す（worker が、ロックの外で送る）。返すときは、通信に要る URL・シークレットも解決して渡す
-    pub fn take_outbound(&mut self) -> Vec<(Outbound, crate::net::Request)> {
+    pub fn take_outbound(&mut self) -> Vec<(Outbound, Send)> {
         let items = std::mem::take(&mut self.outbox);
         items
             .into_iter()
             .map(|o| {
+                let file = self.defs["effects"][&o.effect]["file"].clone();
+                if file.is_object() {
+                    let text = |k: &str| o.args.get(file[k].as_str().unwrap_or("")).and_then(|v| v.as_str()).map(String::from);
+                    let op = crate::fileio::FileOp { op: s(&file, "op"), dir: text("dir").unwrap_or_default(), rest: s(&file, "rest"), content: text("from") };
+                    return (o, Send::File(op));
+                }
                 let http = self.defs["effects"][&o.effect]["http"].clone();
                 let url = self.url_override.get(&o.effect).cloned().unwrap_or_else(|| s(&http, "url"));
                 let secret = http["bearer"].as_str().map(|n| self.secret(n));
@@ -310,7 +322,7 @@ impl Engine {
                     Value::Object(m)
                 });
                 let req = crate::net::Request { method: s(&http, "method"), url, bearer: secret, body: body.filter(|b| b.as_object().map_or(false, |m| !m.is_empty())) };
-                (o, req)
+                (o, Send::Http(req))
             })
             .collect()
     }
@@ -347,6 +359,34 @@ impl Engine {
                 }
             }
             Err(e) => eprintln!("{}", json!({ "log": "geas.effect", "effect": o.effect, "error": e })),
+        }
+    }
+
+    /// ファイル操作の結果を、結果の種類と中身にして、返事の行き先へ入れる（次の tick が届ける）。書いていない失敗は failed の行になる。
+    /// ログには、結果の種類だけを出す（パスやファイルの中身は載せない）
+    pub fn finish_file(&mut self, o: &Outbound, d: crate::fileio::Done) {
+        let now = self.now();
+        let file = self.defs["effects"][&o.effect]["file"].clone();
+        let row = if file["rows"][d.kind].is_object() { file["rows"][d.kind].clone() } else { file["rows"]["failed"].clone() };
+        let Some(outcome) = row["outcome"].as_str() else {
+            eprintln!("{}", json!({ "log": "geas.effect", "effect": o.effect, "error": "結果の種類が決まりません" }));
+            return;
+        };
+        let mut content = Map::new();
+        for (name, src) in row["take"].as_object().into_iter().flatten() {
+            match (src.as_str(), &d.content) {
+                (Some("content"), Some(t)) => {
+                    content.insert(name.clone(), Value::String(t.clone()));
+                }
+                (Some("bytes"), _) => {
+                    content.insert(name.clone(), json!(d.bytes as i64));
+                }
+                _ => {}
+            }
+        }
+        eprintln!("{}", json!({ "log": "geas.effect", "effect": o.effect, "file": file["op"], "result": d.kind, "outcome": outcome, "detail": d.detail }));
+        if let Some((t, targs)) = &o.routed {
+            self.mock.jobs.push(crate::mock::Job { due: now, effect: o.effect.clone(), trigger: t.clone(), trigger_args: targs.clone(), reply: o.reply.clone(), content: Value::Object(content) });
         }
     }
 

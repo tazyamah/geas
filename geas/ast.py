@@ -90,6 +90,17 @@ class HttpDecl:
 
 
 @dataclass
+class FileDecl:
+    """外部作用のファイル操作（over file { … }）。触れるのは、宣言した場所（path 型の引数が指す場所の下の、書いたファイル）だけ"""
+    op: str = ""  # write（新規に作る。すでにあれば exists）・overwrite（作るか置き換える）・read・delete（あるファイルを消す）
+    dir: str = ""  # 場所の引数の名前（path 型）
+    rest: str = ""  # 場所の下のファイルの相対パス（/ 区切り）
+    src: str = ""  # write のとき、書く内容の引数の名前（文字列）
+    rows: dict = field(default_factory=dict)  # 結果：ok・exists・not_found・denied・failed → (結果の種類, [(応答の中身の名前, 取り出すもの content|bytes)])
+    line: int = 0
+
+
+@dataclass
 class EffectDecl:
     name: str  # 決済.請求
     params: list[tuple[str, Type]]
@@ -99,6 +110,7 @@ class EffectDecl:
     joins: Optional[str] = None  # 返事が合流するトリガの名前。要求する処理が待たなくても、同じ並列の枝がそのトリガを待つ
     replies: Optional[str] = None  # この外部作用に返ってくる応答（reply）の名前。開発用の模擬が、その結果の種類（outcome）から返事を作る
     http: Optional[HttpDecl] = None  # 実通信（over http { … }）。書かなければ、実際には外へ出ない（模擬だけ）
+    file: Optional[FileDecl] = None  # ファイル操作（over file { … }）。http とは同時に書けない
 
 
 @dataclass

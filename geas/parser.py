@@ -2,6 +2,7 @@
 """構文解析（再帰下降）。文は1行1つ。ブロックは「{ で行が終わり、} だけの行で閉じる」。
 キーワードは英語。構文木の中身（型の種類や結果の行き先など）は、仕様書の言葉に合わせた日本語のまま持つ。"""
 import copy
+import re
 from pathlib import Path
 
 from .ast import *  # noqa: F401,F403
@@ -666,11 +667,15 @@ class Parser:
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
         failures, joins, replies, no_wait = [], None, None, None
-        http = None
+        http = file = None
         while self.peek().kind == "NAME" and self.peek().val in ("failures", "joins", "replies", "no_wait", "over"):  # 後ろの指定は、順不同
             kw = self.name()
-            if kw == "over":  # over http { … }：実通信（ブロックは行の最後に置く）
-                http = self.http_decl(self.peek().line)
+            if kw == "over":  # over http { … } ／ over file { … }：実通信・ファイル操作（ブロックは行の最後に置く）
+                if self.peek().kind == "NAME" and self.peek().val == "file":
+                    self.next()
+                    file = self.file_decl(self.peek().line)
+                else:
+                    http = self.http_decl(self.peek().line)
                 break
             if kw == "failures":
                 failures = self.comma_list(self.name)
@@ -683,9 +688,9 @@ class Parser:
                 if t.kind != "STR":
                     raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
                 no_wait = t.val
-        if http is None:
+        if http is None and file is None:
             self.end_line()
-        return EffectDecl(name, params, line, failures, no_wait, joins, replies, http)
+        return EffectDecl(name, params, line, failures, no_wait, joins, replies, http, file)
 
     def resident_decl(self, line) -> ResidentDecl:
         """resident { tooltip "説明" ／ start shown|hidden ／ click toggle|menu ／ menu "ラベル" → 画面名 ／ menu "ラベル" → fire 出来事名 ／ separator }"""
@@ -723,6 +728,47 @@ class Parser:
             self.end_line()
         self.end_line()
         return r
+
+    def file_decl(self, line) -> FileDecl:
+        """over file { write "{場所}/相対パス" from 内容の引数（新規に作る）／ overwrite … from …（作るか置き換える）／ read "{場所}/相対パス" ／ delete "{場所}/相対パス" ／ ok → 種類 [take 名前 from content|bytes] ／ exists・not_found・denied・failed → 種類 }"""
+        f = FileDecl(line=line)
+        self.block_open()
+        while not self.accept("}"):
+            ln = self.peek().line
+            kw = self.name()
+            if kw in ("write", "overwrite", "read", "delete"):
+                if f.op:
+                    raise ParseError("write・overwrite・read・delete は 1 つだけ書けます", ln)
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err(f'{kw} のあとには、場所を "{{引数}}/ファイル名" の形で書きます')
+                f.op = kw
+                m = re.fullmatch(r"\{([a-z][a-z0-9_]*)\}/(.+)", t.val)
+                if not m:
+                    raise ParseError(f'{kw} の場所「{t.val}」は、"{{引数}}/ファイル名" の形で書きます（引数は path 型。先頭の {{ }} が場所、あとは相対パス）', ln)
+                f.dir, f.rest = m.group(1), m.group(2)
+                if kw in ("write", "overwrite"):
+                    if not self.accept("from"):
+                        raise self.err(f"{kw} のあとには、from 内容の引数 が要ります")
+                    f.src = self.name()
+            elif kw in ("ok", "exists", "not_found", "denied", "failed"):
+                if kw in f.rows:
+                    raise ParseError(f"{kw} が 2 つあります", ln)
+                self.expect("→")
+                outcome = self.name()
+                takes = []
+                while self.accept("take"):
+                    n = self.name()
+                    if not self.accept("from"):
+                        raise self.err("take のあとには、take 名前 from content（ファイルの中身。read のとき）か take 名前 from bytes（バイト数）を書きます")
+                    takes.append((n, self.name()))
+                    self.accept(",")
+                f.rows[kw] = (outcome, takes)
+            else:
+                raise self.err(f"over file の中に「{kw}」は書けません（write・overwrite・read・delete・ok・exists・not_found・denied・failed）")
+            self.end_line()
+        self.end_line()
+        return f
 
     def http_decl(self, line) -> HttpDecl:
         """over http { METHOD "https://…" ／ bearer 外部.名前 ／ body 引数, … ／ status 201 → 種類 [take 中身 from "道すじ"] ／ status 400..499 → 種類 ／ status other → 種類 }"""

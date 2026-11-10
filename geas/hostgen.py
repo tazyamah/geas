@@ -267,6 +267,12 @@ def resident_def(ck, screens: dict):
     return {"tooltip": r.tooltip or screens["title"], "start": r.start, "click": r.click, "menu": menu}
 
 
+def file_def(e) -> dict:
+    """over file の定義：操作・場所の引数・相対パス・書く内容の引数・結果の種類（ok・exists・not_found・denied・failed）。実行時、worker が宣言した場所にだけ触る"""
+    f = e.file
+    return {"op": f.op, "dir": f.dir, "rest": f.rest, "from": f.src, "rows": {k: {"outcome": o, "take": {n: src for n, src in t}} for k, (o, t) in f.rows.items()}}
+
+
 def http_def(e) -> dict:
     """実通信の定義（over http）。サーバーは、ここに書いた先にだけ出る"""
     h = e.http
@@ -289,7 +295,7 @@ def definitions(ck: Checker) -> dict:
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
-        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {})} for e in p.effects},
+        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {}), **({"file": file_def(e)} if e.file else {})} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
         "rules": {f.slot: [{"when": [list(c) for c in conds], "value": val} for conds, val in f.rows] for f in p.rules},
         "mock": mock_def(ck),

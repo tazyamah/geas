@@ -162,6 +162,10 @@ def build_raw(ck: Checker) -> dict:
                  for e in p.effects if e.http]
     spec["データ用フォルダ"] = ([("データ用フォルダ", f"パス {p.data_folder[0]}")] if p.data_folder else []) + [
         (f"パス {n}（{os_name or '相対：exe のあるフォルダが起点'}）", path) for n, _, es, _ in p.paths for os_name, path, _ in es]
+    spec["ファイル"] = [(e.name, {"write": "新規に書く（すでにあれば書かない）", "overwrite": "書く（あれば置き換える）", "read": "読む", "delete": "消す"}[e.file.op],
+                      f"引数 {e.file.dir} の場所の下の {e.file.rest}",
+                      " ／ ".join(f"{k} → {o}" + "".join(f"（{n}←{s}）" for n, s in tk) for k, (o, tk) in e.file.rows.items()))
+                     for e in p.effects if e.file]
     r = p.resident
     spec["常駐"] = [] if r is None else [
         ("アイコンの説明", r.tooltip or "アプリ名"), ("始めかた", "窓を開いて始める" if r.start == "shown" else "アイコンだけで始める（窓は隠れている）"),
@@ -331,6 +335,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["データ用フォルダ"]:
         out += ["", "## データ用フォルダ（DB・ログ・シークレットの置き場。OS ごとの書き方。実際の環境で書き込めるかは、起動時に確かめる）", "", "| 場合 | ◆パス |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["データ用フォルダ"]]
+    if spec["ファイル"]:
+        out += ["", "## ファイルを触る口（実際にファイルに触る。ここに書いた操作・場所・ファイルにしか触りません）", "", "| 外部作用 | ◆操作 | ◆場所 | ◆結果 → 結果の種類 |", "|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["ファイル"]]
     if spec["常駐"]:
         out += ["", "## 常駐（窓を閉じても終了せず、タスクトレイ・メニューバーのアイコンに居続ける。左クリックの動きと右クリックのメニューを宣言できる）", "", "| 項目 | ◆内容 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["常駐"]]

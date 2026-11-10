@@ -847,6 +847,63 @@ class Checker:
                 self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
             if e.http is not None:
                 self.check_http(e, reps)
+            if e.file is not None:
+                self.check_file(e, reps)
+
+    def check_file(self, e, reps):
+        """over file { … }（外部作用のファイル操作）：場所は path 型の引数が指す場所の下の、書いた相対パスだけ。結果（ok・exists・not_found・denied・failed）が、応答の結果の種類に結ばれる"""
+        import re
+        f, where = e.file, f"外部作用 {e.name} / over file"
+        params = dict(e.params)
+        if not f.op:
+            self.d(ERROR, "ファイル", where, 'write・overwrite（"{場所の引数}/ファイル名" from 内容の引数）、read・delete（"{場所の引数}/ファイル名"）のどれかの行が要ります')
+            return
+        t = params.get(f.dir)
+        if t is None:
+            self.d(ERROR, "ファイル", where, f"場所の引数「{f.dir}」は、外部作用の引数にありません")
+        elif not (t.kind == "文字列" and t.read and t.read.endswith("_os_path")):
+            self.d(ERROR, "ファイル", where, f"場所の引数「{f.dir}」は、実行時に入力されるパスの型（ltype 名前 = path）にしてください。OS の書式を確かめた値だけが、場所になれます")
+        segs = f.rest.split("/")
+        if any(s in ("", ".", "..") or not re.fullmatch(r"[^\\/:*?\"<>|\x00-\x1f]+", s) for s in segs) or len(f.rest) > 200:
+            self.d(ERROR, "ファイル", where, f"ファイル名「{f.rest}」は、/ 区切りの相対パスで書きます（空の区切り・. ・.. ・\\ ・ : * ? \" < > | と制御文字は使えません。200 文字まで）")
+        if f.op in ("write", "overwrite"):
+            s = params.get(f.src)
+            if s is None:
+                self.d(ERROR, "ファイル", where, f"{f.op} の内容「{f.src}」は、外部作用の引数にありません")
+            elif s.kind != "文字列":
+                self.d(ERROR, "ファイル", where, f"{f.op} の内容「{f.src}」は {s.kind} 型です（文字列だけ書けます）")
+            elif f.src == f.dir:
+                self.d(ERROR, "ファイル", where, "場所の引数と内容の引数は別にしてください")
+        if e.replies is None:
+            self.d(ERROR, "ファイル", where, "結果を結果の種類に結ぶので、外部作用に replies 応答名 が要ります")
+            return
+        rp = reps.get(e.replies)
+        if rp is None:
+            return
+        outcomes = {on: gives for on, gives in rp.outcomes} or {"Normal": [n for n, _ in rp.params]}
+        have = {n: ty for n, ty in rp.params}
+        for need in ("ok", "failed"):
+            if need not in f.rows:
+                self.d(ERROR, "ファイル", where, f"{need} → 種類 が要ります（" + ("成功のとき" if need == "ok" else "そのほかの失敗のとき（書いていない失敗は、これになる）") + "の結果の種類。決めずに黙って捨てない）")
+        for kind, (o, takes) in f.rows.items():
+            if kind == "exists" and f.op != "write":
+                self.d(ERROR, "ファイル", where, "exists（すでにある）は write のときだけ書けます")
+            if o not in outcomes:
+                self.d(ERROR, "ファイル", where, f"結果の種類「{o}」は、応答 {rp.name} にありません")
+                continue
+            for n, src in takes:
+                if kind != "ok":
+                    self.d(ERROR, "ファイル", where, f"take は、ok だけに書けます（{kind} → {o} take {n} from {src}）")
+                elif src not in ("content", "bytes") or (src == "content" and f.op != "read") or f.op == "delete":
+                    self.d(ERROR, "ファイル", where, f"take {n} from {src}：取り出せるのは、content（ファイルの中身。read のとき）と bytes（バイト数。write・overwrite・read のとき）です")
+                elif n not in outcomes[o]:
+                    self.d(ERROR, "ファイル", where, f"take「{n}」は、結果の種類「{o}」の gives にありません")
+                elif have.get(n) is None or have[n].kind != ("文字列" if src == "content" else "整数"):
+                    self.d(ERROR, "ファイル", where, f"take「{n}」は、{src} を入れるので、応答の中身は{'文字列' if src == 'content' else '整数'}型にしてください")
+            took = {n for n, _ in takes}
+            for g in outcomes[o]:
+                if g in have and g not in took:
+                    self.d(ERROR, "ファイル", where, f"結果の種類「{o}」は {g} を gives で持つので、`take {g} from content|bytes` で取り出してください（{kind} の結果の種類に中身が要らないなら、gives のない種類に結んでください）")
 
     HTTP_BODY_KINDS = ("ID", "文字列", "整数", "真偽")
 
