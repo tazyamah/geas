@@ -160,6 +160,7 @@ def build_raw(ck: Checker) -> dict:
     spec["通信"] = [(e.name, f"{e.http.method} {e.http.url}", e.http.bearer or "なし", "、".join(k if k == n else f"{k}←{n}" for k, n in e.http.body) or "なし",
                   " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" for lo, hi, o, _ in e.http.statuses) + (f" ／ その他 → {e.http.other[0]}" if e.http.other else ""))
                  for e in p.effects if e.http]
+    spec["データ用フォルダ"] = [(f"データ用フォルダ（{os_name or '相対パス：exe のあるフォルダが起点'}）", path) for os_name, path, _ in p.data_folders]
     r = p.resident
     spec["常駐"] = [] if r is None else [
         ("アイコンの説明", r.tooltip or "アプリ名"), ("始めかた", "窓を開いて始める" if r.start == "shown" else "アイコンだけで始める（窓は隠れている）"),
@@ -326,6 +327,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["合流"]:
         out += ["", "## 返事の合流先（外部作用の返事が入るトリガ）", "", "| 外部作用 | ◆合流先のトリガ |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["合流"]]
+    if spec["データ用フォルダ"]:
+        out += ["", "## データ用フォルダ（DB・ログ・シークレットの置き場。OS ごとの書き方。実際の環境で書き込めるかは、起動時に確かめる）", "", "| 場合 | ◆パス |", "|---|---|"]
+        out += [f"| {a} | {b} |" for a, b in spec["データ用フォルダ"]]
     if spec["常駐"]:
         out += ["", "## 常駐（窓を閉じても終了せず、タスクトレイ・メニューバーのアイコンに居続ける。左クリックの動きと右クリックのメニューを宣言できる）", "", "| 項目 | ◆内容 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["常駐"]]

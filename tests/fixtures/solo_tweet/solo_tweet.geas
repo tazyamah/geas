@@ -44,6 +44,11 @@ resident {
   menu "未投稿をまとめて X へ" → fire PostSaved
 }
 
+// データ用フォルダ（DB・ログ・シークレットの置き場）。OS ごとのパスの書き方で書く（geas の文字列の中の \ は \\ と書く）。組む OS の行が要る
+data_folder on windows "%APPDATA%\\ひとりつぶやき"
+data_folder on macos "~/Library/Application Support/ひとりつぶやき"
+data_folder on linux "~/.local/share/ひとりつぶやき"
+
 needs secret Twitter.token "X の投稿に使うアクセストークン（値は環境から渡す。書かない）"
 needs exposure internal "窓つき exe。ポートを開かず、画面からの呼び出しはプロセスの中で渡す"
 

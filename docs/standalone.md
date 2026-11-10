@@ -28,6 +28,8 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 
 ## 保存先
 
+`.geas` の `data_folder`（OS ごとのパスの書き方。[language-reference.md](language-reference.md) の「データ用フォルダ」）で、DB・ログ・シークレットを置くフォルダを宣言できます。
+
 （Windows のログ：`log.txt` が同じフォルダに出ます。`--console` で窓に出せます。）
 
 `--db ファイル` で決めます。省くと、利用者のデータ用フォルダの下のアプリ名のフォルダ（Windows: `%APPDATA%`、macOS: `~/Library/Application Support`、それ以外: `$XDG_DATA_HOME` か `~/.local/share`）に `app.sqlite` を置きます。`--seed 最初のデータ.json` も使えます（サーバーと同じ）。`--secrets ファイル` か、データ用フォルダの `secrets.json`（`{"外部.名前": "値"}`）か、環境変数 `GEAS_SECRET_外部_名前`（大文字）で、外部作用の認証に使う値を渡します。`--selftest` は、窓を開いて画面が描かれるのを確かめて終わる試験用の起動です。

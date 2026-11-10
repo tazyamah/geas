@@ -271,6 +271,26 @@ screen PriceCheck entry {
 }
 ```
 
+### データ用フォルダ（data_folder）
+
+窓つき exe が、DB（`app.sqlite`）・ログ（`log.txt`）・シークレット（`secrets.json`）・起動の印を置くフォルダを宣言します。書かなければ、利用者のデータ用フォルダの下のアプリ名のフォルダです。
+
+```
+data_folder on windows "%APPDATA%\\ひとりつぶやき"                       // その OS のパスの書き方の絶対パス（geas の文字列の中の \ は \\ と書く）
+data_folder on macos   "~/Library/Application Support/ひとりつぶやき"
+data_folder on linux   "$HOME/.local/share/tweet"                        // $名前・${名前}・先頭の ~
+data_folder "data"                                                       // OS なし：相対パスだけ。exe のあるフォルダが起点（持ち運び用）
+needs env XDG_DATA_HOME "置き場を環境で決める"                            // 必ずあるとは限らない環境変数は、needs env で宣言する
+```
+
+- OS 付きの行は、その OS の書き方の絶対パスだけです。Windows は `%名前%`・`C:\\…`、mac・Linux は `$名前`・`${名前}`・`~`・`/…`。書き方が違うと検査が止めます。
+- OS なしの行は、相対パス（`/` 区切り、`..` なし）だけです。exe のあるフォルダが起点です。
+- 環境変数は、その OS で必ずある名前（Windows：APPDATA・LOCALAPPDATA・USERPROFILE・TEMP など。mac・Linux：HOME・USER。mac は TMPDIR も）か、`needs env 名前 "理由"` で宣言した名前だけ使えます。
+- 組む OS の行（または OS なしの行）が要ります。`geas rust … --standalone --target windows|macos|linux`（省けば、いま動いている OS）で確かめます。
+- 起動時に、環境変数が設定されているか、フォルダを作れて書き込めるかを確かめ、だめなら、別の場所に逃げず、エラーで止まります（Windows はメッセージの窓で知らせます）。
+- `--db` は、DB だけを別の場所にする上書きです（試験用）。
+- 仕様書の「データ用フォルダ」の表と、「動かす前提」に出ます。
+
 ### 常駐（resident）
 
 窓つき exe（`--standalone`）を、タスクトレイ（macOS はメニューバー）に居続けるアプリにします。書かなければ、窓を閉じたら終了します。

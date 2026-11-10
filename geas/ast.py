@@ -300,6 +300,7 @@ class Program:
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     ltype_lines: dict = field(default_factory=dict)  # 論理型の名前 → 宣言した行（検査の指摘に付ける）
     isolations: dict = field(default_factory=dict)  # 保存先の名前 → (process|store, 種類, 理由, 行)。リクエストの直列を誰が保証するか（`isolation 保存先 by …`）
+    data_folders: list = field(default_factory=list)  # データ用フォルダの宣言：[(OS（windows|macos|linux。なければ空＝相対パス用）, パス, 行)]
     resident: Optional[ResidentDecl] = None  # 常駐の宣言（なければ、窓を閉じたら終了する）
     needs: list = field(default_factory=list)  # アプリが環境に要求すること（`needs secret|exposure|instances …`）。(種類, 対象, 値, 理由, 行)
     title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う

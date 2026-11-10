@@ -244,6 +244,13 @@ def mock_def(ck: Checker) -> dict:
     }
 
 
+def data_folder_def(ck):
+    """データ用フォルダの定義：OS ごとのパス。relative は OS なしの行（相対パス。exe のあるフォルダが起点）。実行時、窓つき exe が自分の OS の行を選んで展開する"""
+    if not ck.p.data_folders:
+        return None
+    return {(os_name or "relative"): path for os_name, path, _ in ck.p.data_folders}
+
+
 def resident_def(ck, screens: dict):
     """常駐の定義。窓つき exe が、トレイのアイコンと右クリックのメニューを作る（画面の項目は URL を開き、出来事の項目は出来事を起こす）"""
     r = ck.p.resident
@@ -288,6 +295,7 @@ def definitions(ck: Checker) -> dict:
         "mock": mock_def(ck),
         "screens": screens_def(ck),
         "resident": resident_def(ck, screens_def(ck)),
+        "data_folder": data_folder_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
                     **({"internal": True} if tgt in inner else {})}

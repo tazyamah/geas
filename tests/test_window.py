@@ -125,3 +125,26 @@ def test_常駐のアプリは_同じ保存先で1つだけ起動できる(built
     finally:
         subprocess.run(["pkill", "-f", str(built_resident)])
         first.wait(timeout=20)
+
+
+def test_data_folder_は_環境変数を展開して作り_未設定なら止まる(built, tmp_path_factory, tmp_path):
+    import os
+    src = SRC.read_text(encoding="utf-8")
+    src += '\nneeds env GEAS_TEST_DATA "試験で置き場を渡す"\ndata_folder on linux "$GEAS_TEST_DATA/app"\n'
+    code = tmp_path / "df.geas"
+    code.write_text(src, encoding="utf-8")
+    out = tmp_path_factory.mktemp("window_df")
+    subprocess.run([sys.executable, "-m", "geas", "rust", str(code), "-o", str(out), "--host", "--runtime", "--standalone", "--target", "linux"], check=True, capture_output=True, text=True, cwd=ROOT)
+    env = {**os.environ, "CARGO_TARGET_DIR": str(built.parent.parent)}  # 部品の組み直しを省く
+    r = subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=out / "window", capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr[-2500:]
+    exe = tmp_path / "df_window"
+    shutil.copy(built.parent / "geas_window", exe)  # 共有の組み先を使うので、組んだ物を取り出す（他の試験の exe を上書きしない）
+    base = {k: v for k, v in os.environ.items() if k != "GEAS_TEST_DATA"}
+    # 設定されていれば、その下に作って、そこに DB を置く
+    r = subprocess.run(["xvfb-run", "-a", str(exe), "--selftest"], capture_output=True, text=True, timeout=90, env={**base, "GEAS_TEST_DATA": str(tmp_path / "d")})
+    assert r.returncode == 0, (r.stdout + r.stderr)[-2000:]
+    assert (tmp_path / "d" / "app" / "app.sqlite").is_file()
+    # 未設定なら、別の場所に逃げず、止まる
+    r = subprocess.run(["xvfb-run", "-a", str(exe), "--selftest"], capture_output=True, text=True, timeout=90, env=base)
+    assert r.returncode == 1 and "GEAS_TEST_DATA が設定されていません" in r.stdout + r.stderr

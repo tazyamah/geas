@@ -132,6 +132,17 @@ mod console {
     const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
     const STD_ERROR_HANDLE: u32 = -12i32 as u32;
 
+    extern "system" {
+        fn MessageBoxW(hwnd: *mut core::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    }
+
+    pub fn message_box(text: &str) {
+        let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        unsafe {
+            MessageBoxW(core::ptr::null_mut(), w(text).as_ptr(), w("起動できません").as_ptr(), 0x10);
+        }
+    }
+
     /// show：ターミナルの窓を使う（ターミナルから起動されていればそこへ、なければ新しい窓を開く）。
     /// そうでなければ、標準エラーを log_file へ追記する（開けなければ捨てる）
     pub fn setup(show: bool, log_file: &std::path::Path) {
@@ -151,13 +162,21 @@ mod console {
     }
 }
 
+/// 起動できないときの終わり方。Windows はターミナルの窓がないので、メッセージの窓で知らせる
+fn fatal(msg: &str) -> ! {
+    eprintln!("{}", msg);
+    #[cfg(windows)]
+    console::message_box(&format!("{}\n\n{}", geas_app::APP_TITLE, msg));
+    std::process::exit(1)
+}
+
 fn arg(name: &str) -> Option<String> {
     let a: Vec<String> = std::env::args().collect();
     a.iter().position(|x| x == name).and_then(|i| a.get(i + 1).cloned())
 }
 
-/// 利用者のデータ用フォルダ。環境変数だけで決める（外部の部品を足さない）
-fn data_dir() -> PathBuf {
+/// 既定のデータ用フォルダ（data_folder の宣言がないとき）。環境変数だけで決める（外部の部品を足さない）
+fn default_data_dir() -> PathBuf {
     let home = || std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(home)
@@ -169,6 +188,84 @@ fn data_dir() -> PathBuf {
     // フォルダ名に使えない文字は _ にする
     let name: String = geas_app::APP_TITLE.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
     base.join(name)
+}
+
+/// 環境変数を読む。未設定か空なら、エラー（黙って別の場所に逃げない）
+fn env_value(name: &str) -> Result<String, String> {
+    match std::env::var(name) {
+        Ok(v) if !v.is_empty() => Ok(v),
+        _ => Err(format!("環境変数 {} が設定されていません（data_folder で使っています）", name)),
+    }
+}
+
+/// Windows のパス：%名前% を環境変数の値に置き換える
+fn expand_windows(path: &str) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = path;
+    while let Some(a) = rest.find('%') {
+        out.push_str(&rest[..a]);
+        let after = &rest[a + 1..];
+        let b = after.find('%').ok_or_else(|| format!("data_folder の % が閉じていません: {}", path))?;
+        out.push_str(&env_value(&after[..b])?);
+        rest = &after[b + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// mac・Linux のパス：先頭の ~、$名前、${名前} を置き換える
+fn expand_unix(path: &str) -> Result<String, String> {
+    let mut s = path.to_string();
+    if s == "~" || s.starts_with("~/") {
+        s = format!("{}{}", env_value("HOME")?, &s[1..]);
+    }
+    let mut out = String::new();
+    let cs: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        if cs[i] == '$' {
+            let (name, next) = if cs.get(i + 1) == Some(&'{') {
+                let end = cs[i + 2..].iter().position(|c| *c == '}').ok_or_else(|| format!("data_folder の ${{ が閉じていません: {}", path))?;
+                (cs[i + 2..i + 2 + end].iter().collect::<String>(), i + 3 + end)
+            } else {
+                let mut k = i + 1;
+                while k < cs.len() && (cs[k].is_ascii_alphanumeric() || cs[k] == '_') {
+                    k += 1;
+                }
+                (cs[i + 1..k].iter().collect::<String>(), k)
+            };
+            out.push_str(&env_value(&name)?);
+            i = next;
+        } else {
+            out.push(cs[i]);
+            i += 1;
+        }
+    }
+    Ok(out)
+}
+
+/// 利用者のデータ用フォルダ。data_folder の宣言があれば、この OS の行（なければ OS なしの相対パス。exe のあるフォルダが起点）を展開し、
+/// 作って、書き込めるかを確かめる。環境変数が未設定・書けないときは、別の場所に逃げず、エラー
+fn data_dir() -> Result<PathBuf, String> {
+    let defs: serde_json::Value = serde_json::from_str(geas_app::host::DEFS_JSON).map_err(|e| e.to_string())?;
+    let df = &defs["data_folder"];
+    if !df.is_object() {
+        return Ok(default_data_dir());
+    }
+    let os = if cfg!(windows) { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let dir = if let Some(p) = df[os].as_str() {
+        PathBuf::from(if cfg!(windows) { expand_windows(p)? } else { expand_unix(p)? })
+    } else if let Some(rel) = df["relative"].as_str() {
+        let exe = std::env::current_exe().map_err(|e| format!("exe の場所を取れません: {}", e))?;
+        exe.parent().ok_or("exe のあるフォルダを取れません")?.join(rel)
+    } else {
+        return Err(format!("data_folder に、この OS（{}）の行も、OS なしの相対パスの行もありません（組むときに --target を指定してください）", os));
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("データ用フォルダ {} を作れません: {}", dir.display(), e))?;
+    let probe = dir.join(format!(".geas_write_test_{}", std::process::id()));
+    std::fs::write(&probe, b"").map_err(|e| format!("データ用フォルダ {} に書き込めません: {}", dir.display(), e))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(dir)
 }
 
 fn asset(path: &str) -> Option<(&'static str, &'static str)> {
@@ -215,7 +312,10 @@ fn call(msg: &str, engine: &std::sync::Mutex<geas_server::engine::Engine>, opts:
 }
 
 fn main() {
-    let dir = data_dir();
+    let dir = match data_dir() {
+        Ok(d) => d,
+        Err(e) => fatal(&e),
+    };
     #[cfg(windows)]
     console::setup(std::env::args().any(|a| a == "--console" || a == "--selftest"), &dir.join("log.txt"));
     let db_path = arg("--db").unwrap_or_else(|| {

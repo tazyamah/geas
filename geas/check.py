@@ -305,6 +305,7 @@ class Checker:
         self.check_isolations()
         self.check_needs()
         self.check_resident()
+        self.check_data_folders()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -1119,6 +1120,70 @@ class Checker:
         if any(l.strip() in ("終了", "開く") for l in labels):
             self.d(ERROR, "常駐", "resident / menu", "「開く」（窓を出す）と「終了」の項目は、言語が常に足します。書かないでください")
 
+    # 環境変数：その OS で、ふつう必ず設定されている名前。これ以外は、`needs env 名前 "理由"` で宣言する（あるかどうかは環境しか知らない）
+    SURE_ENV = {
+        "windows": {"APPDATA", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "PROGRAMDATA", "PUBLIC", "HOMEDRIVE", "HOMEPATH", "SYSTEMDRIVE",
+                    "SYSTEMROOT", "WINDIR", "USERNAME", "COMPUTERNAME", "PROGRAMFILES", "ALLUSERSPROFILE"},
+        "macos": {"HOME", "USER", "TMPDIR"},
+        "linux": {"HOME", "USER"},
+    }
+
+    def check_data_folders(self):
+        """data_folder（データ用フォルダ）の検査。OS 付きの行は、その OS のパスの書き方の絶対パス。OS なしの行は、相対パス（exe のあるフォルダが起点）。
+        使う環境変数は、その OS で必ずある名前か、needs env で宣言した名前だけ。環境で実際にあるか・書けるかは、起動時に確かめる"""
+        import re
+        seen = set()
+        declared = {t.upper() for k, t, _, _, _ in self.p.needs if k == "env"}
+        for os_name, path, line in self.p.data_folders:
+            where = f"data_folder{' on ' + os_name if os_name else ''}"
+            if os_name in seen:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"data_folder{' on ' + os_name if os_name else '（OS なし）'} が2つ以上あります", line))
+            seen.add(os_name)
+            if not path.strip() or "\n" in path or "\0" in path:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", where, "パスが空か、改行・NUL を含んでいます", line))
+                continue
+            win_var = re.findall(r"%([^%]*)%", path)
+            unix_var = re.findall(r"\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", path)
+            drive = re.match(r"^[A-Za-z]:[\\/]", path) is not None
+            if not os_name:
+                absolute = path[0] in "/\\~%$" or drive
+                if absolute or win_var or unix_var:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "OS を付けない data_folder は、相対パス（exe のあるフォルダが起点）だけです。"
+                                           "絶対パスや環境変数は、`data_folder on windows|macos|linux \"…\"` で、その OS の書き方で書きます", line))
+                elif "\\" in path or ".." in re.split(r"[/]", path):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "相対パスは `/` 区切りで書きます（`\\` と `..` は使えません。exe のあるフォルダの外へ出られないようにするため）", line))
+                continue
+            sure = self.SURE_ENV[os_name]
+            if os_name == "windows":
+                if re.search(r"\$\{|^~|^/(?!/)", path) or (unix_var and not win_var and re.search(r"^\$", path)):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は、Windows のパスの書き方（`%APPDATA%\\名前`、`C:\\…`）で書きます。`$名前`・`~`・`/…` は mac・Linux の書き方です", line))
+                    continue
+                if not (drive or path.startswith("\\\\") or re.match(r"^%[^%]+%", path)):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "windows の行は絶対パス（`C:\\…`、`\\\\サーバー\\…`、先頭が `%名前%`）で書きます。相対パスは、OS なしの行に書きます", line))
+                    continue
+                names = win_var
+            else:
+                if win_var or drive or "\\" in path:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は、mac・Linux のパスの書き方（`$名前`、`${{名前}}`、先頭の `~`、`/…`、区切りは `/`）で書きます。"
+                                           "`%名前%`・`C:\\`・`\\` は Windows の書き方です", line))
+                    continue
+                if not (path.startswith("/") or path == "~" or path.startswith("~/") or path.startswith("$")):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"{os_name} の行は絶対パス（先頭が `/`、`~`、`$名前`）で書きます。相対パスは、OS なしの行に書きます", line))
+                    continue
+                if path.startswith("~") and path not in ("~",) and not path.startswith("~/"):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, "`~` は、自分のホームだけです（`~名前` は使えません）", line))
+                    continue
+                names = [a or b for a, b in unix_var]
+            if os_name == "windows" and path.count("%") % 2:
+                self.diags.append(Diag(ERROR, "データ用フォルダ", where, "% が閉じていません（`%名前%` の形で書きます）", line))
+            for nm in names:
+                key = nm.upper() if os_name == "windows" else nm
+                if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", nm):
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"環境変数の名前「{nm}」が書けません（半角英数と _ だけ）", line))
+                elif key not in sure and key.upper() not in declared:
+                    self.diags.append(Diag(ERROR, "データ用フォルダ", where, f"環境変数 {nm} は、{os_name} で必ず設定されているとは限りません。"
+                                           f'`needs env {nm} "理由"` で、アプリが要求することとして宣言してください（未設定のときは、起動時にエラーで止まります）', line))
+
     def check_needs(self):
         """needs（アプリが環境に要求すること）の検査。環境の実際は書かないので、ここで見るのは書き方と、導出した保証との食い違いだけ"""
         from .envreq import NAME_RE, NS_RE, derived_instance_limit, effect_namespaces
@@ -1137,6 +1202,13 @@ class Checker:
                 if target in seen:
                     self.diags.append(Diag(ERROR, "環境", where, f"シークレット {target} の needs が2つ以上あります", line))
                 seen.add(target)
+            elif kind == "env":
+                import re as _re
+                if not _re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", target):
+                    self.diags.append(Diag(ERROR, "環境", where, "環境変数の名前は、半角英数と _ で書きます", line))
+                if target.upper() in seen:
+                    self.diags.append(Diag(ERROR, "環境", where, f"環境変数 {target} の needs が2つ以上あります", line))
+                seen.add(target.upper())
             else:
                 if kind in one:
                     self.diags.append(Diag(ERROR, "環境", where, f"needs {kind} は1つだけ書けます", line))
