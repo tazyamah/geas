@@ -34,8 +34,13 @@ fn guard<R: Read>(r: Response<R>) -> Response<R> {
 }
 
 fn json_resp(code: u16, v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
+    json_text_resp(code, v.to_string())
+}
+
+/// JSON の文字列を、そのまま本文にした応答（問い合わせの答えは、生成した host が書いた JSON を解析し直さずに返す）
+fn json_text_resp(code: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     guard(
-        Response::from_string(v.to_string())
+        Response::from_string(body)
             .with_status_code(code)
             .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
             .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
@@ -325,6 +330,8 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
             return Some(json_resp(400, json!({ "error": "本文が JSON ではありません" })));
         }
         let mut etag: Option<String> = None;
+        // 問い合わせの答えの本文（JSON の文字列）。解析して書き直さず、そのまま返す
+        let mut text: Option<String> = None;
         let out: Result<(u16, Value), (u16, String)> = match r["kind"].as_str().unwrap_or("") {
             "index" | "show" => {
                 let mut args = Map::new();
@@ -337,9 +344,10 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
                         Ok((304, Value::Null))
                     }
                     Some(Err(m)) => Err((400, m)),
-                    _ => en.query(&target, &Value::Object(args)).map(|v| {
+                    _ => en.query_text(&target, &Value::Object(args)).map(|s| {
                         etag = Some(etag_of(&en.version(), path));
-                        (200, v)
+                        text = Some(s);
+                        (200, Value::Null)
                     }).map_err(|m| (400, m)),
                 }
             }
@@ -368,10 +376,16 @@ fn rest_route(engine: &Mutex<Engine>, method: &Method, path: &str, body: &str, t
             "log": "geas.route", "ts_ms": now_ms(), "method": verb, "route": r["path"], "target": target,
             "result": v["result"], "status": code, "ms": started.elapsed().as_millis() as u64,
         }));
-        return Some(match etag {
-            Some(t) if code == 304 => not_modified(&t),
-            Some(t) => json_resp(code, v).with_header(Header::from_bytes("ETag", t.as_str()).unwrap()),
+        if let (Some(t), 304) = (&etag, code) {
+            return Some(not_modified(t));
+        }
+        let resp = match text {
+            Some(s) => json_text_resp(code, s),
             None => json_resp(code, v),
+        };
+        return Some(match etag {
+            Some(t) => resp.with_header(Header::from_bytes("ETag", t.as_str()).unwrap()),
+            None => resp,
         });
     }
     None
