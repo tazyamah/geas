@@ -21,7 +21,26 @@ pub fn open_engine(db_path: &str, seed: impl FnOnce() -> Result<String, String>)
     let entities: Vec<String> = empty.as_object().ok_or("保存の形が読めません")?.keys().cloned().collect();
     let db = db::Db::open(db_path, entities).map_err(|e| format!("DB を開けません: {}", e))?;
     app::seed_if_empty(&db, seed).map_err(|e| format!("最初のデータを入れられません: {}", e))?;
-    Ok(Arc::new(Mutex::new(engine::Engine::new(db).map_err(|e| format!("定義が読めません: {}", e))?)))
+    let mut en = engine::Engine::new(db).map_err(|e| format!("定義が読めません: {}", e))?;
+    // 保存の行を、ここで 1 回ぜんぶ読む。.geas の実体の項目を変えたあとに前の版の DB を開くと、行が今の形で読めない。
+    // 起動してから全部のリクエストが失敗するより、起動のときに理由を言って止まる
+    en.query_version().map_err(|e| format!("DB {} の中身が、このアプリの今の定義と合いません（{}）。.geas の実体の項目を変えたあとは、前の版で作った DB をそのまま使えません。DB を前の版のアプリで開くか、別の DB で起こしてください", db_path, e))?;
+    Ok(Arc::new(Mutex::new(en)))
+}
+
+/// シークレットのファイルを、持ち主のほかの利用者も読めるなら注意を出す（Unix だけ。起動は止めない）
+pub fn warn_secret_perms(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(path) {
+            if m.permissions().mode() & 0o077 != 0 {
+                eprintln!("注意：シークレットのファイル {} は、ほかの利用者も読める権限です（chmod 600 にしてください）", path.display());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// 時間の経過（模擬の返事・期限）を進め、宣言した実通信（over http）を送るスレッドを起こす。

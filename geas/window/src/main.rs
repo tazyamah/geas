@@ -268,6 +268,15 @@ fn data_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// この窓の画面の URL か。スキームとホストが、画面を配っているもの（geas://localhost、Windows は http://geas.localhost）と
+/// ぴったり同じものだけ。前方一致では http://geas.localhost.evil.example/ も通ってしまう
+fn own_url(url: &str) -> bool {
+    ["geas://localhost", "http://geas.localhost"].iter().any(|base| match url.strip_prefix(base) {
+        Some(rest) => rest.is_empty() || rest.starts_with(['/', '?', '#']),
+        None => false,
+    })
+}
+
 fn asset(path: &str) -> Option<(&'static str, &'static str)> {
     match path {
         "/" | "/index.html" => Some(("text/html; charset=utf-8", INDEX_HTML)),
@@ -336,6 +345,7 @@ fn main() {
         let path = arg("--secrets").map(PathBuf::from).unwrap_or_else(|| dir.join("secrets.json"));
         let mut en = geas_server::engine::lock(&engine);
         if let Ok(t) = std::fs::read_to_string(&path) {
+            geas_server::warn_secret_perms(&path);
             en.secrets_file = serde_json::from_str(&t).unwrap_or_else(|_| {
                 eprintln!("{} は JSON のオブジェクトではありません", path.display());
                 std::process::exit(1)
@@ -377,6 +387,10 @@ fn main() {
         .with_custom_protocol("geas".into(), |_id, request| serve_asset(request.uri().path()))
         .with_ipc_handler(move |req| {
             // 処理は別のスレッドで走らせる（窓の描画を止めない）。答えは窓のスレッドへ戻して画面に渡す
+            // 呼び出したページが、この窓の画面でなければ受けない（外のページが窓に載っても、処理は呼べない）
+            if !own_url(&req.uri().to_string()) {
+                return;
+            }
             let msg = req.into_body();
             let (eng, op, px, oc) = (eng.clone(), op.clone(), px.clone(), oc.clone());
             std::thread::spawn(move || {
@@ -389,7 +403,7 @@ fn main() {
             });
         })
         // 窓の中の移動は自分の画面だけ（外のページへは移らない）
-        .with_navigation_handler(|url| url.starts_with("geas://") || url.starts_with("http://geas.localhost"))
+        .with_navigation_handler(|url| own_url(&url))
         .with_url(if cfg!(windows) { "http://geas.localhost/" } else { "geas://localhost/" });
 
     #[cfg(target_os = "linux")]
@@ -497,4 +511,20 @@ fn main() {
             _ => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_url;
+
+    #[test]
+    // 窓が移れる先と、IPC を受けるページは、画面を配っているスキームとホストにぴったり合うものだけ
+    fn only_the_windows_own_scheme_and_host_are_its_urls() {
+        for ok in ["geas://localhost", "geas://localhost/", "geas://localhost/orders/1", "http://geas.localhost/", "http://geas.localhost/x?y#z", "http://geas.localhost"] {
+            assert!(own_url(ok), "{}", ok);
+        }
+        for ng in ["http://geas.localhost.evil.example/", "http://geas.localhostx/", "http://geas.localhost:8080/", "http://geas.localhost@evil.example/", "geas://evil.example/", "geas://localhost.evil.example/", "https://example.com/", "about:blank", ""] {
+            assert!(!own_url(ng), "{}", ng);
+        }
+    }
 }

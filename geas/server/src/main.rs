@@ -86,12 +86,16 @@ fn main() {
         "" => geas_server::embedded_seed(),
         path => std::fs::read_to_string(path).map_err(|x| format!("最初のデータ {} を読めません: {}", path, x)),
     };
-    let engine = geas_server::open_engine(&db_path, seed).unwrap_or_else(|e| panic!("{}", e));
+    let engine = geas_server::open_engine(&db_path, seed).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1)
+    });
     {
         let mut en = engine::lock(&engine);
         // シークレットのファイル（--secrets）。環境変数 GEAS_SECRET_外部_名前 が優先
         let secrets = arg("--secrets", "");
         if !secrets.is_empty() {
+            geas_server::warn_secret_perms(std::path::Path::new(&secrets));
             en.secrets_file = serde_json::from_str(&std::fs::read_to_string(&secrets).expect("シークレットのファイルを読めません")).expect("シークレットのファイルは JSON のオブジェクトです");
         }
         // 外部作用の通信先を、試験用の別の URL に替える（--effect-url 外部.操作=URL）。--test のときだけ
