@@ -244,6 +244,15 @@ def mock_def(ck: Checker) -> dict:
     }
 
 
+def resident_def(ck, screens: dict):
+    """常駐の定義。窓つき exe が、トレイのアイコンとメニューを作る（メニューの項目は、画面の URL を開く）"""
+    r = ck.p.resident
+    if r is None:
+        return None
+    return {"tooltip": r.tooltip or screens["title"], "start": r.start,
+            "menu": [{"label": label, "screen": name, "url": screens["screens"][name]["url"]} for label, name, _ in r.menu]}
+
+
 def http_def(e) -> dict:
     """実通信の定義（over http）。サーバーは、ここに書いた先にだけ出る"""
     h = e.http
@@ -271,6 +280,7 @@ def definitions(ck: Checker) -> dict:
         "rules": {f.slot: [{"when": [list(c) for c in conds], "value": val} for conds, val in f.rows] for f in p.rules},
         "mock": mock_def(ck),
         "screens": screens_def(ck),
+        "resident": resident_def(ck, screens_def(ck)),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
                     **({"internal": True} if tgt in inner else {})}

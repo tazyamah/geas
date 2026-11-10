@@ -160,6 +160,9 @@ def build_raw(ck: Checker) -> dict:
     spec["通信"] = [(e.name, f"{e.http.method} {e.http.url}", e.http.bearer or "なし", "、".join(k if k == n else f"{k}←{n}" for k, n in e.http.body) or "なし",
                   " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" for lo, hi, o, _ in e.http.statuses) + (f" ／ その他 → {e.http.other[0]}" if e.http.other else ""))
                  for e in p.effects if e.http]
+    r = p.resident
+    spec["常駐"] = [] if r is None else [("アイコンの説明", r.tooltip or "アプリ名"), ("始めかた", "窓を開いて始める" if r.start == "shown" else "アイコンだけで始める（窓は隠れている）"),
+                                      *[(f"メニュー「{label}」", f"画面 {name} を開く") for label, name, _ in r.menu], ("メニュー「終了」", "アプリを終える（言語が常に足す）")]
     on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
     spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
     spec["画面"] = [(sc.name, ", ".join(sc.shows), ", ".join(f + (f"←{sc.field_from[f]}" if f in sc.field_from else "") for f in sc.fields),
@@ -319,6 +322,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["合流"]:
         out += ["", "## 返事の合流先（外部作用の返事が入るトリガ）", "", "| 外部作用 | ◆合流先のトリガ |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["合流"]]
+    if spec["常駐"]:
+        out += ["", "## 常駐（窓を閉じても終了せず、タスクトレイ・メニューバーのアイコンに居続ける。アイコンのクリックで窓を開閉する）", "", "| 項目 | ◆内容 |", "|---|---|"]
+        out += [f"| {a} | {b} |" for a, b in spec["常駐"]]
     if spec["通信"]:
         out += ["", "## 外へ出る通信（実通信。ここに書いた先にしか出ません。リダイレクトにも従いません）", "", "| 外部作用 | ◆通信先 | ◆認証（シークレット） | ◆本文の項目 | ◆返事の状態 → 結果の種類 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["通信"]]

@@ -247,6 +247,16 @@ class Screen:
 
 
 @dataclass
+class ResidentDecl:
+    """常駐（窓つき exe がタスクトレイ・メニューバーに居続ける）。窓を閉じても終了せず隠し、アイコンのクリックで開閉する。
+    メニューの項目は、入口の画面（entry、引数なし）を開く。終了の項目は、言語が常に足す"""
+    tooltip: str = ""  # アイコンに載せる説明（省略はアプリ名）
+    start: str = "shown"  # shown（窓を開いて始める）か hidden（アイコンだけで始める）
+    menu: list = field(default_factory=list)  # [(ラベル, 画面名, 行)]
+    line: int = 0
+
+
+@dataclass
 class ResAction:
     """リソースの動作1つ。kind は index／show／create／update／destroy。target は呼ぶ処理（create・update・destroy）か問い合わせ（index・show）。
     statuses は、処理の結果の種類ごとの HTTP の状態（create・update・destroy では全部の種類に必須）"""
@@ -288,6 +298,7 @@ class Program:
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）
     ltype_lines: dict = field(default_factory=dict)  # 論理型の名前 → 宣言した行（検査の指摘に付ける）
     isolations: dict = field(default_factory=dict)  # 保存先の名前 → (process|store, 種類, 理由, 行)。リクエストの直列を誰が保証するか（`isolation 保存先 by …`）
+    resident: Optional[ResidentDecl] = None  # 常駐の宣言（なければ、窓を閉じたら終了する）
     needs: list = field(default_factory=list)  # アプリが環境に要求すること（`needs secret|exposure|instances …`）。(種類, 対象, 値, 理由, 行)
     title: str = ""  # アプリの名前（`app "名前"`）。画面の見出しとインストール名に使う
     tz_offset: int = 0  # アプリの標準のタイムゾーン：UTC からのずれ（秒）。`timezone +09:00` で宣言する。書かなければ UTC

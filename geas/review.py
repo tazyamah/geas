@@ -699,7 +699,7 @@ draw();
 
 ROUTE_HEAD = ["メソッド", "経路", "動作", "呼ぶもの", "結果→状態", "外から"]
 
-CHANGE_KEYS = [("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
+CHANGE_KEYS = [("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
                ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存先", "保存先"), ("動かす前提", "動かす前提"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
 
 
@@ -896,6 +896,9 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     for dname in dict.fromkeys(d for d, *_ in spec["遷移"]):
         add(f"states-{dname}", f"状態の移り変わり：{dname}", state_machine(spec, dname))
 
+    if spec["常駐"]:
+        add("resident", "常駐", lead("窓を閉じても終了せず、タスクトレイ（macOS はメニューバー）のアイコンに居続けます。アイコンのクリックで窓を開閉し、メニューの項目は入口の画面を開きます。")
+            + table(["項目", "内容"], spec["常駐"]))
     if spec["外部作用"]:
         add("systems", "システムのつながり", system_context(spec))
     for fl in p.flows:
@@ -950,7 +953,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         ("screens", "画面（流れ・一覧・デザイン・確認の網羅）", ["screens", "design", "coverage"]),
         ("data", "データと状態", ["data"] + [a for a in by_id if a.startswith("states-")]),
         ("rules", "決まりごと（処理・問い合わせ・不変条件）", ["rules", "levels", "storages", "needs", "trusts"]),
-        ("systems", "外部とのつながり", ["systems"]),
+        ("systems", "外部とのつながり・常駐", ["systems", "resident"]),
         ("flows", "処理の流れ", [a for a in by_id if a.startswith("flow-")]),
         ("triggers", "待ち・期限・出来事・削除", ["triggers", "deletes"]),
         ("routes", "URL", ["routes"]),

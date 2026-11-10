@@ -35,6 +35,12 @@ reply PostSettled(post_id: Ref) {
   Rejected
 }
 
+// 常駐：窓を閉じても終了せず、タスクトレイ（macOS はメニューバー）のアイコンに居続ける。メニューは入口の画面を開く（終了は言語が足す）
+resident {
+  tooltip "ひとりつぶやき"
+  menu "つぶやきを書く" → TweetList
+}
+
 needs secret Twitter.token "X の投稿に使うアクセストークン（値は環境から渡す。書かない）"
 needs exposure internal "窓つき exe。ポートを開かず、画面からの呼び出しはプロセスの中で渡す"
 

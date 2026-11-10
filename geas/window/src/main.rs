@@ -5,11 +5,13 @@
 //! シークレット（外部作用の認証）は、環境変数 GEAS_SECRET_外部_名前（大文字）か、データ用フォルダの secrets.json（{"外部.名前": "値"}）で渡す
 //! --db を付けなければ、利用者のデータ用フォルダ（Windows: %APPDATA%、macOS: ~/Library/Application Support、
 //!        それ以外: $XDG_DATA_HOME か ~/.local/share）の下のアプリ名のフォルダに置く。
+//! resident を宣言したアプリは、トレイのアイコンに常駐する（窓を閉じても終了しない。同じ保存先では 1 つだけ起動できる）
 //! --selftest：窓を開き、画面が定義を IPC で受けて描かれるのを確かめて、終了コード 0（成功）か 1 で終わる（試験用）
 use geas_server::http::{self, Opts, Req};
 use std::borrow::Cow;
 use std::path::PathBuf;
-use tao::event::{Event, WindowEvent};
+#[allow(unused_imports)]
+use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
 use wry::WebViewBuilder;
@@ -26,6 +28,74 @@ enum UserEvent {
     /// 画面へ返す JavaScript（IPC の答え）
     Script(String),
     Selftest(bool),
+    /// トレイのアイコンのクリック（Windows・macOS。Linux のアイコンはクリックの通知を出さず、メニューだけ）
+    #[cfg(feature = "resident")]
+    TrayClick,
+    /// トレイのメニューの項目
+    #[cfg(feature = "resident")]
+    Menu(tray_icon::menu::MenuId),
+}
+
+/// 常駐（resident）：トレイのアイコンとメニュー。窓を閉じても終了せず隠し、アイコンのクリックか「開く」で出す。
+/// アイコンを作れなかったとき（トレイが使えない環境）は、隠すと二度と開けないので、常駐にせず、閉じたら終了する
+#[cfg(feature = "resident")]
+mod tray {
+    use serde_json::Value;
+    use tray_icon::menu::{Menu, MenuId, MenuItem, PredefinedMenuItem};
+    use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
+    pub struct Tray {
+        pub _icon: TrayIcon,
+        pub open: MenuId,
+        pub quit: MenuId,
+        /// メニューの項目 → 開く画面の URL（パス）
+        pub screens: Vec<(MenuId, String)>,
+    }
+
+    /// 最初の画面の色（accent）の丸いアイコン。画像の部品は使わず、色から作る
+    fn icon(accent: &str) -> Option<Icon> {
+        let hex = accent.trim_start_matches('#');
+        let c = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+        let (r, g, b) = (c(0)?, c(2)?, c(4)?);
+        let n = 32i32;
+        let mut px = Vec::with_capacity((n * n * 4) as usize);
+        for y in 0..n {
+            for x in 0..n {
+                let (dx, dy) = (x - n / 2, y - n / 2);
+                let inside = dx * dx + dy * dy <= (n / 2 - 1) * (n / 2 - 1);
+                px.extend_from_slice(&[r, g, b, if inside { 255 } else { 0 }]);
+            }
+        }
+        Icon::from_rgba(px, n as u32, n as u32).ok()
+    }
+
+    pub fn build(def: &Value, accent: &str, proxy: tao::event_loop::EventLoopProxy<super::UserEvent>) -> Result<Tray, String> {
+        let menu = Menu::new();
+        let open = MenuItem::new("開く", true, None);
+        menu.append(&open).map_err(|e| e.to_string())?;
+        let mut screens = Vec::new();
+        for m in def["menu"].as_array().into_iter().flatten() {
+            let item = MenuItem::new(m["label"].as_str().unwrap_or(""), true, None);
+            menu.append(&item).map_err(|e| e.to_string())?;
+            screens.push((item.id().clone(), m["url"].as_str().unwrap_or("/").to_string()));
+        }
+        menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+        let quit = MenuItem::new("終了", true, None);
+        menu.append(&quit).map_err(|e| e.to_string())?;
+        let icon = icon(accent).ok_or("アイコンを作れません")?;
+        let tooltip = def["tooltip"].as_str().unwrap_or("");
+        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip(tooltip).with_icon(icon).build().map_err(|e| e.to_string())?;
+        let p1 = proxy.clone();
+        TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                let _ = p1.send_event(super::UserEvent::TrayClick);
+            }
+        }));
+        tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
+            let _ = proxy.send_event(super::UserEvent::Menu(e.id));
+        }));
+        Ok(Tray { _icon: tray, open: open.id().clone(), quit: quit.id().clone(), screens })
+    }
 }
 
 fn arg(name: &str) -> Option<String> {
@@ -118,6 +188,23 @@ fn main() {
         }
         en.warn_missing_secrets();
     }
+    // 常駐（resident）の宣言。あれば、同じ DB を 2 つの窓で開かないよう、起動を 1 つに限る
+    let resident = geas_server::engine::lock(&engine).defs["resident"].clone();
+    let _single = if resident.is_object() {
+        let f = std::fs::File::create(format!("{}.lock", db_path)).expect("起動の印（ロックのファイル）を作れません");
+        if f.try_lock().is_err() {
+            eprintln!("すでに起動しています（常駐のアプリは、同じ保存先で 1 つだけ起動できます。トレイのアイコンから窓を開いてください）");
+            std::process::exit(0);
+        }
+        Some(f)  // 持ち続ける（プロセスの終わりまで）
+    } else {
+        None
+    };
+    #[cfg(not(feature = "resident"))]
+    if resident.is_object() {
+        eprintln!("この実行ファイルには常駐の部品が入っていません（resident を宣言したアプリを geas で生成し直してください）");
+        std::process::exit(1);
+    }
     geas_server::spawn_ticker(engine.clone());
     let selftest = std::env::args().any(|a| a == "--selftest");
     // 窓の中からは --test の口（時計・模擬の操作）は開けない。Host の検査は、ネットワークから来ないので要らない
@@ -125,7 +212,9 @@ fn main() {
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let window = WindowBuilder::new().with_title(geas_app::APP_TITLE).build(&event_loop).expect("窓を作れません");
+    // start hidden の常駐は、アイコンだけで始める（トレイを作れなかったときは、窓を出す。隠れたまま開けなくなるため）
+    let start_hidden = resident["start"] == "hidden";
+    let window = WindowBuilder::new().with_title(geas_app::APP_TITLE).with_visible(!start_hidden).build(&event_loop).expect("窓を作れません");
 
     let ok_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (eng, op, px, oc) = (engine.clone(), opts.clone(), proxy.clone(), ok_calls.clone());
@@ -166,6 +255,10 @@ fn main() {
         });
     }
     let mut polls = 0u32;
+    #[cfg(feature = "resident")]
+    let mut tray_state: Option<tray::Tray> = None;
+    #[cfg(not(feature = "resident"))]
+    let tray_state: Option<()> = None;
     event_loop.run(move |event, _, flow| {
         *flow = if selftest { ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(300)) } else { ControlFlow::Wait };
         match event {
@@ -178,6 +271,45 @@ fn main() {
                 }
                 std::process::exit(if ok { 0 } else { 1 });
             }
+            // トレイは、イベントループが動き出してから作る（macOS はこの順が要る）
+            #[cfg(feature = "resident")]
+            Event::NewEvents(StartCause::Init) if resident.is_object() => {
+                let accent = geas_app::screens.first().map(|s| s.accent).unwrap_or("#0b5cad");
+                match tray::build(&resident, accent, proxy.clone()) {
+                    Ok(t) => {
+                        eprintln!("常駐：トレイのアイコンを作りました");
+                        tray_state = Some(t);
+                    }
+                    Err(e) => {
+                        eprintln!("常駐：トレイのアイコンを作れません（{}）。常駐にせず、窓を閉じたら終了します", e);
+                        window.set_visible(true);
+                    }
+                }
+            }
+            #[cfg(feature = "resident")]
+            Event::UserEvent(UserEvent::TrayClick) => {
+                let shown = window.is_visible();
+                window.set_visible(!shown);
+                if !shown {
+                    window.set_focus();
+                }
+            }
+            #[cfg(feature = "resident")]
+            Event::UserEvent(UserEvent::Menu(id)) => {
+                if let Some(t) = &tray_state {
+                    if id == t.quit {
+                        *flow = ControlFlow::Exit;
+                    } else if id == t.open {
+                        window.set_visible(true);
+                        window.set_focus();
+                    } else if let Some((_, url)) = t.screens.iter().find(|(m, _)| *m == id) {
+                        let base = if cfg!(windows) { "http://geas.localhost" } else { "geas://localhost" };
+                        let _ = webview.load_url(&format!("{}{}", base, url));
+                        window.set_visible(true);
+                        window.set_focus();
+                    }
+                }
+            }
             Event::NewEvents(_) if selftest => {
                 polls += 1;
                 let (px, calls) = (proxy.clone(), ok_calls.load(std::sync::atomic::Ordering::Relaxed));
@@ -189,7 +321,14 @@ fn main() {
                     });
                 }
             }
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
+            // 常駐のときは、窓を閉じても終了せず隠す
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                if tray_state.is_some() {
+                    window.set_visible(false);
+                } else {
+                    *flow = ControlFlow::Exit;
+                }
+            }
             _ => {}
         }
     });
