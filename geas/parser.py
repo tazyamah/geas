@@ -628,7 +628,7 @@ class Parser:
         return EffectDecl(name, params, line, failures, no_wait, joins, replies, http)
 
     def resident_decl(self, line) -> ResidentDecl:
-        """resident { tooltip "説明" ／ start shown|hidden ／ menu "ラベル" → 画面名 }"""
+        """resident { tooltip "説明" ／ start shown|hidden ／ click toggle|menu ／ menu "ラベル" → 画面名 ／ menu "ラベル" → fire 出来事名 ／ separator }"""
         r = ResidentDecl(line=line)
         self.block_open()
         while not self.accept("}"):
@@ -643,14 +643,23 @@ class Parser:
                 r.start = self.name()
                 if r.start not in ("shown", "hidden"):
                     raise self.err("start のあとには shown（窓を開いて始める）か hidden（アイコンだけで始める）を書きます")
+            elif kw == "click":
+                r.click = self.name()
+                if r.click not in ("toggle", "menu"):
+                    raise self.err("click のあとには toggle（左クリックで窓を開閉する）か menu（左クリックでもメニューを出す）を書きます")
+            elif kw == "separator":
+                r.menu.append(("", "separator", "", ln))
             elif kw == "menu":
                 t = self.next()
                 if t.kind != "STR":
                     raise self.err('menu のあとには、項目のラベルを "…" で書きます（例：menu "つぶやきを書く" → TweetList）')
                 self.expect("→")
-                r.menu.append((t.val, self.name(), ln))
+                if self.accept("fire"):
+                    r.menu.append((t.val, "event", self.name(), ln))
+                else:
+                    r.menu.append((t.val, "screen", self.name(), ln))
             else:
-                raise self.err(f"resident の中に「{kw}」は書けません（tooltip・start・menu）")
+                raise self.err(f"resident の中に「{kw}」は書けません（tooltip・start・click・menu・separator）")
             self.end_line()
         self.end_line()
         return r

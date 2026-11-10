@@ -38,7 +38,10 @@ reply PostSettled(post_id: Ref) {
 // 常駐：窓を閉じても終了せず、タスクトレイ（macOS はメニューバー）のアイコンに居続ける。メニューは入口の画面を開く（終了は言語が足す）
 resident {
   tooltip "ひとりつぶやき"
+  click toggle
   menu "つぶやきを書く" → TweetList
+  separator
+  menu "未投稿をまとめて X へ" → fire PostSaved
 }
 
 needs secret Twitter.token "X の投稿に使うアクセストークン（値は環境から渡す。書かない）"
@@ -123,6 +126,18 @@ query tweet_of {
   filter tweet_id equals tweet_id
   select tweet_id, body, status, x_ref
   reads Tweet.tweet_id, Tweet.body, Tweet.status, Tweet.x_ref
+}
+
+query saved_tweets {
+  from Tweet
+  where status == Saved
+  reads Tweet.status
+}
+
+// 窓の外（トレイのメニュー）から起こせる。未投稿のつぶやきを 1 件ずつ X へ出す
+/// 未投稿をまとめて X へ
+event PostSaved {
+  each saved_tweets → post_to_x
 }
 
 trigger XPending(tweet_id: id) {

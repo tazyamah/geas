@@ -245,12 +245,19 @@ def mock_def(ck: Checker) -> dict:
 
 
 def resident_def(ck, screens: dict):
-    """常駐の定義。窓つき exe が、トレイのアイコンとメニューを作る（メニューの項目は、画面の URL を開く）"""
+    """常駐の定義。窓つき exe が、トレイのアイコンと右クリックのメニューを作る（画面の項目は URL を開き、出来事の項目は出来事を起こす）"""
     r = ck.p.resident
     if r is None:
         return None
-    return {"tooltip": r.tooltip or screens["title"], "start": r.start,
-            "menu": [{"label": label, "screen": name, "url": screens["screens"][name]["url"]} for label, name, _ in r.menu]}
+    menu = []
+    for label, kind, target, _ in r.menu:
+        if kind == "separator":
+            menu.append({"kind": "separator"})
+        elif kind == "screen":
+            menu.append({"kind": "screen", "label": label, "screen": target, "url": screens["screens"][target]["url"]})
+        else:
+            menu.append({"kind": "event", "label": label, "event": target})
+    return {"tooltip": r.tooltip or screens["title"], "start": r.start, "click": r.click, "menu": menu}
 
 
 def http_def(e) -> dict:

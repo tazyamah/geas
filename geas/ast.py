@@ -252,7 +252,9 @@ class ResidentDecl:
     メニューの項目は、入口の画面（entry、引数なし）を開く。終了の項目は、言語が常に足す"""
     tooltip: str = ""  # アイコンに載せる説明（省略はアプリ名）
     start: str = "shown"  # shown（窓を開いて始める）か hidden（アイコンだけで始める）
-    menu: list = field(default_factory=list)  # [(ラベル, 画面名, 行)]
+    click: str = "toggle"  # アイコンの左クリック：toggle（窓の開閉）か menu（右クリックと同じメニューを出す）
+    # 右クリックのメニュー：[(ラベル, 種類, 対象, 行)]。種類は screen（対象は入口の画面）・event（対象は出来事の名前。起こす）・separator（区切り線。ラベルと対象は空）
+    menu: list = field(default_factory=list)
     line: int = 0
 
 

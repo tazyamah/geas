@@ -1081,28 +1081,41 @@ class Checker:
                                        f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）", line))
 
     def check_resident(self):
-        """resident（常駐）：メニューが開く画面は、入口（entry か最初の画面）で、引数を持たないこと"""
+        """resident（常駐）：メニューが開く画面は入口（entry か最初の画面）で引数なし。起こす出来事は、入力なしで動くもの（each だけ）"""
         r = self.p.resident
         if r is None:
             return
         scr = {s.name: s for s in self.p.screens}
+        evs = {e.name: e for e in self.p.events}
         first = self.p.screens[0].name if self.p.screens else ""
         if not self.p.screens:
             self.d(ERROR, "常駐", "resident", "常駐の窓が開く画面（screen）がありません")
         if len(r.tooltip) > 64:
             self.d(ERROR, "常駐", "resident / tooltip", "tooltip は 64 文字までです（アイコンに載せる短い説明）")
-        labels = [m[0] for m in r.menu]
+        items = [m for m in r.menu if m[1] != "separator"]
+        labels = [m[0] for m in items]
         if len(set(labels)) != len(labels):
             self.d(ERROR, "常駐", "resident / menu", "menu のラベルが重なっています")
-        for label, name, line in r.menu:
+        if r.menu and (r.menu[0][1] == "separator" or r.menu[-1][1] == "separator"):
+            self.d(ERROR, "常駐", "resident / menu", "separator を、メニューの先頭や末尾には置けません（「開く」「終了」の前後にも、言語が区切りを入れます）")
+        if any(a[1] == b[1] == "separator" for a, b in zip(r.menu, r.menu[1:])):
+            self.d(ERROR, "常駐", "resident / menu", "separator が続いています")
+        for label, kind, target, line in items:
             where = f"resident / menu「{label}」"
             if not label.strip() or len(label) > 40:
                 self.d(ERROR, "常駐", where, "menu のラベルは 1〜40 文字で書きます", line)
-            s = scr.get(name)
-            if s is None:
-                self.d(ERROR, "常駐", where, f"画面「{name}」がありません", line)
-            elif not (s.entry or name == first) or s.params:
-                self.d(ERROR, "常駐", where, f"画面「{name}」は開けません（メニューが開けるのは、入口の画面（entry か最初の画面）で、引数を持たないものだけです）", line)
+            if kind == "screen":
+                s = scr.get(target)
+                if s is None:
+                    self.d(ERROR, "常駐", where, f"画面「{target}」がありません", line)
+                elif not (s.entry or target == first) or s.params:
+                    self.d(ERROR, "常駐", where, f"画面「{target}」は開けません（メニューが開けるのは、入口の画面（entry か最初の画面）で、引数を持たないものだけです）", line)
+            else:
+                e = evs.get(target)
+                if e is None:
+                    self.d(ERROR, "常駐", where, f"出来事「{target}」がありません（fire のあとには、event で宣言した名前を書きます）", line)
+                elif any(k != "各" for k, _, _ in e.steps):
+                    self.d(ERROR, "常駐", where, f"出来事「{target}」は、外から入力を受ける（external）ので、メニューからは起こせません（each だけの出来事を起こせます）", line)
         if any(l.strip() in ("終了", "開く") for l in labels):
             self.d(ERROR, "常駐", "resident / menu", "「開く」（窓を出す）と「終了」の項目は、言語が常に足します。書かないでください")
 

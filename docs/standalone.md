@@ -19,7 +19,7 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 
 ## 常駐
 
-`resident { … }` を宣言すると、タスクトレイ（macOS はメニューバー）に居続けます。窓を閉じても終了せず隠し、アイコンのクリックか、メニューの「開く」で出します。書き方は [language-reference.md](language-reference.md) の「常駐（resident）」。
+`resident { … }` を宣言すると、タスクトレイ（macOS はメニューバー）に居続けます。窓を閉じても終了せず隠し、アイコンのクリックか、右クリックのメニューの「開く」で出します。右クリックのメニューには、画面を開く項目、出来事を起こす項目、区切り線を宣言できます。書き方は [language-reference.md](language-reference.md) の「常駐（resident）」。
 
 - 確かめたこと：Linux（xvfb）で、トレイのアイコンを作れること、窓が開いて画面が描かれること、同じ保存先の 2 つ目の起動を断ること。
 - **確かめていないこと：** 実際のトレイに出たアイコンのクリック・メニュー、窓を閉じて隠れる動き（仮想ディスプレイにはトレイが無い）、Windows・macOS の動作。macOS で Dock のアイコンを隠す設定（アクセサリのアクティベーションポリシー）は、まだ入れていません。
@@ -38,5 +38,20 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 
 ## 前提と未確認
 
+- Windows 用の exe は、Linux から `--target x86_64-pc-windows-gnu`（mingw-w64）で組めます。手順と確認のしかたは下の「Windows の確認用」。
 - 組むには、Linux では libwebkit2gtk-4.1-dev と GTK の開発ファイルが要ります。
 - Windows の exe は、この開発環境では組んでいません（WebView2 ランタイムが要ります。Windows 11 は標準、10 は別に入れる必要があります）。`wry` と `tao` は Windows でも組める部品ですが、実際の確認は未了です。
+
+## Windows の確認用
+
+Linux から Windows 用の exe を組めます（実機で動かして確かめるためのもの。Windows 上の動作は、この開発環境では確かめていません）。
+
+```
+rustup target add x86_64-pc-windows-gnu          # Debian/Ubuntu は gcc-mingw-w64-x86-64 も要る
+geas rust アプリ.geas -o 出力先 --host --runtime --standalone
+cd 出力先/window
+CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc cargo build --release --target x86_64-pc-windows-gnu
+# できる物：target/x86_64-pc-windows-gnu/release/geas_window.exe
+```
+
+Windows 側では、WebView2 ランタイム（Windows 11 は標準）が要ります。確認の順は、`geas_window.exe --selftest`（窓が開いて画面が描かれたら終了コード 0）、通常の起動、（常駐を宣言したアプリは）トレイのアイコンのクリック・右クリックのメニュー・窓を閉じて隠れる動き。保存先は `%APPDATA%\アプリ名\app.sqlite`。

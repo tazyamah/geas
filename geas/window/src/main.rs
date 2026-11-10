@@ -50,6 +50,10 @@ mod tray {
         pub quit: MenuId,
         /// メニューの項目 → 開く画面の URL（パス）
         pub screens: Vec<(MenuId, String)>,
+        /// メニューの項目 → 起こす出来事の名前
+        pub events: Vec<(MenuId, String)>,
+        /// 左クリックの動き：true なら窓の開閉、false ならメニューを出す
+        pub toggle: bool,
     }
 
     /// 最初の画面の色（accent）の丸いアイコン。画像の部品は使わず、色から作る
@@ -73,18 +77,33 @@ mod tray {
         let menu = Menu::new();
         let open = MenuItem::new("開く", true, None);
         menu.append(&open).map_err(|e| e.to_string())?;
-        let mut screens = Vec::new();
+        let (mut screens, mut events) = (Vec::new(), Vec::new());
+        let mut sep = false;
         for m in def["menu"].as_array().into_iter().flatten() {
+            if m["kind"] == "separator" {
+                menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+                continue;
+            }
+            // 「開く」と宣言した項目のあいだに区切りを入れる（最初の宣言項目の前）
+            if !sep {
+                menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
+                sep = true;
+            }
             let item = MenuItem::new(m["label"].as_str().unwrap_or(""), true, None);
             menu.append(&item).map_err(|e| e.to_string())?;
-            screens.push((item.id().clone(), m["url"].as_str().unwrap_or("/").to_string()));
+            if m["kind"] == "event" {
+                events.push((item.id().clone(), m["event"].as_str().unwrap_or("").to_string()));
+            } else {
+                screens.push((item.id().clone(), m["url"].as_str().unwrap_or("/").to_string()));
+            }
         }
         menu.append(&PredefinedMenuItem::separator()).map_err(|e| e.to_string())?;
         let quit = MenuItem::new("終了", true, None);
         menu.append(&quit).map_err(|e| e.to_string())?;
         let icon = icon(accent).ok_or("アイコンを作れません")?;
         let tooltip = def["tooltip"].as_str().unwrap_or("");
-        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip(tooltip).with_icon(icon).build().map_err(|e| e.to_string())?;
+        let toggle = def["click"] != "menu";
+        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_menu_on_left_click(!toggle).with_tooltip(tooltip).with_icon(icon).build().map_err(|e| e.to_string())?;
         let p1 = proxy.clone();
         TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
@@ -94,7 +113,7 @@ mod tray {
         tray_icon::menu::MenuEvent::set_event_handler(Some(move |e: tray_icon::menu::MenuEvent| {
             let _ = proxy.send_event(super::UserEvent::Menu(e.id));
         }));
-        Ok(Tray { _icon: tray, open: open.id().clone(), quit: quit.id().clone(), screens })
+        Ok(Tray { _icon: tray, open: open.id().clone(), quit: quit.id().clone(), screens, events, toggle })
     }
 }
 
@@ -288,10 +307,13 @@ fn main() {
             }
             #[cfg(feature = "resident")]
             Event::UserEvent(UserEvent::TrayClick) => {
-                let shown = window.is_visible();
-                window.set_visible(!shown);
-                if !shown {
-                    window.set_focus();
+                // 左クリックでメニューを出す宣言（click menu）のときは、窓を開閉しない
+                if tray_state.as_ref().map_or(false, |t| t.toggle) {
+                    let shown = window.is_visible();
+                    window.set_visible(!shown);
+                    if !shown {
+                        window.set_focus();
+                    }
                 }
             }
             #[cfg(feature = "resident")]
@@ -307,6 +329,13 @@ fn main() {
                         let _ = webview.load_url(&format!("{}{}", base, url));
                         window.set_visible(true);
                         window.set_focus();
+                    } else if let Some((_, name)) = t.events.iter().find(|(m, _)| *m == id) {
+                        // 出来事を、窓の外（トレイ）から起こす。窓は出さない。結果は標準エラーに 1 行
+                        let r = geas_server::engine::lock(&engine).event(name, &serde_json::json!({}));
+                        match r {
+                            Ok(v) => eprintln!("{}", serde_json::json!({ "log": "geas.resident", "event": name, "runs": v["runs"].as_array().map_or(0, |a| a.len()) })),
+                            Err(e) => eprintln!("{}", serde_json::json!({ "log": "geas.resident", "event": name, "error": e })),
+                        }
                     }
                 }
             }
