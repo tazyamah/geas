@@ -114,11 +114,35 @@ async function loadShow(sc, qname) {
   const box = $(`[data-show="${qname}"] .rows`);
   if (!box) return;
   const args = showArgs(sc, qname);
-  if (!args) { box.innerHTML = `<p class="hint">入力すると表示します。</p>`; box.dataset.drawn = ""; return; }
+  if (!args) { drawRows(box, [], `<p class="hint">入力すると表示します。</p>`); box.dataset.drawn = ""; return; }
   const got = await fetchRows(qname, args), rows = got.rows, qd = Q[qname];
   if (got.key && box.dataset.drawn === got.key) return;  // 前に描いた答えと同じ（URL と版が同じ）。描き直さない
   box.dataset.drawn = got.key || "";
-  box.innerHTML = rows.length ? rows.map((r) => rowHtml(qd, r, { opens: sc.opens, slot: sc.slots[0] })).join("") : `<p class="hint">ありません。</p>`;
+  drawRows(box, rows.map((r) => rowHtml(qd, r, { opens: sc.opens, slot: sc.slots[0] })), `<p class="hint">ありません。</p>`);
+}
+// 一覧の箱を、行の HTML の並びで描く。前に描いた並びと、先頭からと末尾から同じ HTML の行はそのまま残し、間だけを作り直す
+// （書き込みで 1 行が変わっただけでも、1 万行を全部作り直すと 0.2〜0.3 秒かかる）。できる DOM は、全部を作り直したときと同じ
+const drawnRows = new WeakMap();  // 箱 → 前に描いた行の HTML の並び（箱の子と 1 つずつ対応）
+const drawnOptions = new WeakMap();  // 選ぶ欄 → 前に作った選択肢の HTML
+function drawRows(box, htmls, empty) {
+  const prev = drawnRows.get(box);
+  if (!htmls.length || !prev || box.children.length !== prev.length) {
+    box.innerHTML = htmls.length ? htmls.join("") : empty;
+    if (htmls.length) drawnRows.set(box, htmls); else drawnRows.delete(box);
+    return;
+  }
+  let head = 0, tail = 0;
+  const n = Math.min(prev.length, htmls.length);
+  while (head < n && prev[head] === htmls[head]) head++;
+  while (tail < n - head && prev[prev.length - 1 - tail] === htmls[htmls.length - 1 - tail]) tail++;
+  for (let i = prev.length - tail - 1; i >= head; i--) box.children[i].remove();
+  const mid = htmls.slice(head, htmls.length - tail).join("");
+  if (mid) {
+    const t = document.createElement("template");
+    t.innerHTML = mid;
+    box.insertBefore(t.content, box.children[head] || null);
+  }
+  drawnRows.set(box, htmls);
 }
 
 // ---- 画面 ----
@@ -180,7 +204,9 @@ async function fillField(sc, f) {
   }
   const sel = $(`[data-field="${f.name}"]`), idc = idCol(qd).name;
   if (!sel) return;
-  sel.innerHTML = rows.map((r) => `<option value="${esc(r[idc])}">${esc(r[mainCol(qd).name])}</option>`).join("");
+  // 選択肢が前と同じなら作り直さない（入荷のように、選択肢に出ない項目だけが変わったとき。1 万件の選択肢を作り直すと約 0.2 秒かかる）
+  const html = rows.map((r) => `<option value="${esc(r[idc])}">${esc(r[mainCol(qd).name])}</option>`).join("");
+  if (drawnOptions.get(sel) !== html) { sel.innerHTML = html; drawnOptions.set(sel, html); }
   const saved = store.get("pick:" + f.from);
   sel.value = rows.some((r) => String(r[idc]) === saved) ? saved : (rows[0] ? rows[0][idc] : "");
   const show = () => {
@@ -188,7 +214,8 @@ async function fillField(sc, f) {
     $(`[data-picked="${f.name}"]`).textContent = r ? qd.columns.filter((c) => c.name !== idc && c !== mainCol(qd)).map((c) => `${c.label} ${fmt(c, r)}`).join("　") : "";
   };
   show();
-  sel.addEventListener("change", () => { store.set("pick:" + f.from, sel.value); show(); sc.shows.forEach((q) => loadShow(sc, q).catch(() => {})); });
+  // 選び直したとき。処理の後に選ぶ元を引き直しても、受け手は 1 つ（足し続けると、選び直すたびに同じ引き直しが重なる）
+  sel.onchange = () => { store.set("pick:" + f.from, sel.value); show(); sc.shows.forEach((q) => loadShow(sc, q).catch(() => {})); };
 }
 
 // ---- 処理を呼ぶ ----
