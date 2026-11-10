@@ -3,91 +3,109 @@
   "Num_i16_cast_unsigned": {
    "calls": 18,
    "fingerprint": "2badf447ae1a6755",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_count_ones": {
    "calls": 18,
    "fingerprint": "303484728dd7ef16",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_count_zeros": {
    "calls": 18,
    "fingerprint": "d3c38021ea04d359",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_is_negative": {
    "calls": 18,
    "fingerprint": "e069b1c9eb9d3e71",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_is_positive": {
    "calls": 18,
    "fingerprint": "cd3cb70d97edff40",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_isolate_highest_one": {
    "calls": 18,
    "fingerprint": "67043eb131798df0",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_isolate_lowest_one": {
    "calls": 18,
    "fingerprint": "d999aafa703182c6",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_leading_ones": {
    "calls": 18,
    "fingerprint": "9818c8e48c86e059",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_leading_zeros": {
    "calls": 18,
    "fingerprint": "041a12ba0090b884",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_midpoint": {
    "calls": 324,
    "fingerprint": "e17a68ba9bd72555",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_reverse_bits": {
    "calls": 18,
    "fingerprint": "215e0135f69ff79b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_rotate_left": {
    "calls": 288,
    "fingerprint": "aff2d1106efcb2c6",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_rotate_right": {
    "calls": 288,
    "fingerprint": "bcc958b51dbfb82f",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_saturating_abs": {
    "calls": 18,
    "fingerprint": "816a1ce7d64810d2",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_add": {
    "calls": 324,
    "fingerprint": "14908ba6a0a56dcd",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_add_unsigned": {
    "calls": 288,
    "fingerprint": "eb35c7aac4bf63f0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_mul": {
    "calls": 324,
    "fingerprint": "71fbbded1dfd63a1",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_neg": {
    "calls": 18,
    "fingerprint": "5f211804578bbf96",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_pow": {
@@ -98,76 +116,91 @@
   "Num_i16_saturating_sub": {
    "calls": 324,
    "fingerprint": "225acbfea0cce20c",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_saturating_sub_unsigned": {
    "calls": 288,
    "fingerprint": "c8c4ba2e37ff13fc",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_signum": {
    "calls": 18,
    "fingerprint": "6d6a6bf3a32f6963",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_swap_bytes": {
    "calls": 18,
    "fingerprint": "080ca21231318d73",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_to_be": {
    "calls": 18,
    "fingerprint": "201e596720c6ebec",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_to_le": {
    "calls": 18,
    "fingerprint": "70b39932569a1c0e",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_trailing_ones": {
    "calls": 18,
    "fingerprint": "a75c704102e3cfe2",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_trailing_zeros": {
    "calls": 18,
    "fingerprint": "6540b6134f06c8b0",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_unbounded_shl": {
    "calls": 288,
    "fingerprint": "4d4046834e257544",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_unbounded_shr": {
    "calls": 288,
    "fingerprint": "3bfb5e0fc8ec39e9",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i16_wrapping_abs": {
    "calls": 18,
    "fingerprint": "ca386952e4f00d56",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_add": {
    "calls": 324,
    "fingerprint": "8b5688098e1f4bae",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_add_unsigned": {
    "calls": 288,
    "fingerprint": "2f620f41c4bd82ee",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_mul": {
    "calls": 324,
    "fingerprint": "773897c29b6fe5d6",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_neg": {
    "calls": 18,
    "fingerprint": "5bee690b28335e90",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_pow": {
@@ -178,101 +211,121 @@
   "Num_i16_wrapping_sub": {
    "calls": 324,
    "fingerprint": "471c08c2b49b0e9d",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i16_wrapping_sub_unsigned": {
    "calls": 288,
    "fingerprint": "b19fb03fa04113b4",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_cast_unsigned": {
    "calls": 18,
    "fingerprint": "1bdb61eed97e5519",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_count_ones": {
    "calls": 18,
    "fingerprint": "100d4332c5e34063",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_count_zeros": {
    "calls": 18,
    "fingerprint": "d7b589badf080264",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_is_negative": {
    "calls": 18,
    "fingerprint": "abe2cfbca8d8e74d",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_is_positive": {
    "calls": 18,
    "fingerprint": "9d7ba7f523b0cac7",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_isolate_highest_one": {
    "calls": 18,
    "fingerprint": "077e8907063129fa",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_isolate_lowest_one": {
    "calls": 18,
    "fingerprint": "c51983a4cf8d1fba",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_leading_ones": {
    "calls": 18,
    "fingerprint": "9ed44cfb456fe336",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_leading_zeros": {
    "calls": 18,
    "fingerprint": "be1d9eccd3a01bb4",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_midpoint": {
    "calls": 324,
    "fingerprint": "3f3819b73a405f9f",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_reverse_bits": {
    "calls": 18,
    "fingerprint": "fdb8cff4d0d5f77a",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_rotate_left": {
    "calls": 288,
    "fingerprint": "2d45df4a89c19012",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_rotate_right": {
    "calls": 288,
    "fingerprint": "52f47d80bbb325ec",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_saturating_abs": {
    "calls": 18,
    "fingerprint": "4f62371b576f7064",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_add": {
    "calls": 324,
    "fingerprint": "35870bd2a78b69ae",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_add_unsigned": {
    "calls": 288,
    "fingerprint": "1ae38321ea470535",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_mul": {
    "calls": 324,
    "fingerprint": "6c6dec265413e7c9",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_neg": {
    "calls": 18,
    "fingerprint": "9a33a5ae7b4ae3e4",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_pow": {
@@ -283,76 +336,91 @@
   "Num_i32_saturating_sub": {
    "calls": 324,
    "fingerprint": "2fa6f36a08a62d4b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_saturating_sub_unsigned": {
    "calls": 288,
    "fingerprint": "44674c8330368ca0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_signum": {
    "calls": 18,
    "fingerprint": "e8573c48f9bc3ec2",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_swap_bytes": {
    "calls": 18,
    "fingerprint": "3b86aa173005257b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_to_be": {
    "calls": 18,
    "fingerprint": "ab594e0bad21ede8",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_to_le": {
    "calls": 18,
    "fingerprint": "c6d072ed5eaf8830",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_trailing_ones": {
    "calls": 18,
    "fingerprint": "467ef8fda7a9f345",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_trailing_zeros": {
    "calls": 18,
    "fingerprint": "c596c0055af01bbe",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_unbounded_shl": {
    "calls": 288,
    "fingerprint": "6da7b0b07b7cd187",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_unbounded_shr": {
    "calls": 288,
    "fingerprint": "f04ec519d45c428b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i32_wrapping_abs": {
    "calls": 18,
    "fingerprint": "830d9392a12929f0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_add": {
    "calls": 324,
    "fingerprint": "3b485349b3d88a38",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_add_unsigned": {
    "calls": 288,
    "fingerprint": "452f945f09be81b3",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_mul": {
    "calls": 324,
    "fingerprint": "81e373f3bd3844a8",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_neg": {
    "calls": 18,
    "fingerprint": "06a5a5a5ba9f47fd",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_pow": {
@@ -363,91 +431,109 @@
   "Num_i32_wrapping_sub": {
    "calls": 324,
    "fingerprint": "cc8080f3e7006add",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i32_wrapping_sub_unsigned": {
    "calls": 288,
    "fingerprint": "6acd79b9096a02ea",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_count_ones": {
    "calls": 18,
    "fingerprint": "8653976deb8c7e02",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_count_zeros": {
    "calls": 18,
    "fingerprint": "baccbffd22d98395",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_is_negative": {
    "calls": 18,
    "fingerprint": "3430fb26bd2fa090",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_is_positive": {
    "calls": 18,
    "fingerprint": "b58a04f698c92271",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_isolate_highest_one": {
    "calls": 18,
    "fingerprint": "9c04e7ea4820b314",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_isolate_lowest_one": {
    "calls": 18,
    "fingerprint": "db9fd4d4ef69da02",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_leading_ones": {
    "calls": 18,
    "fingerprint": "caa1463f936e655b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_leading_zeros": {
    "calls": 18,
    "fingerprint": "c86631ca365c0135",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_midpoint": {
    "calls": 324,
    "fingerprint": "73f0bdf00bfb6933",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_reverse_bits": {
    "calls": 18,
    "fingerprint": "521f99f886a48fd9",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_rotate_left": {
    "calls": 288,
    "fingerprint": "6e1a7d3f207dc48a",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_rotate_right": {
    "calls": 288,
    "fingerprint": "b10124b56c0266f4",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_saturating_abs": {
    "calls": 18,
    "fingerprint": "6ff89a8adf9771ec",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_saturating_add": {
    "calls": 324,
    "fingerprint": "41fa0be418f9823b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_saturating_mul": {
    "calls": 324,
    "fingerprint": "55d1a9b9096377ff",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_saturating_neg": {
    "calls": 18,
    "fingerprint": "7435a736dcde525a",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_saturating_pow": {
@@ -458,66 +544,79 @@
   "Num_i64_saturating_sub": {
    "calls": 324,
    "fingerprint": "187b702d16e30d7a",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_signum": {
    "calls": 18,
    "fingerprint": "1b47e3db50244154",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_swap_bytes": {
    "calls": 18,
    "fingerprint": "f6de23557e1d6248",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_to_be": {
    "calls": 18,
    "fingerprint": "1deb6dcff0d15597",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_to_le": {
    "calls": 18,
    "fingerprint": "c23dc1977b2b9e8f",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_trailing_ones": {
    "calls": 18,
    "fingerprint": "ecaf28fdaaf4eb67",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_trailing_zeros": {
    "calls": 18,
    "fingerprint": "1819862e43fb0a3c",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_unbounded_shl": {
    "calls": 288,
    "fingerprint": "0ae19661e140b396",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_unbounded_shr": {
    "calls": 288,
    "fingerprint": "cbc9a158be38da9e",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i64_wrapping_abs": {
    "calls": 18,
    "fingerprint": "34b097ab5a42448b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_wrapping_add": {
    "calls": 324,
    "fingerprint": "b31f2e7d54bc2012",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_wrapping_mul": {
    "calls": 324,
    "fingerprint": "1eb1631dd6985294",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_wrapping_neg": {
    "calls": 18,
    "fingerprint": "aaf89dfdf880fd97",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i64_wrapping_pow": {
@@ -528,96 +627,115 @@
   "Num_i64_wrapping_sub": {
    "calls": 324,
    "fingerprint": "c01f92b943d4a410",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_cast_unsigned": {
    "calls": 16,
    "fingerprint": "9db2d73ab1c320d7",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_count_ones": {
    "calls": 16,
    "fingerprint": "a10f3d85aa2e9706",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_count_zeros": {
    "calls": 16,
    "fingerprint": "4583c5b2b68b030a",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_is_negative": {
    "calls": 16,
    "fingerprint": "89112f2d779c2035",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_is_positive": {
    "calls": 16,
    "fingerprint": "76666144dbda68c3",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_isolate_highest_one": {
    "calls": 16,
    "fingerprint": "8f2bed5e6c9444e5",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_isolate_lowest_one": {
    "calls": 16,
    "fingerprint": "354d471e47f1c756",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_leading_ones": {
    "calls": 16,
    "fingerprint": "a344a68c0aef4e8e",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_leading_zeros": {
    "calls": 16,
    "fingerprint": "0195653a474f52da",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_midpoint": {
    "calls": 256,
    "fingerprint": "d2c10d1f39bce442",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_reverse_bits": {
    "calls": 16,
    "fingerprint": "9c71b5a4e06d7092",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_rotate_left": {
    "calls": 256,
    "fingerprint": "91f0b544df3f41a1",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_rotate_right": {
    "calls": 256,
    "fingerprint": "be5c2871496d96d5",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_saturating_abs": {
    "calls": 16,
    "fingerprint": "c2c8d4adc475bf34",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_add": {
    "calls": 256,
    "fingerprint": "9af4403dbb6325b9",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_add_unsigned": {
    "calls": 224,
    "fingerprint": "0f278e857a7f5946",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_mul": {
    "calls": 256,
    "fingerprint": "1f7c2cc1709f3cac",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_neg": {
    "calls": 16,
    "fingerprint": "f5033b5bfe22b446",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_pow": {
@@ -628,76 +746,91 @@
   "Num_i8_saturating_sub": {
    "calls": 256,
    "fingerprint": "408e619308756048",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_saturating_sub_unsigned": {
    "calls": 224,
    "fingerprint": "824e44a628cb162b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_signum": {
    "calls": 16,
    "fingerprint": "ed2eececcdb08dfc",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_swap_bytes": {
    "calls": 16,
    "fingerprint": "f195e7cc43e9a583",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_to_be": {
    "calls": 16,
    "fingerprint": "c2f464bd6f5029f1",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_to_le": {
    "calls": 16,
    "fingerprint": "ae3ac7b2fb2ed015",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_trailing_ones": {
    "calls": 16,
    "fingerprint": "27ed747c1c11baab",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_trailing_zeros": {
    "calls": 16,
    "fingerprint": "6e45d726144fec44",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_unbounded_shl": {
    "calls": 256,
    "fingerprint": "7312397071a2076b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_unbounded_shr": {
    "calls": 256,
    "fingerprint": "68fcb47b56ad2440",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_i8_wrapping_abs": {
    "calls": 16,
    "fingerprint": "bdca681e5575e237",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_add": {
    "calls": 256,
    "fingerprint": "a65ec7328493c6ca",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_add_unsigned": {
    "calls": 224,
    "fingerprint": "a629285dd783e57c",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_mul": {
    "calls": 256,
    "fingerprint": "5c3874d09254c324",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_neg": {
    "calls": 16,
    "fingerprint": "45637b13049e2ce8",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_pow": {
@@ -708,101 +841,121 @@
   "Num_i8_wrapping_sub": {
    "calls": 256,
    "fingerprint": "a48629ccc90df63b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_i8_wrapping_sub_unsigned": {
    "calls": 224,
    "fingerprint": "685602d917c6ddba",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_abs_diff": {
    "calls": 256,
    "fingerprint": "edb2283b912dd0c2",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_bit_width": {
    "calls": 16,
    "fingerprint": "3e812447ac6d44fc",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_cast_signed": {
    "calls": 16,
    "fingerprint": "9900c252be372fa0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_count_ones": {
    "calls": 16,
    "fingerprint": "282e21f57c763e46",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_count_zeros": {
    "calls": 16,
    "fingerprint": "df7a98aa64b3ca77",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_is_power_of_two": {
    "calls": 16,
    "fingerprint": "141694dd1968121f",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_isolate_highest_one": {
    "calls": 16,
    "fingerprint": "1ec548cba307f0f9",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_isolate_lowest_one": {
    "calls": 16,
    "fingerprint": "509f2aba93e87697",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_isqrt": {
    "calls": 16,
    "fingerprint": "afa20805769a0867",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_leading_ones": {
    "calls": 16,
    "fingerprint": "0228fb4783afbb4a",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_leading_zeros": {
    "calls": 16,
    "fingerprint": "4437debbeda692cc",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_midpoint": {
    "calls": 256,
    "fingerprint": "4c6ac8f5ebda4ba0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_reverse_bits": {
    "calls": 16,
    "fingerprint": "676f782e13f09e91",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_rotate_left": {
    "calls": 256,
    "fingerprint": "9970888170036e36",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_rotate_right": {
    "calls": 256,
    "fingerprint": "95f7c5c2658a14f3",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_saturating_add": {
    "calls": 256,
    "fingerprint": "a3dc008e2f4f3179",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_saturating_add_signed": {
    "calls": 288,
    "fingerprint": "0bdc19238ff034ea",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_saturating_mul": {
    "calls": 256,
    "fingerprint": "e32cdf00b42bf45a",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_saturating_pow": {
@@ -813,66 +966,79 @@
   "Num_u16_saturating_sub": {
    "calls": 256,
    "fingerprint": "4d2f98c4e5ba2d4d",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_saturating_sub_signed": {
    "calls": 288,
    "fingerprint": "80ae623783593932",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_swap_bytes": {
    "calls": 16,
    "fingerprint": "656a9380c2fa3cc0",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_to_be": {
    "calls": 16,
    "fingerprint": "5a56f35620d94bc6",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_to_le": {
    "calls": 16,
    "fingerprint": "da24305499da37c3",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_trailing_ones": {
    "calls": 16,
    "fingerprint": "dbaeb77397342b05",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_trailing_zeros": {
    "calls": 16,
    "fingerprint": "3415a4b80384f186",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_unbounded_shl": {
    "calls": 256,
    "fingerprint": "dc948b70a25782f8",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_unbounded_shr": {
    "calls": 256,
    "fingerprint": "1d036419ad8b0365",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u16_wrapping_add": {
    "calls": 256,
    "fingerprint": "b94196182c866a06",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_wrapping_add_signed": {
    "calls": 288,
    "fingerprint": "45704d3415b2d590",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_wrapping_mul": {
    "calls": 256,
    "fingerprint": "a7c87fb5bd6b6b13",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_wrapping_neg": {
    "calls": 16,
    "fingerprint": "ea07c297848fae0a",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_wrapping_pow": {
@@ -883,101 +1049,121 @@
   "Num_u16_wrapping_sub": {
    "calls": 256,
    "fingerprint": "f0225048e06abb3e",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u16_wrapping_sub_signed": {
    "calls": 288,
    "fingerprint": "0aae96d88a9ee8ab",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_abs_diff": {
    "calls": 256,
    "fingerprint": "a5bc20581139833c",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_bit_width": {
    "calls": 16,
    "fingerprint": "74752596d5bf5412",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_cast_signed": {
    "calls": 16,
    "fingerprint": "49c892a9d85f9619",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_count_ones": {
    "calls": 16,
    "fingerprint": "9e2ca1cdb766520d",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_count_zeros": {
    "calls": 16,
    "fingerprint": "f3cbb7f5db72c83d",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_is_power_of_two": {
    "calls": 16,
    "fingerprint": "bb01b86b22cb2c40",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_isolate_highest_one": {
    "calls": 16,
    "fingerprint": "f080c1b2a5638909",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_isolate_lowest_one": {
    "calls": 16,
    "fingerprint": "c8260e89f45294f0",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_isqrt": {
    "calls": 16,
    "fingerprint": "6129ed518044cf54",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_leading_ones": {
    "calls": 16,
    "fingerprint": "af4039f462baf3e2",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_leading_zeros": {
    "calls": 16,
    "fingerprint": "8289a47c92fa88eb",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_midpoint": {
    "calls": 256,
    "fingerprint": "3c18857fd7f426d8",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_reverse_bits": {
    "calls": 16,
    "fingerprint": "820bb3d2074cda4c",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_rotate_left": {
    "calls": 256,
    "fingerprint": "214ed6cc3f977bdd",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_rotate_right": {
    "calls": 256,
    "fingerprint": "b463eb8c684f4cae",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_saturating_add": {
    "calls": 256,
    "fingerprint": "62591d9608c92ea2",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_saturating_add_signed": {
    "calls": 288,
    "fingerprint": "7b44f2e46c645693",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_saturating_mul": {
    "calls": 256,
    "fingerprint": "20e665b0fe7f7d2c",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_saturating_pow": {
@@ -988,66 +1174,79 @@
   "Num_u32_saturating_sub": {
    "calls": 256,
    "fingerprint": "12843f69132bc043",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_saturating_sub_signed": {
    "calls": 288,
    "fingerprint": "f3d9d2efc8764fc3",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_swap_bytes": {
    "calls": 16,
    "fingerprint": "ad8e2c362fa1711f",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_to_be": {
    "calls": 16,
    "fingerprint": "fbbd24cc4e5398d8",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_to_le": {
    "calls": 16,
    "fingerprint": "29c6f8906535ca66",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_trailing_ones": {
    "calls": 16,
    "fingerprint": "a801dcd54a048adf",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_trailing_zeros": {
    "calls": 16,
    "fingerprint": "29c7138da7610e9b",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_unbounded_shl": {
    "calls": 256,
    "fingerprint": "d264377f5832ef3d",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_unbounded_shr": {
    "calls": 256,
    "fingerprint": "d4565e491e0d835f",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u32_wrapping_add": {
    "calls": 256,
    "fingerprint": "8c8e61ce10a4b789",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_wrapping_add_signed": {
    "calls": 288,
    "fingerprint": "2b4e3452d5c72c5f",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_wrapping_mul": {
    "calls": 256,
    "fingerprint": "efcb96b72325a581",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_wrapping_neg": {
    "calls": 16,
    "fingerprint": "911887d4d83deddb",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_wrapping_pow": {
@@ -1058,101 +1257,121 @@
   "Num_u32_wrapping_sub": {
    "calls": 256,
    "fingerprint": "1274c50caa302f21",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u32_wrapping_sub_signed": {
    "calls": 288,
    "fingerprint": "1057d01920950b31",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_abs_diff": {
    "calls": 196,
    "fingerprint": "117238989b3b0e74",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_bit_width": {
    "calls": 14,
    "fingerprint": "113652f05c105750",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_cast_signed": {
    "calls": 14,
    "fingerprint": "2f0ec6bbd64ec617",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_count_ones": {
    "calls": 14,
    "fingerprint": "d6fb6b4fc8457f66",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_count_zeros": {
    "calls": 14,
    "fingerprint": "8432f7b6ba2d4047",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_is_power_of_two": {
    "calls": 14,
    "fingerprint": "78911256cfc21d35",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_isolate_highest_one": {
    "calls": 14,
    "fingerprint": "192b050f8e435ca2",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_isolate_lowest_one": {
    "calls": 14,
    "fingerprint": "a25ebba412a24a1d",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_isqrt": {
    "calls": 14,
    "fingerprint": "2958063bbcd70f7e",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_leading_ones": {
    "calls": 14,
    "fingerprint": "13af74578eb6d75f",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_leading_zeros": {
    "calls": 14,
    "fingerprint": "02696551b5ef3dbb",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_midpoint": {
    "calls": 196,
    "fingerprint": "a83a220bd49c6b7b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_reverse_bits": {
    "calls": 14,
    "fingerprint": "5d0205a7e25e08fc",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_rotate_left": {
    "calls": 224,
    "fingerprint": "bef5c9e1b71e8b2c",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_rotate_right": {
    "calls": 224,
    "fingerprint": "6e4bb4c062fdc9c3",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_saturating_add": {
    "calls": 196,
    "fingerprint": "83ec53037e7280a9",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_saturating_add_signed": {
    "calls": 224,
    "fingerprint": "1059cee8d78de5fb",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_saturating_mul": {
    "calls": 196,
    "fingerprint": "dbaa370f9158f80b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_saturating_pow": {
@@ -1163,66 +1382,79 @@
   "Num_u8_saturating_sub": {
    "calls": 196,
    "fingerprint": "2603402b91a0e479",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_saturating_sub_signed": {
    "calls": 224,
    "fingerprint": "53adc299653faf6b",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_swap_bytes": {
    "calls": 14,
    "fingerprint": "fc57fb32608189b2",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_to_be": {
    "calls": 14,
    "fingerprint": "5bcab59240cc0290",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_to_le": {
    "calls": 14,
    "fingerprint": "5e9d76a25e7ce6ca",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_trailing_ones": {
    "calls": 14,
    "fingerprint": "87ed8437797968c9",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_trailing_zeros": {
    "calls": 14,
    "fingerprint": "66e0fe54327aef72",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_unbounded_shl": {
    "calls": 224,
    "fingerprint": "68eb3a004f4208bb",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_unbounded_shr": {
    "calls": 224,
    "fingerprint": "c0512d993144d8a7",
+   "proved": "panic しない",
    "reference": true
   },
   "Num_u8_wrapping_add": {
    "calls": 196,
    "fingerprint": "f89c2b14a801d810",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_wrapping_add_signed": {
    "calls": 224,
    "fingerprint": "90ffd19ce3b776f0",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_wrapping_mul": {
    "calls": 196,
    "fingerprint": "a66f9f2bd5202570",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_wrapping_neg": {
    "calls": 14,
    "fingerprint": "079f8fe157a429b6",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_wrapping_pow": {
@@ -1233,11 +1465,13 @@
   "Num_u8_wrapping_sub": {
    "calls": 196,
    "fingerprint": "d9b6c7759eaa1813",
+   "proved": "式どおりで、panic しない",
    "reference": true
   },
   "Num_u8_wrapping_sub_signed": {
    "calls": 224,
    "fingerprint": "a7f805caea9be346",
+   "proved": "式どおりで、panic しない",
    "reference": true
   }
  },
