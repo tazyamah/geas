@@ -80,3 +80,80 @@ def test_parts_コマンドは_食い違いがあれば終了コード_1(tmp_pat
     assert "overflow：panic" in r.stdout and "食い違う部品が 5 個" in r.stdout
     r = subprocess.run([sys.executable, "-m", "geas", "parts", str(src)], capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0 and "確かめる部品（library）がありません" in r.stdout  # 呼ばれていない部品は、--all を付けたときだけ
+
+
+# ---- 台帳：検査の結果を、仕様書の「人の保証」に出す ----
+APP = """ltype Count = int 0..100
+
+entity Tray {
+  tray_id: id unique
+  n: Count required
+}
+result PutResult {
+  Done(tray_id: id)
+}
+library half(x: Count) -> Count from rust "std" "" call "x / 2" guarantee result <= x trust check "半分にするだけ"
+deed put_tray {
+  input n: Count required
+  writes Tray
+  result PutResult
+  effects none
+
+  let t = create Tray { n: half(n) }
+  return Done(t.tray_id)
+}
+nexus Filling {
+  put_tray: Done → reply
+}
+"""
+
+
+def geas(*args):
+    return subprocess.run([sys.executable, "-m", "geas", *args], capture_output=True, text=True, encoding="utf-8")
+
+
+def test_仕様書の人の保証に_宣言を実際に呼んで確かめたかが出る(tmp_path):
+    src = tmp_path / "app.geas"
+    src.write_text(APP, encoding="utf-8")
+    row = lambda: next(ln for ln in geas("spec", str(src)).stdout.splitlines() if "ライブラリ half" in ln)
+    assert "宣言は実際に呼んで確かめていない（geas parts --record）" in row()
+    r = geas("parts", str(src), "--record")
+    assert r.returncode == 0 and (tmp_path / "app.parts.json").exists(), r.stdout + r.stderr
+    assert "宣言は端の値で 14 回呼んで確かめた" in row()   # 両端とその隣、0 の周り、真ん中、ビット幅の境目のうち、0..100 に入る 14 個
+    # 宣言（範囲・式・guarantee）を変えたら、確かめ直すまで「通過」とは出さない。理由の文章だけの変更は、宣言の変更に数えない
+    src.write_text(APP.replace("半分にするだけ", "2 で割るだけ"), encoding="utf-8")
+    assert "宣言は端の値で 14 回呼んで確かめた" in row()
+    src.write_text(APP.replace('call "x / 2"', 'call "x / 3"'), encoding="utf-8")
+    assert "宣言を変えたあと、確かめ直していない" in row()
+    # 食い違いのある部品は、台帳に載らない
+    src.write_text(APP.replace("guarantee result <= x", "guarantee result > x"), encoding="utf-8")
+    assert geas("parts", str(src), "--record").returncode == 1
+    assert "宣言は実際に呼んで確かめていない" in row()
+
+
+def test_標準部品は_同梱の台帳から_確かめた内容が仕様書に出る(tmp_path):
+    import json
+    from geas.partcheck import STD_LEDGER, fingerprint
+    ledger = json.loads(STD_LEDGER.read_text(encoding="utf-8"))["parts"]
+    parts = std_parts(tmp_path)
+    # 台帳は、いまの宣言の全部と合っている（num.geas を作り直して台帳を忘れると、ここで止まる）
+    assert {pt.name: fingerprint(pt) for pt in parts} == {n: row["fingerprint"] for n, row in ledger.items()}
+    assert all(row["reference"] and row["calls"] > 0 for row in ledger.values())
+    from test_geas import STD_APP
+    shutil.copy(NUM, tmp_path / "num.geas")
+    (tmp_path / "app.geas").write_text(STD_APP, encoding="utf-8")
+    out = geas("spec", str(tmp_path / "app.geas")).stdout
+    row = next(ln for ln in out.splitlines() if "u8_wrapping_add" in ln and "ライブラリ" in ln)
+    assert "宣言は全部の入力で証明した（Kani：式どおりで、panic しない）" in row, row
+
+
+def test_標準部品の証明は_部品ごとに作られ_式は実在のメソッドにだけある(tmp_path):
+    sys.path.insert(0, str(NUM.parent.parent.parent / "proofs"))
+    import std_proofs
+    parts = std_proofs.std_parts()
+    src = std_proofs.source(parts)
+    methods = {pt.name.split("_", 2)[2] for pt in parts}
+    assert set(std_proofs.SPEC) <= methods, set(std_proofs.SPEC) - methods
+    assert all(f"fn safe_{pt.name}()" in src for pt in parts)
+    assert src.count("fn eq_") == sum(1 for pt in parts if pt.name.split("_", 2)[2] in std_proofs.SPEC)
+    assert "fn eq_Num_i16_saturating_add()" in src and "(A + B).clamp(LO, HI)" in src

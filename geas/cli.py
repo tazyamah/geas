@@ -57,10 +57,12 @@ def print_diags(ck, file=None):
 
 def load(path):
     try:
-        return check(parse(Path(path).read_text(encoding="utf-8"), path), strict_names=True)
+        ck = check(parse(Path(path).read_text(encoding="utf-8"), path), strict_names=True)
     except (ParseError, LexError, ModuleError) as e:
         print(syntax_error_text(e, path), file=sys.stderr)
         sys.exit(2)
+    ck.code_path = str(path)  # 仕様書が、コードの隣の台帳（部品の検査の結果）を読むため
+    return ck
 
 
 def load_text(text: str, path):
@@ -96,6 +98,12 @@ def run_parts(a) -> int:
             print(e, file=sys.stderr)
             return 2
     print(render(rep))
+    if a.record:
+        import json
+        from .partcheck import ledger_of, ledger_path
+        out = ledger_path(path)
+        out.write_text(json.dumps(ledger_of(rep, parts), ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        print(f"台帳を書きました: {out}")
     return 0 if rep.ok else 1
 
 
@@ -340,6 +348,7 @@ def main(argv=None) -> int:
     pc = sub.add_parser("parts", help="部品（library）を、引数の範囲の端の値で実際に呼んで、宣言（範囲・guarantee・panic しない）どおりかを確かめる。食い違いがあれば終了コード 1")
     pc.add_argument("code", help=".geas ファイル（module で始まるモジュールのファイルでもよい）")
     pc.add_argument("--all", action="store_true", help="呼ばれていない部品も確かめる（モジュールのファイルは、いつも全部）")
+    pc.add_argument("--record", action="store_true", help="結果を、コードの隣の 名前.parts.json（台帳）に書く。仕様書の「人の保証」に、宣言を実際に呼んで確かめたことが出る")
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
     s.add_argument("code", help=".geas ファイル")
     s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")

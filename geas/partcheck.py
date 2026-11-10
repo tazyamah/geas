@@ -15,6 +15,8 @@ library は「人の保証」で、検査器は宣言（引数と戻り値の範
 
 使い方: python -m geas parts ファイル.geas
 """
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -217,3 +219,62 @@ def render(rep: Report) -> str:
         L.append(f"  － {name}：確かめられませんでした（{why}）")
     L.append("宣言と食い違う部品はありません（端の値で確かめた範囲）" if rep.ok else f"宣言と食い違う部品が {len({f.part for f in rep.findings})} 個あります")
     return "\n".join(L)
+
+
+# ---- 台帳：検査の結果を残し、仕様書の「人の保証」に出す ----
+STD_LEDGER = Path(__file__).resolve().parent / "std" / "num.parts.json"
+
+
+def fingerprint(pt) -> str:
+    """宣言の指紋。引数・戻り値の型と範囲、呼ぶ先、式、guarantee のどれかが変わると変わる（名前と理由の文章は含めない）"""
+    from .ast import show_type
+    text = json.dumps([[show_type(t) for _, t in pt.params], [n for n, _ in pt.params], show_type(pt.ret), pt.lib[0], pt.lib[1], pt.lib[2],
+                       "" if pt.guarantee is None else show(pt.guarantee)], ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def toolchain() -> str:
+    try:
+        return subprocess.run(["rustc", "--version"], capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    except OSError:
+        return ""
+
+
+def ledger_of(rep: Report, parts: list, proved: dict | None = None) -> dict:
+    """検査の結果を台帳の形にする。食い違いのあった部品と、確かめられなかった部品は「通過」にしない。
+    proved は 部品名 → 証明した内容（全部の入力で示したもの。proofs/std_proofs.py が作る）"""
+    bad = {f.part for f in rep.findings}
+    out = {}
+    for pt in parts:
+        if pt.name in rep.calls and pt.name not in bad:
+            out[pt.name] = {"fingerprint": fingerprint(pt), "calls": rep.calls[pt.name], "reference": pt.name in rep.compared}
+            if proved and pt.name in proved:
+                out[pt.name]["proved"] = proved[pt.name]
+    return {"toolchain": toolchain(), "parts": out}
+
+
+def ledger_path(code) -> Path:
+    return Path(code).with_suffix(".parts.json")
+
+
+def load_ledger(code=None) -> dict:
+    """部品名 → 台帳の行。標準部品の台帳（geas に同梱）に、アプリの台帳（コードの隣の 名前.parts.json）を重ねる"""
+    out = {}
+    for path in [STD_LEDGER, *([ledger_path(code)] if code else [])]:
+        try:
+            out.update(json.loads(path.read_text(encoding="utf-8")).get("parts", {}))
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def status_text(pt, ledger: dict) -> str:
+    """仕様書の「人の保証」に出す、宣言の確かめの状態"""
+    row = ledger.get(pt.name)
+    if row is None:
+        return "宣言は実際に呼んで確かめていない（geas parts --record）"
+    if row.get("fingerprint") != fingerprint(pt):
+        return "宣言を変えたあと、確かめ直していない（geas parts --record）"
+    if row.get("proved"):
+        return f"宣言は全部の入力で証明した（Kani：{row['proved']}）"
+    return f"宣言は端の値で {row.get('calls', 0)} 回呼んで確かめた" + ("（手本とも一致）" if row.get("reference") else "")
