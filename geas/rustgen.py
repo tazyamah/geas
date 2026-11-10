@@ -700,6 +700,13 @@ class Gen:
         if isinstance(e, Call) and e.n == "digit":
             return (f"(usize::try_from({self.raw_rx(e.args[1], r)}).ok().and_then(|k| {self.raw_rx(e.args[0], r)}.chars().nth(k))"
                     ".and_then(|c| c.to_digit(10)).map_or(0i128, i128::from))")
+        if isinstance(e, Call) and e.n in ("min", "max"):
+            out = self.raw_rx(e.args[0], r)
+            for a in e.args[1:]:
+                out = f"({out}).{e.n}({self.raw_rx(a, r)})"
+            return out
+        if isinstance(e, Call) and e.n == "abs":
+            return f'({self.raw_rx(e.args[0], r)}).checked_abs().ok_or_else(|| "計算があふれました".to_string())?'
         if isinstance(e, Cond):
             return f"(if {self.raw_rx(e.c, r)} {{ {self.raw_rx(e.a, r)} }} else {{ {self.raw_rx(e.b, r)} }})"
         if isinstance(e, SumE):  # sum { 式 | i in positions(raw) }：位置を順に回って足す
@@ -953,6 +960,12 @@ class ProcGen:
             return f'proven!({self.place(e)}.as_ref(), "検査で示した入力が無い: {e.n}")'
         return self.place(e)
 
+    def coll(self, e) -> str:
+        """集合・写像を、借りて読む場所。null になりうる項目は、検査で null でないと確かめてあるので中身を借りる"""
+        if isinstance(e, Attr) and self.nullable(e):
+            return f'proven!({self.place(e)}.as_ref(), "検査で示した項目が null: {e.n}")'
+        return self.src(e)
+
     def rx(self, e) -> str:
         if isinstance(e, Num):
             return f"{e.v}i128"
@@ -1011,7 +1024,10 @@ class ProcGen:
             c = f"{self.src(e.e)}.is_empty()"
             return c if e.kind == "空" else f"!{c}"
         if isinstance(e, Call):
-            if e.n == "len":  # 処理の中の raw：文字数
+            if e.n == "len":  # 文字列と raw は文字数、集合と写像は件数
+                at = self.tok(e.args[0])
+                if at == "Set" or at.startswith("Map:"):
+                    return f"({self.coll(e.args[0])}.len() as i128)"
                 return f"({self.rx(e.args[0])}.chars().count() as i128)"
             if e.n == "to_raw":
                 return self.rx(e.args[0])
@@ -1021,9 +1037,18 @@ class ProcGen:
                 return f"(({self.rx(e.args[0])}) as i64)" if e.n == "time" else self.rx(e.args[0])
             if e.n in self.ck.parts:
                 return self.part_call(e)
+            if e.n in ("min", "max"):  # 組み込み：整数と金額は i128 で比べる
+                out = self.rx(e.args[0])
+                for a in e.args[1:]:
+                    out = f"({out}).{e.n}({self.rx(a)})"
+                return out
+            if e.n == "abs":
+                return f"(({self.rx(e.args[0])}).checked_abs().ok_or(Fault::Overflow({rust_str(show(e))}))?)"
             return f"{e.args[1].n}({self.rx(e.args[0])})?"
         if isinstance(e, Bin):
             lt, rt = self.tok(e.l), self.tok(e.r)
+            if e.op == "in":
+                return f"{self.coll(e.r)}.{'contains' if rt == 'Set' else 'contains_key'}(&({self.rx(e.l)}))"
             l, r = self.rx(e.l), self.rx(e.r)
             if e.op in ("/", "%") and isinstance(e.r, Num):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
@@ -1084,7 +1109,10 @@ class ProcGen:
 
     # ---- 文 ----
     def ret_expr(self, r: Return) -> str:
-        args = ", ".join(self.rx(a) for a in r.args)
+        ts = next(ps for v, ps in self.rdef.variants if v == r.variant)
+        # 数の中身は、検査で型の範囲に収まると示してあるので、物理数へそのまま移す
+        args = ", ".join(self.conv(t, self.rx(a), f"{r.variant}.{n}", proven=True) if t.kind in ("整数", "金額") else self.rx(a)
+                         for a, (n, t) in zip(r.args, ts))
         v = f"{self.rdef.name}::{r.variant}" + (f"({args})" if r.args else "")
         return f"Ok({self.proc.name}Output {{ result: {v}, Write: writes, effects: effects }})"
 

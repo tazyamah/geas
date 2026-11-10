@@ -71,6 +71,34 @@ def load_text(text: str, path):
         raise ValueError(str(e))
 
 
+def run_parts(a) -> int:
+    """部品（library）の境界値の検査。モジュールのファイルは、use で取り込んだ形にして全部の部品を確かめる"""
+    import tempfile
+    from .partcheck import check_parts, render
+    from .stdref import reference
+    path = Path(a.code)
+    text = path.read_text(encoding="utf-8")
+    first = next((ln.split() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("//")), [])
+    is_module = bool(first) and first[0] == "module"
+    try:
+        ck = load_text(f'use "{path.resolve().as_posix()}"\n', path.resolve().parent / "_parts.geas") if is_module else load(a.code)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    parts = [pt for pt in ck.p.parts if pt.external and (is_module or a.all or pt.name in ck.used_libs)]
+    if not parts:
+        print("確かめる部品（library）がありません" + ("" if is_module or a.all else "（呼ばれていない部品も確かめるには --all）"))
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            rep = check_parts(parts, Path(tmp), reference(parts))
+        except RuntimeError as e:
+            print(e, file=sys.stderr)
+            return 2
+    print(render(rep))
+    return 0 if rep.ok else 1
+
+
 def read_base(a) -> tuple[str, str]:
     """前の版のコードの文字列と、その名前（--base のファイル、または --base-git の版）"""
     from . import mutate
@@ -309,6 +337,9 @@ def main(argv=None) -> int:
     c = sub.add_parser("check", help="コードを検査する")
     c.add_argument("code", help=".geas ファイル")
     c.add_argument("--json", action="store_true", help="結果を JSON で出す（AI が直すための手がかり hint つき）")
+    pc = sub.add_parser("parts", help="部品（library）を、引数の範囲の端の値で実際に呼んで、宣言（範囲・guarantee・panic しない）どおりかを確かめる。食い違いがあれば終了コード 1")
+    pc.add_argument("code", help=".geas ファイル（module で始まるモジュールのファイルでもよい）")
+    pc.add_argument("--all", action="store_true", help="呼ばれていない部品も確かめる（モジュールのファイルは、いつも全部）")
     s = sub.add_parser("spec", help="コードから仕様書（③）を生成する")
     s.add_argument("code", help=".geas ファイル")
     s.add_argument("--plan", help="計画書（①）。渡すと、内部 URL ごとの確認の網羅（具体例・ユースケース）も載る")
@@ -398,6 +429,8 @@ def main(argv=None) -> int:
         return run_bench_cmd(a)
     if a.cmd == "env-facts":
         return run_env_facts(a)
+    if a.cmd == "parts":
+        return run_parts(a)
     if a.cmd == "check" and a.json:
         from .hints import syntax_json
         try:

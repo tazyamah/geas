@@ -57,6 +57,7 @@ python -m geas env-verify アプリ.geas (--plan plan.json | --facts 事実.json
 python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
 python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [--run --plan 計画書.md] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束（`--run --plan` を付けると、生き残りを計画書の具体例でも確かめ、食い違えば「具体例で検出」にする。Rust をビルドするので遅い）
+python -m geas parts アプリ.geas [--all]                 # 部品（library）を、引数の範囲の端の値で実際に呼んで、宣言どおりかを確かめる（組めるか・panic・範囲・guarantee・2 回呼んで同じか）。食い違いがあれば終了コード 1。library を書いたら、trust の理由を書く前に通す
 python -m geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・動きが変わるかもしれない処理・URL・画面・ユースケース・生き残り）。PR の本文に貼る
 python -m geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
 python -m geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
@@ -157,6 +158,7 @@ python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 | `hints.py` | `check --json` の hint（指摘の種類ごとの、見る節と直し方）。検査器の指摘の種類を足したら、ここにも足す（テストが見張る） |
 | `trace.py` | `geas trace`。サーバーの構造化ログを仕様書の行に結ぶ |
 | `bench.py` | `geas bench`。AI が書いた `.geas` の採点 |
+| `partcheck.py`・`stdref.py` | 部品の境界値の検査（`geas parts`）と、標準部品の手本（Rust の整数のメソッドを Python で書き直したもの） |
 | `mutate.py` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
 | `modules.py` | `use`／`module` |
 | `names.py` | 名前の規則と表示名の検査 |

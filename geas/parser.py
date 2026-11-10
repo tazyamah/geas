@@ -1164,6 +1164,8 @@ class Parser:
         if self.peek().kind == "OP" and self.peek().val in CMP:
             op = self.next().val
             return Bin(op, l, self.add())
+        if self.accept("in"):  # x in 集合／写像：入っているか（内包表記と for の「名前 in 集まり」は、式を通らず binder が読む）
+            return Bin("in", l, self.add())
         if self.accept("is"):
             kw = self.name()
             if kw not in PRED:
@@ -1178,11 +1180,19 @@ class Parser:
             l = Bin(op, l, self.mul())
         return l
 
+    def unary(self):
+        """先頭の - （負の数・符号の反転）。-5 は数そのもの、-x は 0 - x と同じ（範囲の検査も 0 - x として働く）"""
+        if self.peek().kind == "OP" and self.peek().val == "-":
+            self.next()
+            e = self.unary()
+            return Num(-e.v) if isinstance(e, Num) else Bin("-", Num(0), e)
+        return self.postfix()
+
     def mul(self):
-        l = self.postfix()
+        l = self.unary()
         while True:
             if self.accept("*"):
-                l = Bin("*", l, self.postfix())
+                l = Bin("*", l, self.unary())
             elif self.is_("/") or self.is_("%"):  # 整数の割り算（切り捨て）と余り。0 で割る道は検査器が止める（1 以上と示すか、or で 0 のときの値を書く）
                 op = self.next().val
                 t = self.peek()

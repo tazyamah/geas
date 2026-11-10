@@ -8,7 +8,12 @@
 戻り値が Option・タプルのものは、geas の型に写せないので入れない（bool は bool 型に写す）。
 戻り値の範囲は Rust の型から決まる（u8 なら 0..255）。引数にも同じ範囲を課すので、呼ぶ側は範囲に収まると示すか、収めて渡す。
 
+rustdoc の JSON は nightly のものなので、安定版にまだ無い関数（unstable）も混ざる。作った宣言は、いまの toolchain で
+実際に組んで、範囲の端の値で呼び（geas/partcheck.py）、組めないものは外す。panic する・範囲を出る・手本（geas/stdref.py）と
+違うものが 1 つでもあれば、書き出さずに止まる。
+
 使い方: python -m geas.stdgen [core.json] > geas/std/num.geas
+        python -m geas.stdgen --recheck geas/std/num.geas > 新しい.geas   （JSON が無くても、いまの宣言を確かめ直して外す）
 """
 import json
 import subprocess
@@ -103,7 +108,8 @@ def collect(doc: dict) -> list[tuple]:
 def render(rows: list[tuple]) -> str:
     L = ["module Num", "",
          "// 自動生成（python -m geas.stdgen）。手で編集しない。Rust の標準ライブラリ（core）の整数型のメソッドのうち、",
-         "// 宣言から panic も繰り返しもしないと言えるものだけ。範囲は Rust の型から決める。", ""]
+         "// 宣言から panic も繰り返しもしないと言えるものだけ。範囲は Rust の型から決める。",
+         "// 書き出す前に、安定版の toolchain で組んで範囲の端の値で呼び、手本（geas/stdref.py）と比べてある（組めないものは外した）。", ""]
     for prim, (lo, hi) in RANGES.items():
         L.append(f"ltype {ltype_name(prim)} = int {lo}..{hi}")
     L.append("")
@@ -117,11 +123,38 @@ def render(rows: list[tuple]) -> str:
     return "\n".join(L) + "\n"
 
 
+def verified(text: str) -> str:
+    """作った宣言を、いまの toolchain で組んで呼んで確かめる。組めない部品（安定版に無い関数）の行は外す。
+    それ以外の食い違い（panic・範囲外・手本と違う・手本が無い）があれば、書き出さずに止まる"""
+    import tempfile
+    from .check import check
+    from .parser import parse
+    from .partcheck import check_parts
+    from .stdref import reference
+    with tempfile.TemporaryDirectory() as tmp:
+        mod = Path(tmp) / "num.geas"
+        mod.write_text(text, encoding="utf-8")
+        ck = check(parse(f'use "{mod.as_posix()}"\n', str(Path(tmp) / "all.geas")))
+        rep = check_parts(ck.p.parts, Path(tmp) / "crate", reference(ck.p.parts))
+    drop = {f.part.removeprefix("Num_") for f in rep.findings if f.kind == "組めない"}
+    rest = [f for f in rep.findings if f.kind != "組めない"]
+    no_ref = sorted(n for n in rep.calls if n not in rep.compared)
+    if rest or no_ref or rep.skipped:
+        raise SystemExit("標準部品の宣言が、実際の動きと合いません:\n" + "\n".join(
+            [f"  {f.part}：{f.kind}　{f.detail}" for f in rest] + [f"  {n}：手本（geas/stdref.py）がありません" for n in no_ref]
+            + [f"  {n}：{why}" for n, why in rep.skipped.items()]))
+    return "".join(ln for ln in text.splitlines(keepends=True)
+                   if not (ln.startswith("library ") and ln.split("(", 1)[0].split()[1] in drop))
+
+
 def main(argv):
-    path = Path(argv[1]) if len(argv) > 1 else default_json()
     if hasattr(sys.stdout, "reconfigure"):  # .geas にリダイレクトするので、Windows でも UTF-8 で出す
         sys.stdout.reconfigure(encoding="utf-8")
-    sys.stdout.write(render(collect(json.loads(path.read_text(encoding="utf-8")))))
+    if len(argv) > 2 and argv[1] == "--recheck":
+        sys.stdout.write(verified(Path(argv[2]).read_text(encoding="utf-8")))
+        return
+    path = Path(argv[1]) if len(argv) > 1 else default_json()
+    sys.stdout.write(verified(render(collect(json.loads(path.read_text(encoding="utf-8"))))))
 
 
 if __name__ == "__main__":

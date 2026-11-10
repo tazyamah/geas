@@ -31,6 +31,7 @@ def unit_label(u: str) -> str:
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
 RAW_OPS = ("len", "only", "text", "positions", "digit", "os_path", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
+NUM_FUNCS = ("min", "max", "abs")  # 組み込みの数の関数（同じ名前の部品を宣言したら、部品が先）
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -102,6 +103,11 @@ def tok_of(t: Type) -> str:
     if k == "集合":
         return "Set"
     raise ValueError(k)
+
+
+def pn_of(params: list, t) -> str:
+    """(名前, 型) の並びから、その型の引数の名前"""
+    return next((n for n, x in params if x is t), "?")
 
 
 def phys(t: Type) -> str:
@@ -1877,9 +1883,11 @@ class ProcChecker:
                         if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
                             self.d(ERROR, "範囲", f"部品 {e.n} の引数「{n}」に渡す値が、引数の範囲{show_range(r)}に収まると示せません（値の範囲 {iv_show((lo, hi))}）。範囲を限るか、値を限ってから渡してください")
             return tok_of(pt.ret)
+        if isinstance(e, Call) and e.n in NUM_FUNCS:
+            return self.num_func(e, env)
         if isinstance(e, Call):
             if e.n != "round" or len(e.args) != 3:
-                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（宣言した部品と、丸め(値, 方式, 単位)、型の変換 money( )・int( ) だけ）")
+                self.d(ERROR, "名前", f"部品「{e.n}」は呼べません（宣言した部品と、丸め round(値, 方式, 単位)、min( )・max( )・abs( )、型の変換 money( )・int( ) だけ）")
                 return "?"
             x = self.ty(e.args[0], env)
             m, u = e.args[1], e.args[2]
@@ -2085,6 +2093,8 @@ class ProcChecker:
             if e.n == "round" and e.args:
                 return self.unit_of(e.args[0], env)
             pt = self.ck.parts.get(e.n)
+            if pt is None and e.n in NUM_FUNCS:
+                return next((u for u in (self.unit_of(a, env) for a in e.args) if u), None)
             return pt.ret.unit if pt is not None and pt.ret.kind == "金額" else None
         if isinstance(e, SumE):
             saved, saved_src = dict(self.var_unit), dict(self.binder_src)
@@ -2231,10 +2241,34 @@ class ProcChecker:
                 if upper is not None and (hi is None or upper < hi):
                     hi = upper
             return (lo, hi)
-        if isinstance(e, Call) and e.n == "len":  # raw の文字数（メモリに載る長さ）
+        if isinstance(e, Call) and e.n == "len":  # raw の文字数（メモリに載る長さ）。文字列は型の長さ、集合・写像は要素数の上限（max N）まで
+            t = self.decl_type(e.args[0], env) if e.args and isinstance(e.args[0], (Name, Attr)) else None
+            if t is not None and t.kind == "文字列" and t.range is not None:
+                return (t.range.lo or 0, 2**63 - 1 if t.range.hi is None else t.range.hi)
+            if t is not None and t.kind in ("写像", "集合") and t.maxn is not None:
+                return (0, t.maxn)
             return (0, 2**63 - 1)
+        if isinstance(e, Call) and e.n in NUM_FUNCS and e.n not in self.ck.parts and e.args:
+            ivs = [self.interval(a, env) for a in e.args]
+            los, his = [lo for lo, _ in ivs], [hi for _, hi in ivs]
+            if e.n == "min":  # どれよりも大きくない：上限は分かっている上限の最小、下限は全部の下限が分かるときだけ
+                return (None if None in los else min(los), min((h for h in his if h is not None), default=None))
+            if e.n == "max":
+                return (max((l for l in los if l is not None), default=None), None if None in his else max(his))
+            lo, hi = ivs[0]
+            if lo is not None and lo >= 0:
+                return (lo, hi)
+            if hi is not None and hi <= 0:
+                return (-hi, None if lo is None else -lo)
+            return (0, None if None in (lo, hi) else max(-lo, hi))
         if isinstance(e, Cond):
-            (al, ah), (bl, bh) = self.interval(e.a, env), self.interval(e.b, env)
+            # then の側は条件が成り立つ、else の側は成り立たないと分かっているものとして範囲を出す
+            saved = dict(self.facts)
+            self.facts = self.add_facts(dict(saved), self.cond_facts(e.c, True))
+            al, ah = self.interval(e.a, env)
+            self.facts = self.add_facts(dict(saved), self.cond_facts(e.c, False))
+            bl, bh = self.interval(e.b, env)
+            self.facts = saved
             return (None if None in (al, bl) else min(al, bl), None if None in (ah, bh) else max(ah, bh))
         if isinstance(e, Bin) and e.op in ("/", "%"):
             return self.div_interval(e, env)
@@ -2326,8 +2360,11 @@ class ProcChecker:
                 self.d(ERROR, "型", "raw_cat( ) の引数は raw 2つです（文字列は to_raw( ) で raw にします）")
                 return "?"
             return "Raw"
-        if self.ty(e.args[0], env) != "Raw":
-            self.d(ERROR, "型", f"{e.n}( ) の対象は raw です")
+        at = self.ty(e.args[0], env)
+        if e.n == "len" and (at in ("Str", "Set", "?") or at.startswith("Map:")):  # 文字列の文字数、集合・写像の件数
+            return "Int" if at != "?" else "?"
+        if at != "Raw":
+            self.d(ERROR, "型", "len( ) の対象は、文字列（文字数）・集合・写像（件数）・raw です" if e.n == "len" else f"{e.n}( ) の対象は raw です")
             return "?"
         if e.n == "only":
             c = e.args[1]
@@ -2346,6 +2383,26 @@ class ProcChecker:
         if e.n == "positions":  # 0 から 文字数-1 までの位置。sum { … | i in positions(r) } で回す
             return "Positions"
         return "Int" if e.n == "len" else "Str"
+
+    def num_func(self, e: Call, env) -> str:
+        """min(a, b, …)・max(a, b, …)・abs(x)。整数どうしか、同じ単位の金額どうし。数字はどちらとしても使える"""
+        want = "1つ" if e.n == "abs" else "2つ以上"
+        if (len(e.args) != 1) if e.n == "abs" else (len(e.args) < 2):
+            self.d(ERROR, "型", f"{e.n}( ) の引数は{want}です（{show(e)}）")
+            for a in e.args:
+                self.ty(a, env)
+            return "?"
+        ts = [self.ty(a, env) for a in e.args]
+        if "?" in ts:
+            return "?"
+        kinds = {t for a, t in zip(e.args, ts) if not isinstance(a, Num)} or {"Int"}
+        if len(kinds) != 1 or not kinds <= {"Int", "Money"}:
+            self.d(ERROR, "型", f"「{show(e)}」: {e.n}( ) に渡せるのは、整数どうしか金額どうしです（{'／'.join(ts)}）")
+            return "?"
+        units = {u for u in (self.unit_of(a, env) for a in e.args) if u}
+        if len(units) > 1:
+            self.d(ERROR, "単位", f"「{show(e)}」: 単位の違う金額は、そのままでは比べられません（{'・'.join(sorted(unit_label(u) for u in units))}）")
+        return next(iter(kinds))
 
     def binop(self, e: Bin, env) -> str:
         a, b = self.ty(e.l, env), self.ty(e.r, env)
@@ -2368,6 +2425,12 @@ class ProcChecker:
         if e.op in ("かつ", "または"):
             if a != "Bool" or b != "Bool":
                 self.d(ERROR, "型", f"「{show(e)}」: {'and' if e.op == 'かつ' else 'or'} の両側は条件（真偽）である必要があります")
+            return "Bool"
+        if e.op == "in":  # 集合に入っているか・写像のキーにあるか
+            if not (b == "Set" or b.startswith("Map:")):
+                self.d(ERROR, "型", f"「{show(e)}」: in の右は、集合か写像です（{b}）")
+            elif a != "ID":
+                self.d(ERROR, "型", f"「{show(e)}」: in の左は、id（集合の要素・写像のキー）です（{a}）")
             return "Bool"
         if e.op in ("<", ">", "<=", ">="):
             if not ((a in num and b in num and not mixed) or (a == "Time" and b == "Time")):
@@ -2440,6 +2503,11 @@ class ProcChecker:
             if at != tok_of(t) and at != "?" and not (isinstance(a, Num) and tok_of(t) in ("Int", "Money")):
                 self.d(ERROR, "型", f"結果「{r.variant}」の引数の型が違います（{at}）", r.line)
             self.fit_unit(a, t, f"結果「{r.variant}」の引数", r.line, siblings={pn: x for (pn, _), x in zip(v[1], r.args)})
+            if t.kind in ("整数", "金額") and at in ("Int", "Money"):  # 結果の中身も、型の範囲に収まると示す（生成物は確かめずに物理数へ移す）
+                (lo, hi), iv = iv_of(t), self.interval(a)
+                if (lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi)):
+                    self.d(ERROR, "範囲", f"結果「{r.variant}」の中身「{pn_of(v[1], t)}」に入れる値が、型の範囲 {iv_show((lo, hi))} に収まると示せません"
+                           f"（値の範囲 {iv_show(iv)}）。値を限ってから返すか、結果の中身の型の範囲を広げてください", r.line)
 
     def run(self) -> ProcInfo:
         ck, proc, info = self.ck, self.proc, self.info
@@ -2560,6 +2628,12 @@ class ProcChecker:
         if c.kind == "ない" and isinstance(c.e, Index):
             self.guarded.add((c.e.d, show(c.e.e)))
 
+    def no_rebind(self, name, line):
+        """let で、すでにある名前（入力・slot・前の let）は付け直せない。
+        前の名前について確かめたこと（範囲・null でない）が新しい値に残ると、収まらない値を「示せた」ことにしてしまう"""
+        if name in self.env:
+            self.d(ERROR, "名前", f"「{name}」は、すでにある名前です（入力・slot・前の let）。let で同じ名前は付け直せません。別の名前にしてください", line)
+
     def stmt(self, st, pos):
         saved = self.cur_line
         self.cur_line = getattr(st, "line", 0) or saved
@@ -2576,6 +2650,7 @@ class ProcChecker:
         elif isinstance(st, If):
             self.if_stmt(st, pos)
         elif isinstance(st, Assign):
+            self.no_rebind(st.name, st.line)
             u = self.unit_of(st.e)
             if u is not None:
                 self.var_unit[st.name] = u
@@ -2743,6 +2818,7 @@ class ProcChecker:
                 self.state_guards = {g for g in self.state_guards if not (self.binding_data.get(g[0]) == data and g[1] == st.f)}
                 self.state_guards.add((b, st.f, st.e.n))
         elif isinstance(st, Create):
+            self.no_rebind(st.name, st.line)
             self.create(st)
         elif isinstance(st, Delete):
             self.delete(st)
@@ -2925,7 +3001,13 @@ class ProcChecker:
         return facts
 
     def cond_facts(self, c, holds: bool) -> dict:
-        """条件 c が成り立つ（holds）／成り立たないときに分かる下限。「x.項目 と 数」の比較だけを見る（整数と金額）"""
+        """条件 c が成り立つ（holds）／成り立たないときに分かる下限。「x.項目 と 数」の比較だけを見る（整数と金額）。
+        not は向きを返す。両方が成り立つと言える組み合わせ（成り立つ and、成り立たない or）は、両側で分かることを合わせる。
+        どちらか片方としか言えない組み合わせ（成り立つ or、成り立たない and）からは、何も引き出さない"""
+        if isinstance(c, Not):
+            return self.cond_facts(c.e, not holds)
+        if isinstance(c, Bin) and c.op == ("かつ" if holds else "または"):
+            return self.add_facts(self.cond_facts(c.l, holds), self.cond_facts(c.r, holds))
         if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==", "!=") and isinstance(c.r, Num)):
             return {}
         if isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
