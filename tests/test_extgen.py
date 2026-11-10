@@ -84,6 +84,8 @@ def test_サーバーの実行部は生成物と一緒に置かれ_最初のデ�
     s = tmp_path / "server"
     assert {f.name for f in (s / "src").iterdir()} == {"app.rs", "db.rs", "engine.rs", "http.rs", "main.rs", "mock.rs", "seed.json"}
     assert 'geas_app = { path = ".." }' in (s / "Cargo.toml").read_text() and (s / "Cargo.lock").exists()
+    # Cargo は組み立ての起点の [profile] しか使わないので、リリースでの溢れの確認はサーバーの側にも書く
+    assert "[profile.release]\noverflow-checks = true\n" in (s / "Cargo.toml").read_text()
     assert (s / "src" / "seed.json").read_text() == "{}"  # 既定は何も入れない
     mine = tmp_path / "mine.json"
     mine.write_text('{"A": {}}')

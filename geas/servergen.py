@@ -16,6 +16,11 @@ geas_app = { path = ".." }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
 tiny_http = "0.12"
+
+# 整数の溢れの確認は、リリースビルドでも付ける（値の範囲の保証の網）。Cargo は組み立ての起点（このクレート）の
+# [profile] しか使わず、geas_app の Cargo.toml に書いた設定はここでは効かないので、ここにも書く
+[profile.release]
+overflow-checks = true
 '''
 
 
