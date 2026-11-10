@@ -77,6 +77,19 @@ class ResultDef:
 
 
 @dataclass
+class HttpDecl:
+    """外部作用の実通信（over http { … }）。通信先は https の文字列で、ここに書いた先にしか出ない。返事の HTTP の状態を、応答の結果の種類に結ぶ"""
+    method: str = ""
+    url: str = ""
+    bearer: Optional[str] = None  # 認証：`needs secret 外部.名前` で宣言したシークレットの名前（Authorization: Bearer）
+    body: list = field(default_factory=list)  # JSON の本文に入れる値：(キー, 外部作用の引数の名前)。`body 名前` はキーも同じ名前、`body "キー" from 名前` はキーを別にできる
+    # (最小の状態, 最大の状態, 結果の種類, [(応答の中身の名前, 返事の JSON の道すじ)])
+    statuses: list = field(default_factory=list)
+    other: Optional[tuple] = None  # 上のどれでもない状態のときの (結果の種類, [(名前, 道すじ)])
+    line: int = 0
+
+
+@dataclass
 class EffectDecl:
     name: str  # 決済.請求
     params: list[tuple[str, Type]]
@@ -85,6 +98,7 @@ class EffectDecl:
     no_wait: Optional[str] = None  # 待たない理由（人が決めた根拠）。None なら、結果を待つ経路が必須
     joins: Optional[str] = None  # 返事が合流するトリガの名前。要求する処理が待たなくても、同じ並列の枝がそのトリガを待つ
     replies: Optional[str] = None  # この外部作用に返ってくる応答（reply）の名前。開発用の模擬が、その結果の種類（outcome）から返事を作る
+    http: Optional[HttpDecl] = None  # 実通信（over http { … }）。書かなければ、実際には外へ出ない（模擬だけ）
 
 
 @dataclass

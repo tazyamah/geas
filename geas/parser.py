@@ -602,8 +602,12 @@ class Parser:
         params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
         self.expect(")")
         failures, joins, replies, no_wait = [], None, None, None
-        while self.peek().kind == "NAME" and self.peek().val in ("failures", "joins", "replies", "no_wait"):  # 後ろの指定は、順不同
+        http = None
+        while self.peek().kind == "NAME" and self.peek().val in ("failures", "joins", "replies", "no_wait", "over"):  # 後ろの指定は、順不同
             kw = self.name()
+            if kw == "over":  # over http { … }：実通信（ブロックは行の最後に置く）
+                http = self.http_decl(self.peek().line)
+                break
             if kw == "failures":
                 failures = self.comma_list(self.name)
             elif kw == "joins":  # joins トリガ名：この外部作用の返事は、そのトリガに合流する（トリガの引数は、要求する処理の入力から決まる）
@@ -615,8 +619,62 @@ class Parser:
                 if t.kind != "STR":
                     raise self.err("no_wait の後ろには、理由を \"…\" で書いてください")
                 no_wait = t.val
+        if http is None:
+            self.end_line()
+        return EffectDecl(name, params, line, failures, no_wait, joins, replies, http)
+
+    def http_decl(self, line) -> HttpDecl:
+        """over http { METHOD "https://…" ／ bearer 外部.名前 ／ body 引数, … ／ status 201 → 種類 [take 中身 from "道すじ"] ／ status 400..499 → 種類 ／ status other → 種類 }"""
+        if self.name() != "http":
+            raise self.err("over のあとは http { … } と書きます（実通信の宣言）")
+        h = HttpDecl(line=line)
+        self.block_open()
+        while not self.accept("}"):
+            kw = self.name()
+            if kw in ("GET", "POST", "PUT", "DELETE"):
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err(f'{kw} のあとには、通信先の URL を "https://…" で書きます')
+                h.method, h.url = kw, t.val
+            elif kw == "bearer":
+                h.bearer = self.dotted()
+            elif kw == "body":
+                def item():
+                    if self.peek().kind == "STR":
+                        key = self.next().val
+                        self.expect("from")
+                        return key, self.name()
+                    n = self.name()
+                    return n, n
+                h.body = self.comma_list(item)
+            elif kw == "status":
+                lo = hi = None
+                if self.peek().kind == "NAME" and self.peek().val == "other":
+                    self.i += 1
+                else:
+                    lo = hi = self.num()
+                    if self.accept(".."):
+                        hi = self.num()
+                self.expect("→")
+                outcome = self.name()
+                takes = []
+                while self.accept("take"):
+                    n = self.name()
+                    self.expect("from")
+                    t = self.next()
+                    if t.kind != "STR":
+                        raise self.err('from のあとには、返事の JSON の道すじを "data.id" の形で書きます')
+                    takes.append((n, t.val))
+                    self.accept(",")
+                if lo is None:
+                    h.other = (outcome, takes)
+                else:
+                    h.statuses.append((lo, hi, outcome, takes))
+            else:
+                raise self.err(f"over http の中に「{kw}」は書けません（METHOD \"URL\"・bearer・body・status）")
+            self.end_line()
         self.end_line()
-        return EffectDecl(name, params, line, failures, no_wait, joins, replies)
+        return h
 
     def library(self, line) -> Part:
         """library 名前(引数: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee 式] trust check|verify|assume "理由"：

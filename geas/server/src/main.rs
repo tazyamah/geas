@@ -1,5 +1,7 @@
 //! Geas が生成したアプリのサーバー。localhost で動き、DB は SQLite。geas rust --host --runtime が、生成物と一緒に配る。
-//! 使い方: geas_server [--port 8787] [--host 127.0.0.1] [--workers 4] [--db app.sqlite] [--pwa ../ui] [--test [--dev ../dev]] [--allow-host 名前] [--seed 別の最初のデータ.json]
+//! 使い方: geas_server [--port 8787] [--host 127.0.0.1] [--workers 4] [--db app.sqlite] [--pwa ../ui] [--test [--dev ../dev]] [--allow-host 名前] [--seed 別の最初のデータ.json] [--secrets シークレット.json]
+//! --secrets：外部作用の認証に使う値（{"外部.名前": "値"}）。環境変数 GEAS_SECRET_外部_名前（大文字）が優先
+//! --effect-url 外部.操作=URL：（--test のときだけ）宣言した通信先を、試験用の URL に替える
 //! --test：テスト用の口（/api/test/…：時計を進める・模擬の設定など）と、resource の宣言を通らない口（/api/deeds/… など）、
 //!         開発用の模擬パネル（--dev のフォルダ）を開く。付けなければ、外から呼べるのは仕様書の URL の表にある口だけ。公開するサーバーには付けない
 //! --allow-host：localhost と IP の書き方のほかに、Host として受ける名前（何度でも書ける。カンマ区切りでもよい）。それ以外の名前の要求は 403
@@ -85,6 +87,24 @@ fn main() {
         path => std::fs::read_to_string(path).map_err(|x| format!("最初のデータ {} を読めません: {}", path, x)),
     };
     let engine = geas_server::open_engine(&db_path, seed).unwrap_or_else(|e| panic!("{}", e));
+    {
+        let mut en = engine::lock(&engine);
+        // シークレットのファイル（--secrets）。環境変数 GEAS_SECRET_外部_名前 が優先
+        let secrets = arg("--secrets", "");
+        if !secrets.is_empty() {
+            en.secrets_file = serde_json::from_str(&std::fs::read_to_string(&secrets).expect("シークレットのファイルを読めません")).expect("シークレットのファイルは JSON のオブジェクトです");
+        }
+        // 外部作用の通信先を、試験用の別の URL に替える（--effect-url 外部.操作=URL）。--test のときだけ
+        for w in args.windows(2).filter(|w| w[0] == "--effect-url") {
+            if !test_api {
+                eprintln!("--effect-url は --test と一緒に使います（宣言した通信先を替える口は、試験のときだけ開きます）");
+                std::process::exit(2);
+            }
+            let (k, v) = w[1].split_once('=').expect("--effect-url は 外部.操作=URL の形です");
+            en.url_override.insert(k.to_string(), v.to_string());
+        }
+        en.warn_missing_secrets();
+    }
     geas_server::spawn_ticker(engine.clone());
 
     let addr = format!("{}:{}", host, port);

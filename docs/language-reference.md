@@ -189,6 +189,18 @@ trigger OrderPending(order_id: id) {
 ```
 
 - `effect` の末尾の句（`failures`・`no_wait`・`joins`・`replies`）は順不同。外部作用は、返事を待つか（トリガ）、`no_wait` で理由を書くかのどちらかです。
+- 実際に外へ出る通信は、`effect` の末尾に `over http { … }` を書きます（書かなければ、実際には外へ出ず、開発用の模擬が返事を作ります）。
+  ```
+  effect Twitter. post(tweet_id: id, content: Body) replies PostSettled over http {
+    POST "https://api.x.com/2/tweets"              // メソッドと通信先。通信先は https://ホスト名/パス だけ（IP・ユーザー名・? は不可）
+    bearer Twitter.token                           // 認証。needs secret Twitter.token で宣言した同じ外部のシークレットだけ
+    body "text" from content                       // JSON の本文：キー from 引数（キーと引数が同じなら `body 名前`）
+    status 201 → Posted take post_id from "data.id"  // 返事の状態を、応答の結果の種類に結ぶ。take は返事の JSON から中身を取る道すじ
+    status 400..499 → Rejected
+    status other → Rejected                        // 書いていない状態の行き先（必須）
+  }
+  ```
+  通信先はここに書いたものだけで、リダイレクトにも従いません。接続できない・時間切れ・シークレットが無い、は返事にならず、待つ先のトリガの期限が行き先になります。同じ要求は 1 回しか送りません（再送しない）。シークレットの値は、環境変数 `GEAS_SECRET_外部_名前`（大文字）か `--secrets` のファイルで渡し、仕様書にも生成物にも書きません。仕様書には「外へ出る通信」の表（通信先・認証・本文・状態の結び方）が出ます。通信の部品は、`over http` を書いたアプリだけに入ります。
 - `joins トリガ名`：返事をそのトリガの応答として入れる。`replies 応答名`：返ってくる応答。
 - 起きた応答の中身は、トリガの引数に足されて、行き先の処理の入力になります（名前と型が合わなければエラー）。
 

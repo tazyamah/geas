@@ -5,6 +5,7 @@ pub mod db;
 pub mod engine;
 pub mod http;
 pub mod mock;
+pub mod net;
 
 use std::sync::{Arc, Mutex};
 
@@ -23,12 +24,29 @@ pub fn open_engine(db_path: &str, seed: impl FnOnce() -> Result<String, String>)
     Ok(Arc::new(Mutex::new(engine::Engine::new(db).map_err(|e| format!("定義が読めません: {}", e))?)))
 }
 
-/// 時間の経過（模擬の返事・期限）を進めるスレッドを起こす
+/// 時間の経過（模擬の返事・期限）を進め、宣言した実通信（over http）を送るスレッドを起こす。
+/// 通信は 1 件ごとに別のスレッドで送る（遅い相手が、期限の発火や他の処理を止めない）。送るのはコミットのあとで、返事は次の tick が届ける
 pub fn spawn_ticker(engine: Arc<Mutex<engine::Engine>>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(300));
-        if let Err(e) = engine::lock(&engine).tick() {
-            eprintln!("tick: {}", e);
+        let sends = {
+            let mut en = engine::lock(&engine);
+            match en.tick() {
+                Ok(fired) => {
+                    for f in fired {
+                        eprintln!("{}", serde_json::json!({ "log": "geas.tick", "fired": f }));  // 届けた返事・発火した期限（入力の値は載せない）
+                    }
+                }
+                Err(e) => eprintln!("tick: {}", e),
+            }
+            en.take_outbound()
+        };
+        for (o, req) in sends {
+            let engine = engine.clone();
+            std::thread::spawn(move || {
+                let r = net::send(&req);
+                engine::lock(&engine).finish_outbound(&o, r);
+            });
         }
     });
 }

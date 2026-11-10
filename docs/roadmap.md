@@ -10,7 +10,7 @@
 
 ## 窓つき exe（スタンドアロンアプリ）
 
-済み：`--standalone` で窓つき exe の crate を出す（[standalone.md](standalone.md)。画面から処理への呼び出しは IPC、Linux で窓が開くことと IP のソケットを持たないことは試験済み）。未着手：外部作用（`effect`）で外へ出る通信を、宣言した先だけに Rust 側から出す形と、「通信しうる先」を宣言から導いて仕様書に出すこと（宣言がなければ通信コードを入れない）。外部作用のある見本（つぶやき＋X への投稿。試験は模擬の X）。Windows の exe の実機確認（GitHub Actions の windows-latest でのビルドと selftest が案）。DB の置き場を、アプリの要件で変えられる宣言。
+済み：`--standalone` で窓つき exe の crate を出す（[standalone.md](standalone.md)。画面から処理への呼び出しは IPC、Linux で窓が開くことと IP のソケットを持たないことは試験済み）。外部作用の実通信（`over http`。宣言した先だけ、リダイレクトに従わない、シークレットは環境変数かファイル、仕様書に「外へ出る通信」の表）。見本はつぶやき＋X への投稿（`tests/fixtures/solo_tweet`、試験は模擬の X）。未着手：Windows の exe の実機確認（GitHub Actions の windows-latest でのビルドと selftest が案）。X の本物の API（OAuth の更新、レート制限）での確認。`over http` の拡張（GET、本文以外の入力、再送の方針、冪等キーのヘッダ、シークレットの OS の鍵置き場）。DB の置き場を、アプリの要件で変えられる宣言。タスクトレイ・メニューバー常駐。
 
 ## 「生成時の書き方で保証し、実行時の損失をゼロにする」の議論
 

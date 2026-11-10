@@ -88,7 +88,9 @@ def items(p) -> list[dict]:
     # ---- 外へ届くこと ----
     for ns in effect_namespaces(p):
         ops = [e.name for e in p.effects if e.name.split(".")[0] == ns]
-        out.append(_item(f"reach.{ns}", "到達性", f"外部 {ns} の宛先に、サーバーから届く（宛先は環境から読む。書いていない宛先には出ない前提）",
+        hosts = sorted({re.match(r"https://([^/:]+)", x.http.url).group(1) for x in p.effects if x.http and x.name.split(".")[0] == ns and re.match(r"https://([^/:]+)", x.http.url or "")})
+        where = f"外部 {ns} の宛先（{'・'.join(hosts)}）に、アプリから届く（宣言した先だけに出る）" if hosts else f"外部 {ns} の宛先に、サーバーから届く（宛先は環境から読む。書いていない宛先には出ない前提）"
+        out.append(_item(f"reach.{ns}", "到達性", where,
                          f"導出（外部作用 {'・'.join(ops)}）", ["実環境"], ["通信の許可", "宛先の設定"], cond={"egress_https": True}))
     # ---- 秘密 ----
     for kind, target, _, why, _ in needs:

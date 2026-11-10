@@ -1,7 +1,8 @@
 //! Geas が生成したアプリの窓つき exe。画面と処理を 1 つの実行ファイルにまとめ、OS の WebView の窓で開く。
 //! ポートを開かず、外部と通信しない。画面から処理を呼ぶ道は WebView の IPC（プロセス内）で、HTTP を通らない。
 //! 画面のファイル（HTML・JS・CSS）は、カスタムプロトコル geas:// で窓の中に配る（読み込みだけ。ネットワークには出ない）。
-//! 使い方: geas_window [--db app.sqlite] [--seed 別の最初のデータ.json] [--selftest]
+//! 使い方: geas_window [--db app.sqlite] [--seed 別の最初のデータ.json] [--secrets シークレット.json] [--selftest]
+//! シークレット（外部作用の認証）は、環境変数 GEAS_SECRET_外部_名前（大文字）か、データ用フォルダの secrets.json（{"外部.名前": "値"}）で渡す
 //! --db を付けなければ、利用者のデータ用フォルダ（Windows: %APPDATA%、macOS: ~/Library/Application Support、
 //!        それ以外: $XDG_DATA_HOME か ~/.local/share）の下のアプリ名のフォルダに置く。
 //! --selftest：窓を開き、画面が定義を IPC で受けて描かれるのを確かめて、終了コード 0（成功）か 1 で終わる（試験用）
@@ -105,6 +106,18 @@ fn main() {
         eprintln!("{}", e);
         std::process::exit(1)
     });
+    {
+        // シークレット：環境変数 GEAS_SECRET_外部_名前、なければ --secrets かデータ用フォルダの secrets.json
+        let path = arg("--secrets").map(PathBuf::from).unwrap_or_else(|| dir.join("secrets.json"));
+        let mut en = geas_server::engine::lock(&engine);
+        if let Ok(t) = std::fs::read_to_string(&path) {
+            en.secrets_file = serde_json::from_str(&t).unwrap_or_else(|_| {
+                eprintln!("{} は JSON のオブジェクトではありません", path.display());
+                std::process::exit(1)
+            });
+        }
+        en.warn_missing_secrets();
+    }
     geas_server::spawn_ticker(engine.clone());
     let selftest = std::env::args().any(|a| a == "--selftest");
     // 窓の中からは --test の口（時計・模擬の操作）は開けない。Host の検査は、ネットワークから来ないので要らない

@@ -157,6 +157,9 @@ def build_raw(ck: Checker) -> dict:
                   for e in p.effects if e.replies and e.replies in reps]
     spec["決め方"] = [(f.slot, " かつ ".join(f"{pa} = {v}" for pa, v in conds) or "上のどれでもない", str(val)) for f in p.rules for conds, val in f.rows]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
+    spec["通信"] = [(e.name, f"{e.http.method} {e.http.url}", e.http.bearer or "なし", "、".join(k if k == n else f"{k}←{n}" for k, n in e.http.body) or "なし",
+                  " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" for lo, hi, o, _ in e.http.statuses) + (f" ／ その他 → {e.http.other[0]}" if e.http.other else ""))
+                 for e in p.effects if e.http]
     on = {"online": "つながりが戻ったとき: ", "opened": "アプリを開いたとき: "}
     spec["出来事"] = [(ev.name, on.get(ev.on, "") + (f"各 {q}" if k == "各" else "外から"), d) for ev in p.events for k, q, d in ev.steps]
     spec["画面"] = [(sc.name, ", ".join(sc.shows), ", ".join(f + (f"←{sc.field_from[f]}" if f in sc.field_from else "") for f in sc.fields),
@@ -316,6 +319,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["合流"]:
         out += ["", "## 返事の合流先（外部作用の返事が入るトリガ）", "", "| 外部作用 | ◆合流先のトリガ |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["合流"]]
+    if spec["通信"]:
+        out += ["", "## 外へ出る通信（実通信。ここに書いた先にしか出ません。リダイレクトにも従いません）", "", "| 外部作用 | ◆通信先 | ◆認証（シークレット） | ◆本文の項目 | ◆返事の状態 → 結果の種類 |", "|---|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["通信"]]
     if spec["外部作用"]:
         out += ["", "## 外部作用（外へ出す内容。入出力型）", "", "| 外部作用 | ◆出す内容 |", "|---|---|"]
         out += [f"| {a} | {b} |" for a, b in spec["外部作用"]]

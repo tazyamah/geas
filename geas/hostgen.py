@@ -244,6 +244,15 @@ def mock_def(ck: Checker) -> dict:
     }
 
 
+def http_def(e) -> dict:
+    """実通信の定義（over http）。サーバーは、ここに書いた先にだけ出る"""
+    h = e.http
+    row = lambda o, tk: {"outcome": o, "take": {n: path for n, path in tk}}
+    return {"method": h.method, "url": h.url, "bearer": h.bearer, "body": [[k, n] for k, n in h.body],
+            "statuses": [{"lo": lo, "hi": hi, **row(o, tk)} for lo, hi, o, tk in h.statuses],
+            "other": row(*h.other) if h.other else None}
+
+
 def definitions(ck: Checker) -> dict:
     p = ck.p
     flows: dict[str, dict] = {}
@@ -257,7 +266,7 @@ def definitions(ck: Checker) -> dict:
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
-        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None} for e in p.effects},
+        "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {})} for e in p.effects},
         "replies": {r.name: [{"name": n, "required": not t.optional} for n, t in r.params] for r in p.replies},
         "rules": {f.slot: [{"when": [list(c) for c in conds], "value": val} for conds, val in f.rows] for f in p.rules},
         "mock": mock_def(ck),

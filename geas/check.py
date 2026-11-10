@@ -843,6 +843,68 @@ class Checker:
         for e in self.p.effects:
             if e.replies is not None and e.replies not in reps:
                 self.d(ERROR, "応答", f"外部作用 {e.name}", f"replies「{e.replies}」が未定義の応答です")
+            if e.http is not None:
+                self.check_http(e, reps)
+
+    HTTP_BODY_KINDS = ("ID", "文字列", "整数", "真偽")
+
+    def check_http(self, e, reps):
+        """over http { … }（外部作用の実通信）：通信先は https の文字列で、書いた先にしか出ない。返事の HTTP の状態が、応答の結果の種類に漏れなく結ばれる"""
+        import re
+        h, where = e.http, f"外部作用 {e.name} / over http"
+        m = re.fullmatch(r"https://([A-Za-z0-9.-]+)(:\d{1,5})?(/[^\s?#]*)?", h.url or "")
+        if not h.method or not h.url:
+            self.d(ERROR, "通信", where, 'METHOD "https://…" の行が要ります（例：POST "https://api.example.com/v1/items"）')
+        elif not m or not re.fullmatch(r"([A-Za-z0-9-]+\.)+[A-Za-z]{2,}", m.group(1)):  # 名前の最後が英字（IP の書き方は、DNS を引かずに内向きの先を指せるので使わない）
+            self.d(ERROR, "通信", where, f"通信先「{h.url}」は、https://ホスト名/パス の形で書きます（http や IP の直書き、ユーザー名、? や # は使えません）")
+        if e.replies is None:
+            self.d(ERROR, "通信", where, "返事を結果の種類に結ぶので、外部作用に replies 応答名 が要ります")
+            return
+        rp = reps.get(e.replies)
+        if rp is None:
+            return
+        ns = e.name.split(".")[0]
+        if h.bearer is not None:
+            secrets = {t for k, t, _, _, _ in self.p.needs if k == "secret"}
+            if h.bearer.split(".")[0] != ns:
+                self.d(ERROR, "通信", where, f"bearer「{h.bearer}」は、この外部作用と同じ外部（{ns}）のシークレットだけ使えます")
+            elif h.bearer not in secrets:
+                self.d(ERROR, "通信", where, f'bearer「{h.bearer}」は、needs secret {h.bearer} "理由" で宣言していません')
+        params = dict(e.params)
+        keys = [k for k, _ in h.body]
+        if len(set(keys)) != len(keys):
+            self.d(ERROR, "通信", where, "body のキーが重なっています")
+        for k, n in h.body:
+            if n not in params:
+                self.d(ERROR, "通信", where, f"body「{n}」は、外部作用の引数にありません")
+            elif params[n].kind not in self.HTTP_BODY_KINDS:
+                self.d(ERROR, "通信", where, f"body「{n}」は {params[n].kind} 型で、本文の JSON にできません（ID・文字列・整数・真偽だけ）")
+        outcomes = {on: gives for on, gives in rp.outcomes} or {"Normal": [n for n, _ in rp.params]}
+        have = {n for n, _ in rp.params}
+        rows = [(lo, hi, o, tk) for lo, hi, o, tk in h.statuses] + ([(None, None, *h.other)] if h.other else [])
+        if h.other is None:
+            self.d(ERROR, "通信", where, "status other → 種類 が要ります（書いていない HTTP の状態が来たときの結果の種類。決めずに黙って捨てない）")
+        seen = []
+        for lo, hi, o, tk in rows:
+            if lo is not None:
+                if not (100 <= lo <= hi <= 599):
+                    self.d(ERROR, "通信", where, f"status {lo}..{hi} は、100〜599 の範囲で小さい方を先に書きます")
+                for a, b in seen:
+                    if lo <= b and a <= hi:
+                        self.d(ERROR, "通信", where, f"status {lo}..{hi} は、ほかの status と重なっています")
+                seen.append((lo, hi))
+            if o not in outcomes:
+                self.d(ERROR, "通信", where, f"結果の種類「{o}」は、応答 {rp.name} にありません")
+                continue
+            took = {n for n, _ in tk}
+            for n, path in tk:
+                if n not in outcomes[o]:
+                    self.d(ERROR, "通信", where, f"take「{n}」は、結果の種類「{o}」の gives にありません")
+                if not re.fullmatch(r"[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*", path):
+                    self.d(ERROR, "通信", where, f"道すじ「{path}」は、data.id のようにキーを . でつなぎます")
+            for g in outcomes[o]:
+                if g in have and g not in took:
+                    self.d(ERROR, "通信", where, f"結果の種類「{o}」は {g} を gives で持つので、`take {g} from \"道すじ\"` で返事から取り出してください")
 
     def check_read(self, sc, where):
         """拡張の画面の read：ページから値を読む取り決め。subject の読み方と value の読み方があり、正規表現が正しく、対応表の値が入力の検査を通ること"""
