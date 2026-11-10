@@ -28,6 +28,8 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 
 ## 保存先
 
+（Windows のログ：`log.txt` が同じフォルダに出ます。`--console` で窓に出せます。）
+
 `--db ファイル` で決めます。省くと、利用者のデータ用フォルダの下のアプリ名のフォルダ（Windows: `%APPDATA%`、macOS: `~/Library/Application Support`、それ以外: `$XDG_DATA_HOME` か `~/.local/share`）に `app.sqlite` を置きます。`--seed 最初のデータ.json` も使えます（サーバーと同じ）。`--secrets ファイル` か、データ用フォルダの `secrets.json`（`{"外部.名前": "値"}`）か、環境変数 `GEAS_SECRET_外部_名前`（大文字）で、外部作用の認証に使う値を渡します。`--selftest` は、窓を開いて画面が描かれるのを確かめて終わる試験用の起動です。
 
 ## 作り
@@ -55,6 +57,8 @@ CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc cargo build --r
 # mingw で組むと WebView2Loader.dll が別ファイルで要る。exe と同じフォルダに置く：
 #   target/x86_64-pc-windows-gnu/release/build/webview2-com-sys-*/out/x64/WebView2Loader.dll
 ```
+
+Windows 用の exe は、ターミナルの窓を出さずに起動します（窓だけのアプリ）。ログ（標準エラー）は、データ用フォルダの `log.txt` に追記します。ターミナルの窓にログを出したいときは `--console` を付けます（ターミナルから起動していればそこへ、そうでなければ新しい窓を開きます。`--selftest` は `--console` を含みます）。
 
 `WebView2Loader.dll` が exe の隣になければ、起動時に「WebView2Loader.dll が見つからない」と出ます（Windows 実機で確認済み）。MSVC で組めば dll は exe に静的に入ります。署名のない exe なので、「不明な発行元」の警告が出ます。
 

@@ -6,7 +6,10 @@
 //! --db を付けなければ、利用者のデータ用フォルダ（Windows: %APPDATA%、macOS: ~/Library/Application Support、
 //!        それ以外: $XDG_DATA_HOME か ~/.local/share）の下のアプリ名のフォルダに置く。
 //! resident を宣言したアプリは、トレイのアイコンに常駐する（窓を閉じても終了しない。同じ保存先では 1 つだけ起動できる）
+//! --console：ターミナルの窓にログ（標準エラー）を出す（Windows。付けなければ窓だけで起動し、ログはデータ用フォルダの log.txt に追記する。--selftest は --console を含む）
 //! --selftest：窓を開き、画面が定義を IPC で受けて描かれるのを確かめて、終了コード 0（成功）か 1 で終わる（試験用）
+// Windows では、ターミナルの窓を出さない窓だけのアプリとして組む。ターミナルが要るときは --console（下の console モジュール）
+#![cfg_attr(windows, windows_subsystem = "windows")]
 use geas_server::http::{self, Opts, Req};
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -117,6 +120,37 @@ mod tray {
     }
 }
 
+/// Windows でターミナルの窓を出すか（--console）、出さずにログをファイルへ流すか。他の OS では何もしない（端末から起動すればそこに出る）
+#[cfg(windows)]
+mod console {
+    use std::os::windows::io::AsRawHandle;
+    extern "system" {
+        fn AttachConsole(pid: u32) -> i32;
+        fn AllocConsole() -> i32;
+        fn SetStdHandle(which: u32, h: *mut core::ffi::c_void) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+
+    /// show：ターミナルの窓を使う（ターミナルから起動されていればそこへ、なければ新しい窓を開く）。
+    /// そうでなければ、標準エラーを log_file へ追記する（開けなければ捨てる）
+    pub fn setup(show: bool, log_file: &std::path::Path) {
+        unsafe {
+            if show {
+                if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                    AllocConsole();
+                }
+            } else if let Some(dir) = log_file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(log_file) {
+                    SetStdHandle(STD_ERROR_HANDLE, f.as_raw_handle() as *mut _);
+                    std::mem::forget(f); // 閉じない（プロセスの終わりまで標準エラーとして使う）
+                }
+            }
+        }
+    }
+}
+
 fn arg(name: &str) -> Option<String> {
     let a: Vec<String> = std::env::args().collect();
     a.iter().position(|x| x == name).and_then(|i| a.get(i + 1).cloned())
@@ -182,6 +216,8 @@ fn call(msg: &str, engine: &std::sync::Mutex<geas_server::engine::Engine>, opts:
 
 fn main() {
     let dir = data_dir();
+    #[cfg(windows)]
+    console::setup(std::env::args().any(|a| a == "--console" || a == "--selftest"), &dir.join("log.txt"));
     let db_path = arg("--db").unwrap_or_else(|| {
         std::fs::create_dir_all(&dir).expect("データ用のフォルダを作れません");
         dir.join("app.sqlite").to_string_lossy().into_owned()
