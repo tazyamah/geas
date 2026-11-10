@@ -8,6 +8,8 @@ import urllib.parse
 import urllib.request
 
 PROTOCOL = "2025-06-18"
+# サーバーの返事を読む上限（バイト）。サーバーの本文の上限と同じ
+MAX_REPLY = 16 * 1024 * 1024
 
 
 def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
@@ -17,9 +19,9 @@ def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
     req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, r.read().decode()
+            return r.status, r.read(MAX_REPLY).decode(errors="replace")
     except urllib.error.HTTPError as e:  # 結果の種類（404・409・422 など）も、AI が読む返事
-        return e.code, e.read().decode()
+        return e.code, e.read(MAX_REPLY).decode(errors="replace")
 
 
 def handle(msg: dict, tools: list[dict], base: str) -> dict | None:
@@ -57,7 +59,16 @@ def main(argv: list[str]) -> int:
             s.reconfigure(encoding="utf-8")
     for line in sys.stdin:
         if line.strip():
-            out = handle(json.loads(line), tools, argv[2])
+            # 読めない 1 行で橋渡しを止めない（JSON でない・オブジェクトでない行は、JSON-RPC の誤りとして返す）
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                msg = None
+            if not isinstance(msg, dict):
+                code, text = (-32700, "JSON として読めません") if msg is None else (-32600, "要求は JSON のオブジェクトで送ります")
+                print(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": code, "message": text}}, ensure_ascii=False), flush=True)
+                continue
+            out = handle(msg, tools, argv[2])
             if out is not None:
                 print(json.dumps(out, ensure_ascii=False), flush=True)
     return 0

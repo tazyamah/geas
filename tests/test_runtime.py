@@ -608,3 +608,54 @@ def test_問い合わせの応答には版が付き_保存が変わっていな�
     server.stop()  # 再起動したら、前の版では 304 にならない（DB が止まっている間に書き換えられていても、古い一覧を使わせない）
     server.start()
     assert get("/parcels", tag3)[0] == 200
+
+
+def test_test_なしの_api_defs_は_画面が使う分だけを返す(built, tmp_path):
+    """--test なしの /api/defs は、画面と外から呼べる URL だけ。流れの途中の処理・処理の一覧・外部作用・模擬の設定は出さない。
+    --test のときは、開発用のパネルと通しの試験が使うので全部を返す"""
+    s = Server(built, tmp_path / "plain.sqlite", test_api=False)
+    s.start()
+    try:
+        defs = s.call("GET", "/api/defs")[1]
+        assert sorted(defs) == ["routes", "screens"]
+        assert defs["routes"] and not any(r.get("internal") for r in defs["routes"])
+    finally:
+        s.stop()
+    t = Server(built, tmp_path / "test.sqlite")
+    t.start()
+    try:
+        full = t.call("GET", "/api/defs")[1]
+        assert {"deeds", "effects", "mock", "flows"} <= set(full) and any(r.get("internal") for r in full["routes"])
+    finally:
+        t.stop()
+
+
+def test_HEAD_は_GET_と同じ状態で_本文なしで答える(built, tmp_path):
+    s = Server(built, tmp_path / "head.sqlite", test_api=False)
+    s.start()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(s.base + "/parcels", method="HEAD"), timeout=5) as r:
+            assert r.status == 200 and r.read() == b""
+    finally:
+        s.stop()
+
+
+def test_保存の行が今の定義で読めない_DB_では_起動のときに理由を言って止まる(built, tmp_path):
+    """.geas の実体の項目を変えたあとに、前の版の DB を開いた場合にあたる。起動してから全部のリクエストが失敗するのでなく、起動で止まる"""
+    import sqlite3
+    db = tmp_path / "old.sqlite"
+    s = Server(built, db, test_api=False)
+    s.start()
+    try:
+        assert s.call("POST", "/parcels", {"kind": "light"})[0] == 201
+    finally:
+        s.stop()
+    con = sqlite3.connect(db)
+    table = next(t for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'geas_%' AND name NOT LIKE 'sqlite_%'")
+                 if con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0])
+    con.execute(f'UPDATE "{table}" SET v = ?', ("{}",))  # 項目の無い行（前の版の形のつもり）
+    con.commit()
+    con.close()
+    r = subprocess.run([str(built / "server" / "target" / "release" / "geas_server"), "--port", "0", "--db", str(db), "--pwa", str(built / "ui")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert r.returncode == 1 and "今の定義と合いません" in r.stderr and "panicked" not in r.stderr, r.stderr
