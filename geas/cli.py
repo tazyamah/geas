@@ -467,7 +467,7 @@ def main(argv=None) -> int:
             print(f"{p.kind}: {p.where}: {p.msg}")
         write_crate(ck, lib, src, Path(a.o), host=a.host)
         if a.host and a.runtime:
-            write_server(Path(a.o), Path(a.seed) if a.seed else None)
+            write_server(Path(a.o), Path(a.seed) if a.seed else None, net=any(e.http for e in ck.p.effects))
             if a.standalone:
                 write_window(Path(a.o))
             if a.plan:

@@ -8,6 +8,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type R<T> = Result<T, String>;
 
+/// 外へ出る通信の 1 件（宣言した `over http` の外部作用）。コミットされたあとに、通信の担当（lib の worker）が取り出して送る
+pub struct Outbound {
+    pub effect: String,
+    pub args: Value,
+    pub reply: String,
+    /// 返事の行き先（トリガの名前と引数）。無ければ返事は使わない
+    pub routed: Option<(String, Value)>,
+}
+
 pub struct Engine {
     pub db: Db,
     pub defs: Value,
@@ -26,6 +35,12 @@ pub struct Engine {
     generation: u64,
     /// このプロセスの起動を見分ける値。再起動したあとや、同じ DB を使う別のサーバーの版と取り違えない
     boot: String,
+    /// 外へ出る通信の待ち行列。処理が取り消された（巻き戻した）分は、送らずに捨てる
+    outbox: Vec<Outbound>,
+    /// シークレットを入れたファイル（{"外部.名前": "値"}）。環境変数が優先。値はログにも応答にも出さない
+    pub secrets_file: Value,
+    /// テスト用：外部作用の通信先を別の URL に替える（--test のときだけ main が入れる。宣言した先だけに出る保証は、この口を使うと外れる）
+    pub url_override: std::collections::HashMap<String, String>,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -39,7 +54,7 @@ impl Engine {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let nth = STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let boot = format!("{:x}.{:x}.{:x}", nanos, std::process::id(), nth);
-        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0, store: None, store_version: 0, dirty: false, generation: 0, boot })
+        Ok(Engine { db, defs, mock: Mock::new(), clock_offset: 0, store: None, store_version: 0, dirty: false, generation: 0, boot, outbox: Vec::new(), secrets_file: json!({}), url_override: std::collections::HashMap::new() })
     }
 
     pub fn now(&self) -> i64 {
@@ -127,6 +142,7 @@ impl Engine {
     fn atomic<T>(&mut self, f: impl FnOnce(&mut Engine) -> R<T>) -> R<T> {
         self.db.begin()?;
         self.dirty = false;
+        let outbox_mark = self.outbox.len();
         // 想定外の panic があっても、書きかけを巻き戻して異常として返す（Mutex を汚さず、以後のリクエストも動く）
         let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))) {
             Ok(Ok(x)) => self.db.commit().map(|()| x),
@@ -137,6 +153,7 @@ impl Engine {
             }
         };
         if r.is_err() {
+            self.outbox.truncate(outbox_mark);  // 取り消した処理が頼んだ通信は、送らない
             self.db.rollback();
             // メモリ上の保存も巻き戻す（書き換えていたら捨てて、次に使うときに DB から読み直す）
             if self.dirty {
@@ -264,8 +281,73 @@ impl Engine {
         };
         let now = self.now();
         self.db.log_effect(now, &name, &args, &idem, target.as_deref())?;
+        // 実通信（over http）を宣言した外部作用は、模擬ではなく待ち行列へ。コミットされたあとに worker が送る
+        if self.defs["effects"][&name]["http"].is_object() {
+            let reply = self.defs["mock"]["effects"][&name]["reply"].as_str().unwrap_or("").to_string();
+            self.outbox.push(Outbound { effect: name, args, reply, routed });
+            return Ok(());
+        }
         self.mock.handle(&self.defs, now, &name, &args, &idem, routed);
         Ok(())
+    }
+
+    /// 送る通信を取り出す（worker が、ロックの外で送る）。返すときは、通信に要る URL・シークレットも解決して渡す
+    pub fn take_outbound(&mut self) -> Vec<(Outbound, crate::net::Request)> {
+        let items = std::mem::take(&mut self.outbox);
+        items
+            .into_iter()
+            .map(|o| {
+                let http = self.defs["effects"][&o.effect]["http"].clone();
+                let url = self.url_override.get(&o.effect).cloned().unwrap_or_else(|| s(&http, "url"));
+                let secret = http["bearer"].as_str().map(|n| self.secret(n));
+                let body = http["body"].as_array().map(|b| {
+                    let mut m = Map::new();
+                    for kp in b {
+                        if let (Some(k), Some(p)) = (kp[0].as_str(), kp[1].as_str()) {
+                            m.insert(k.to_string(), o.args.get(p).cloned().unwrap_or(Value::Null));
+                        }
+                    }
+                    Value::Object(m)
+                });
+                let req = crate::net::Request { method: s(&http, "method"), url, bearer: secret, body: body.filter(|b| b.as_object().map_or(false, |m| !m.is_empty())) };
+                (o, req)
+            })
+            .collect()
+    }
+
+    /// 実通信が要るシークレットが、環境にも無いときの注意（起動のときに 1 回。無くても起動はする：その通信だけが送れず、返事が来ないまま期限になる）
+    pub fn warn_missing_secrets(&self) {
+        for (name, d) in self.defs["effects"].as_object().into_iter().flatten() {
+            if let Some(b) = d["http"]["bearer"].as_str() {
+                if let Err(m) = self.secret(b) {
+                    eprintln!("注意：外部作用 {} は使えません。{}", name, m);
+                }
+            }
+        }
+    }
+
+    /// シークレットの値：環境変数 GEAS_SECRET_外部_名前（大文字）、なければシークレットのファイル。無ければ None
+    fn secret(&self, name: &str) -> Result<String, String> {
+        let var = format!("GEAS_SECRET_{}", name.replace('.', "_").to_ascii_uppercase());
+        std::env::var(&var).ok().or_else(|| self.secrets_file[name].as_str().map(String::from)).ok_or(format!("シークレット {} がありません（環境変数 {} かシークレットのファイルで渡してください）", name, var))
+    }
+
+    /// 送った通信の返事を、結果の種類と中身にして、返事の行き先へ入れる（次の tick が届ける）。失敗は返事にせず、記録だけ残す
+    /// （待つ先のトリガの期限が、返事が来ないときの行き先になる）
+    pub fn finish_outbound(&mut self, o: &Outbound, r: Result<(u16, String), String>) {
+        let now = self.now();
+        let http = self.defs["effects"][&o.effect]["http"].clone();
+        let fields = self.defs["mock"]["replies"][&o.reply]["fields"].clone();
+        let mapped = r.and_then(|(status, body)| crate::net::map_response(&http, &fields, status, &body).map(|(oc, c)| (status, oc, c)));
+        match mapped {
+            Ok((status, outcome, content)) => {
+                eprintln!("{}", json!({ "log": "geas.effect", "effect": o.effect, "status": status, "outcome": outcome }));
+                if let Some((t, targs)) = &o.routed {
+                    self.mock.jobs.push(crate::mock::Job { due: now, effect: o.effect.clone(), trigger: t.clone(), trigger_args: targs.clone(), reply: o.reply.clone(), content });
+                }
+            }
+            Err(e) => eprintln!("{}", json!({ "log": "geas.effect", "effect": o.effect, "error": e })),
+        }
     }
 
     /// 返事を1件、トリガの待ちへ入れる。条件がそろったら行き先の処理を動かす
@@ -293,7 +375,12 @@ impl Engine {
         self.db.remove_wait(w.id)?;
         // 行き先の入力 = トリガの引数 + 揃った応答の中身（空の中身は「無い」）
         let mut input = args.as_object().cloned().unwrap_or_default();
-        for r in c["replies"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+        // 「all reply A, B」は揃った全部の応答、「reply A」は起きたその応答（1 つだけの要因は replies を持たず key が応答の名前）
+        let got: Vec<&str> = match c["replies"].as_array() {
+            Some(rs) => rs.iter().filter_map(|x| x.as_str()).collect(),
+            None => vec![reply],
+        };
+        for r in got {
             if let Some(m) = collected.get(r).and_then(|x| x.as_object()) {
                 for (k, v) in m {
                     input.insert(k.clone(), v.clone());

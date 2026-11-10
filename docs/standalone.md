@@ -15,11 +15,11 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 - 画面のファイルの配信だけは、WebView のカスタムプロトコル（`geas://`。Windows では WebView2 が `http://geas.localhost` と見せる）を使います。読み込むのは exe に埋め込んだ HTML・JS・CSS だけで、ネットワークには出ません。
 - 窓の中の画面には、通信先を持たせません（CSP の `connect-src 'none'`、窓の移動も自分の画面だけ）。
 - Linux では、窓とその補助プロセスが IP のソケット（待ち受けも接続も）を 1 つも持たないことを、`tests/test_window.py` で確かめています。
-- 外部作用（`effect`）で外へ出る通信は、このあと足します（宣言した先だけに、Rust 側から出す形）。いまの窓版は、通信しない部分だけです。
+- 外へ出る通信は、`effect` に `over http { … }` を宣言した外部作用だけが、宣言した先に Rust 側から出します（リダイレクトには従いません。書き方は [language-reference.md](language-reference.md) の「外とのやりとり」）。宣言がないアプリには、通信の部品（ureq）が依存にも実行ファイルにも入りません。通信しうる先は、仕様書とレビュー画面の「外へ出る通信」の表と、「動かす前提」の到達性の行に出ます。見本は `tests/fixtures/solo_tweet`（X への投稿。試験は手元の模擬の X）。
 
 ## 保存先
 
-`--db ファイル` で決めます。省くと、利用者のデータ用フォルダの下のアプリ名のフォルダ（Windows: `%APPDATA%`、macOS: `~/Library/Application Support`、それ以外: `$XDG_DATA_HOME` か `~/.local/share`）に `app.sqlite` を置きます。`--seed 最初のデータ.json` も使えます（サーバーと同じ）。`--selftest` は、窓を開いて画面が描かれるのを確かめて終わる試験用の起動です。
+`--db ファイル` で決めます。省くと、利用者のデータ用フォルダの下のアプリ名のフォルダ（Windows: `%APPDATA%`、macOS: `~/Library/Application Support`、それ以外: `$XDG_DATA_HOME` か `~/.local/share`）に `app.sqlite` を置きます。`--seed 最初のデータ.json` も使えます（サーバーと同じ）。`--secrets ファイル` か、データ用フォルダの `secrets.json`（`{"外部.名前": "値"}`）か、環境変数 `GEAS_SECRET_外部_名前`（大文字）で、外部作用の認証に使う値を渡します。`--selftest` は、窓を開いて画面が描かれるのを確かめて終わる試験用の起動です。
 
 ## 作り
 

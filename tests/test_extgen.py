@@ -82,7 +82,7 @@ def test_サーバーの実行部は生成物と一緒に置かれ_最初のデ�
     from geas.servergen import write_server
     write_server(tmp_path)
     s = tmp_path / "server"
-    assert {f.name for f in (s / "src").iterdir()} == {"app.rs", "db.rs", "engine.rs", "http.rs", "lib.rs", "main.rs", "mock.rs", "seed.json"}
+    assert {f.name for f in (s / "src").iterdir()} == {"app.rs", "db.rs", "engine.rs", "http.rs", "lib.rs", "main.rs", "mock.rs", "net.rs", "seed.json"}
     assert 'geas_app = { path = ".." }' in (s / "Cargo.toml").read_text() and (s / "Cargo.lock").exists()
     # Cargo は組み立ての起点の [profile] しか使わないので、リリースでの溢れの確認はサーバーの側にも書く
     assert "[profile.release]\noverflow-checks = true\n" in (s / "Cargo.toml").read_text()

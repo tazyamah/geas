@@ -1,0 +1,186 @@
+app "ひとりつぶやき"
+ltype Body = text 1..280
+ltype Ref = text 1..64
+
+entity Tweet {
+  tweet_id: id unique
+  body: Body required
+  status: TweetStatus
+  x_ref: Ref
+}
+
+state TweetStatus {
+  initial Saved
+  middle Posting
+  final Posted, PostFailed
+}
+
+result WriteResult { Written(tweet_id: id) }
+result AskResult { Asked, NoTweet, WrongStatus }
+result SettleResult { Accepted(tweet_id: id, post_id: Ref), Refused(tweet_id: id), NoTweet, WrongStatus }
+result MoveResult { Applied, NoTweet, WrongStatus }
+
+// X へ投稿する。通信先はここに書いたものだけ（検査器が https の文字列だけを許し、仕様書の「通信しうる先」に出す）
+effect Twitter. post(tweet_id: id, content: Body) replies PostSettled over http {
+  POST "https://api.x.com/2/tweets"
+  bearer Twitter.token
+  body "text" from content
+  status 201 → Posted take post_id from "data.id"
+  status 400..499 → Rejected
+  status other → Rejected
+}
+
+reply PostSettled(post_id: Ref) {
+  Posted gives post_id
+  Rejected
+}
+
+needs secret Twitter.token "X の投稿に使うアクセストークン（値は環境から渡す。書かない）"
+needs exposure internal "窓つき exe。ポートを開かず、画面からの呼び出しはプロセスの中で渡す"
+
+deed write_tweet {
+  input body: Body required
+  writes Tweet
+  transition Tweet: (new) → Saved
+  result WriteResult
+  effects none
+
+  let t = create Tweet { body: body, status: Saved }
+  return Written(t.tweet_id)
+}
+
+deed post_to_x {
+  input tweet_id: id required
+  reads Tweet.body, Tweet.status
+  writes Tweet.status
+  transition Tweet: Saved → Posting
+  result AskResult
+  effects Twitter.post
+
+  let t = Tweet[tweet_id] else { return NoTweet }
+  if t.status != Saved { return WrongStatus }
+  t.status = Posting
+  request Twitter.post(tweet_id, t.body, idempotency_key = tweet_id)
+  return Asked
+}
+
+deed settle_post {
+  input tweet_id: id required, post_id: Ref
+  reads Tweet.status
+  result SettleResult
+  effects none
+
+  let t = Tweet[tweet_id] else { return NoTweet }
+  if t.status != Posting { return WrongStatus }
+  let xid = post_id else { return Refused(tweet_id) }
+  return Accepted(tweet_id, xid)
+}
+
+deed mark_posted {
+  input tweet_id: id required, post_id: Ref required
+  reads Tweet.status
+  writes Tweet.status, Tweet.x_ref
+  transition Tweet: Posting → Posted
+  result MoveResult
+  effects none
+
+  let t = Tweet[tweet_id] else { return NoTweet }
+  if t.status != Posting { return WrongStatus }
+  t.status = Posted
+  t.x_ref = post_id
+  return Applied
+}
+
+deed mark_failed {
+  input tweet_id: id required
+  reads Tweet.status
+  writes Tweet.status
+  transition Tweet: Posting → PostFailed
+  result MoveResult
+  effects none
+
+  let t = Tweet[tweet_id] else { return NoTweet }
+  if t.status != Posting { return WrongStatus }
+  t.status = PostFailed
+  return Applied
+}
+
+query tweet_list {
+  from Tweet
+  select tweet_id, body, status
+  reads Tweet.tweet_id, Tweet.body, Tweet.status
+}
+
+query tweet_of {
+  input tweet_id: id required
+  from Tweet
+  filter tweet_id equals tweet_id
+  select tweet_id, body, status, x_ref
+  reads Tweet.tweet_id, Tweet.body, Tweet.status, Tweet.x_ref
+}
+
+trigger XPending(tweet_id: id) {
+  reply PostSettled → settle_post
+  deadline now + 2 min → mark_failed
+}
+
+nexus Writing {
+  write_tweet: Written → reply
+}
+
+nexus Posting {
+  post_to_x: Asked → wait XPending, NoTweet → reply, WrongStatus → reply
+}
+
+nexus Settling {
+  settle_post: Accepted → mark_posted, Refused → mark_failed, NoTweet → reply, WrongStatus → reply
+  mark_posted: Applied → reply, NoTweet → reply, WrongStatus → reply
+  mark_failed: Applied → reply, NoTweet → reply, WrongStatus → reply
+}
+
+resource Tweets {
+  create write_tweet {
+    Written → 201
+  }
+  index tweet_list
+}
+
+resource TweetDetails under Tweets {
+  index tweet_of
+}
+
+resource XPostings {
+  create post_to_x {
+    Asked → 201
+    NoTweet → 404
+    WrongStatus → 409
+  }
+}
+
+screen TweetList entry {
+  show tweet_list
+  field body
+  open TweetDetail
+  action write_tweet {
+    Written → stay
+  }
+  design {
+    layout form
+    accent "#1d9bf0"
+    mode light
+  }
+}
+
+screen TweetDetail(tweet_id: id) {
+  show tweet_of
+  action post_to_x {
+    Asked → stay
+    NoTweet → stay
+    WrongStatus → stay
+  }
+  design {
+    layout list
+    accent "#1d9bf0"
+    mode light
+  }
+}
