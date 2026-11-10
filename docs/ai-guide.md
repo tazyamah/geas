@@ -61,7 +61,7 @@ python -m geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-
 python -m geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
 python -m geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
 python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
-python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--seed 最初のデータ.json] [--server URL]
+python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--standalone] [--seed 最初のデータ.json] [--server URL]
 python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
 ```
 
@@ -69,7 +69,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 
 - 何も付けない：Rust の crate（検査済みの処理の本体）だけ。
 - `--host`：画面（PWA）・開発用の模擬パネル（サーバーを `--test` で起こしたときだけ配る）・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。AI から使う口として、MCP のツール定義（`mcp/tools.json`、URL の定義から機械的に作る）と、サーバーへ中継する汎用の橋渡し `mcp/bridge.py`・登録例 `mcp/mcp.json` も作る。
-- `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。動かし方・引数・公開するときの前置き（nginx など）は [docs/server.md](server.md)。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
+- `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。動かし方・引数・公開するときの前置き（nginx など）は [docs/server.md](server.md)。`--standalone` は、窓つき exe（`window/`）も置く（画面と処理を 1 つの実行ファイルにし、通信路を使わない。[docs/standalone.md](standalone.md)）。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。
 - `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `tests/test_url_examples.py` 、計画書の「画面の具体例」（下）から画面の通しテスト `tests/test_screen_examples.py` も作る（サーバーをビルドしてから `python -m pytest 出力先/tests`）。
 
 検査にエラーか「問い」が残っていると、`rust` と `compare` は先へ進みません。
@@ -150,7 +150,7 @@ python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 | `rustgen.py`・`hostgen.py` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
 | `rest.py`・`screengen.py` | REST の URL と状態、画面の定義 |
 | `mcp.py`・`mcp_bridge.py` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（定義を読むだけの汎用） |
-| `extgen.py`・`devgen.py`・`servergen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/ui` |
+| `extgen.py`・`devgen.py`・`servergen.py`・`windowgen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部、窓つき exe の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/window`・`geas/ui` |
 | `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
 | `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
 | `receipt.py` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化・影響範囲・変異検査の生き残り |

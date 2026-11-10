@@ -12,9 +12,33 @@ let cur = null;                    // いまの画面 {name, params}
 const slotVal = {};                // slot 名 → 選んだ値
 let qty = {};                      // 写像の入力欄 → {行のID: 数}
 
+// ---- 呼び出しの運び方 ----
+// 窓つき exe（window.ipc がある）では、処理の呼び出しも問い合わせも、HTTP を通さず WebView の IPC でプロセスの中へ渡す
+// （URL は「機能の定義としての名前」で、通信路ではない）。ふつうのブラウザでは fetch。どちらも Response を返すので、呼び出し側は同じ。
+const viaIpc = typeof window !== "undefined" && window.ipc && typeof window.ipc.postMessage === "function";
+const pending = new Map();
+let ipcSeq = 0;
+if (viaIpc) {
+  window.__geasReply = (id, status, headers, body) => {
+    const done = pending.get(id);
+    if (!done) return;
+    pending.delete(id);
+    const nobody = status === 204 || status === 304;
+    done(new Response(nobody ? null : body, { status, headers }));
+  };
+}
+function ipcFetch(url, init = {}) {
+  return new Promise((resolve) => {
+    const id = ++ipcSeq;
+    pending.set(id, resolve);
+    window.ipc.postMessage(JSON.stringify({ id, method: init.method || "GET", url, headers: init.headers || {}, body: init.body || "" }));
+  });
+}
+const xfetch = viaIpc ? ipcFetch : (url, init) => fetch(url, init);
+
 let ROUTE = {};                    // 処理・問い合わせ・出来事の名前 → resource の URL（defs の routes）
 async function api(method, path, body, keep) {
-  const r = await fetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const r = await xfetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
   if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
   return j;
@@ -25,7 +49,7 @@ const urlOf = (name, args) => ROUTE[name].path.replace(/:[a-z_]+/, encodeURIComp
 const known = {};
 async function fetchRows(name, args) {
   const url = urlOf(name, args), had = known[url];
-  const r = await fetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
+  const r = await xfetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
   if (r.status === 304 && had) return (rowsOf[name] = had.rows, had);
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
   if (!r.ok) throw new Error(j.error || r.statusText);
@@ -303,7 +327,7 @@ setInterval(() => {
   document.title = D.screens.title;
   $("#app-title").textContent = D.screens.title;
   $("#tabs").innerHTML = D.screens.order.map((n) => [n, S[n]]).filter(([, s]) => !s.params.length && s.entry === (s === S[D.screens.first])).map(([n, s]) => `<button data-screen="${n}">${esc(s.label)}</button>`).join("");
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if (!viaIpc && "serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (!navigator.onLine) $("#offline").hidden = false;
   eventsOn("opened").forEach(fire);
   await route();

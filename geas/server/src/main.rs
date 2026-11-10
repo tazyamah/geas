@@ -3,11 +3,7 @@
 //! --test：テスト用の口（/api/test/…：時計を進める・模擬の設定など）と、resource の宣言を通らない口（/api/deeds/… など）、
 //!         開発用の模擬パネル（--dev のフォルダ）を開く。付けなければ、外から呼べるのは仕様書の URL の表にある口だけ。公開するサーバーには付けない
 //! --allow-host：localhost と IP の書き方のほかに、Host として受ける名前（何度でも書ける。カンマ区切りでもよい）。それ以外の名前の要求は 403
-mod app;
-mod db;
-mod engine;
-mod http;
-mod mock;
+use geas_server::{engine, http};
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -84,26 +80,12 @@ fn main() {
     let opts = Arc::new(http::Opts { test_api, allow_hosts });
     // 最初のデータは生成物に埋め込んである（geas rust --seed）。別のものを使うときだけ --seed。読むのは DB が空のときだけ
     let seed_path = arg("--seed", "");
-
-    // 保存にある実体の名前は、生成物から取る（空の保存を書き出すと、全部の実体が並ぶ）
-    let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).expect("保存の形");
-    let entities: Vec<String> = empty.as_object().expect("保存の形").keys().cloned().collect();
-    let db = db::Db::open(&db_path, entities).expect("DB を開けません");
     let seed = || match seed_path.as_str() {
-        "" => Ok(include_str!("seed.json").to_string()),
+        "" => geas_server::embedded_seed(),
         path => std::fs::read_to_string(path).map_err(|x| format!("最初のデータ {} を読めません: {}", path, x)),
     };
-    app::seed_if_empty(&db, seed).expect("最初のデータを入れられません");
-    let engine = Arc::new(Mutex::new(engine::Engine::new(db).expect("定義が読めません")));
-
-    // 時間の経過（模擬の返事・期限）
-    let ticker = engine.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        if let Err(e) = engine::lock(&ticker).tick() {
-            eprintln!("tick: {}", e);
-        }
-    });
+    let engine = geas_server::open_engine(&db_path, seed).unwrap_or_else(|e| panic!("{}", e));
+    geas_server::spawn_ticker(engine.clone());
 
     let addr = format!("{}:{}", host, port);
     let server = Arc::new(tiny_http::Server::http(&addr).expect("ポートを開けません"));

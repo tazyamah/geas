@@ -251,7 +251,7 @@ fn not_modified(tag: &str) -> Resp {
 }
 
 /// 画面（screen）の URL（geas_app::screens の url。:名前 は任意の 1 区間）に当てはまるか
-fn is_screen_url(path: &str) -> bool {
+pub fn is_screen_url(path: &str) -> bool {
     let segs: Vec<&str> = path.trim_end_matches('/').split('/').collect();
     geas_app::screens.iter().any(|s| {
         let pat: Vec<&str> = s.url.trim_end_matches('/').split('/').collect();

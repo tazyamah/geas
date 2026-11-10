@@ -1450,6 +1450,9 @@ def test_サーバーとして組んでも_ライブラリの計算の溢れは_
     cargo = (server / "Cargo.toml").read_text()
     assert "geas_app = { path = \"..\" }" in cargo
     (server / "Cargo.toml").write_text("".join(x for x in cargo.splitlines(keepends=True) if not x.startswith(("rusqlite", "serde_json", "tiny_http"))))
+    for f in (server / "src").iterdir():  # 実行部の lib（経路の処理・保存）は外す。ここでは処理を呼ぶだけの main で足りる
+        if f.name != "main.rs":
+            f.unlink()
     (server / "src" / "main.rs").write_text("""use geas_app::host::call;
 fn main() {
     for n in ["1000", "10000000000000000000"] {
