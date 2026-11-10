@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .check import ERROR, QUESTION, WARN, check
 from .servergen import write_server
+from .windowgen import write_window
 from .extgen import ext_screens, write_ext
 from .examples import ExampleError, compare_examples, run_crate, runner_source, write_crate
 from .modules import ModuleError
@@ -277,6 +278,8 @@ def check_paths(a) -> list[str]:
     if a.cmd == "rust":
         if a.runtime and not a.host:
             bad.append("--runtime は --host と一緒に使います（サーバーの実行部は、画面の窓口と組みます）")
+        if a.standalone and not (a.host and a.runtime):
+            bad.append("--standalone は --host --runtime と一緒に使います（窓つき exe は、サーバーの実行部と生成した画面を使います）")
         if a.seed and not a.runtime:
             bad.append("--seed は --host --runtime と一緒に使います（最初のデータはサーバーが入れます）")
     return bad
@@ -336,6 +339,7 @@ def main(argv=None) -> int:
     r = sub.add_parser("rust", help="Rust の crate を生成する")
     r.add_argument("code", help=".geas ファイル")
     r.add_argument("-o", required=True, help="crate を書き出すフォルダ")
+    r.add_argument("--standalone", action="store_true", help="窓つき exe（geas_window の crate。画面と処理を 1 つの実行ファイルにし、通信路を使わない）も、生成物の window/ に置く（--host --runtime と一緒に）")
     r.add_argument("--plan", help="具体例の実行用 bin も生成する（--host --runtime と一緒なら、URL の具体例の HTTP テストも）")
     r.add_argument("--host", action="store_true", help="画面（WASM）から呼ぶ窓口 host.rs と cdylib 設定も生成する")
     r.add_argument("--runtime", action="store_true", help="サーバーの実行部（geas_server の crate）も、生成物の server/ に置く（--host と一緒に）")
@@ -464,6 +468,8 @@ def main(argv=None) -> int:
         write_crate(ck, lib, src, Path(a.o), host=a.host)
         if a.host and a.runtime:
             write_server(Path(a.o), Path(a.seed) if a.seed else None)
+            if a.standalone:
+                write_window(Path(a.o))
             if a.plan:
                 from .testgen import write_url_tests
                 try:
