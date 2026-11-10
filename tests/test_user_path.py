@@ -3,6 +3,7 @@ $名前 は展開しない。絶対パスで、.. を含まないこと。失敗
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -57,6 +58,16 @@ def test_os_path_は_raw_から変換する_convert_の中でだけ使える():
     assert any("convert" in m or "os_path" in m for m in errors(chk(bad)))
 
 
+def _cargo_env():
+    """HOME を差し替えても cargo が動くよう、rustup と cargo の置き場は元の HOME から固定する"""
+    home = Path(os.environ.get("HOME", "/root"))
+    env = dict(os.environ)
+    env.setdefault("RUSTUP_HOME", str(home / ".rustup"))
+    env.setdefault("CARGO_HOME", str(home / ".cargo"))
+    return env
+
+
+
 @needs_cargo
 def test_パスは_実行中のOSの書式で展開され_不正なら入力不正(tmp_path):
     ck = chk(SRC)
@@ -70,7 +81,7 @@ fn main() {
 }
 """
     write_crate(ck, generate(ck), main, tmp_path, host=True)
-    env = {**os.environ, "HOME": "/home/tester"}
+    env = {**_cargo_env(), "HOME": "/home/tester"}
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr[-2500:]
     lines = r.stdout.splitlines()
@@ -86,7 +97,7 @@ fn main() {
     assert blank.startswith("Err("), blank
     assert newline.startswith("Err(") and "改行" in newline, newline
     # HOME が無ければ、~ は展開できないので、入力不正（黙って別の場所にしない）
-    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True, env={k: v for k, v in os.environ.items() if k != "HOME"})
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True, env={k: v for k, v in _cargo_env().items() if k != "HOME"})
     assert r.returncode == 0, r.stderr[-2500:]
     no_home = r.stdout.splitlines()
     assert no_home[0].startswith("Ok(") and no_home[1].startswith("Err(") and "HOME" in no_home[1] and no_home[2].startswith("Err("), no_home
