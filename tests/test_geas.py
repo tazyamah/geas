@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from geas.ast import show_type
+from geas.ast import If, show_type
 from geas.check import ERROR, QUESTION, WARN, check
 from geas.examples import HOST_MOD, compare_examples, run_crate, runner_source, write_crate
 from geas.hostgen import host_source
 from geas.spec import render
+from geas.lexer import LexError
 from geas.modules import ModuleError
 from geas.parser import ParseError, parse
 from geas.plan import A_ONLY, B_ONLY, DIFF, compare_static, read_plan
@@ -347,6 +348,65 @@ def test_条件つきの変更は_Rust_の_if_の中に出る():
     prog = parse(mutate(CODE, GUARD, COND))
     src = generate(check(prog))
     assert "    if (order.status == OrderStatus::Received) {\n        writes.push(Write::Order_status(order.order_id.clone(), OrderStatus::PaymentRequested));\n    }" in src
+
+
+# ---- 文の if の else・else if ----
+TAIL = "  request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  return Requested\n"  # GUARD の後ろ
+ELSE = ("  if order.status != Received {\n    return WrongStatus\n  } else if order.total <= 0 {\n    return ZeroTotal\n  } else {\n"
+        "    order.status = PaymentRequested\n    request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  }\n  return Requested\n")
+
+
+def test_else_の中では_条件が成り立たないことを使える():
+    ck = chk(mutate(CODE, GUARD + TAIL, ELSE))
+    assert not msgs(ck, ERROR), ck.diags
+    prog = parse(mutate(CODE, GUARD + TAIL, ELSE))
+    st = next(x for x in prog.processes if x.name == "request_payment").body[1]
+    assert isinstance(st.els[0], If) and st.els[0].els is not None  # else if は、入れ子の if 1つ
+    src = generate(check(prog))
+    assert "    } else if ((order.total as i128) <= 0i128) {\n" in src and "    } else {\n        writes.push(Write::Order_status(" in src
+    # 成り立つ側では、成り立たない側の確認は使えない
+    ck = chk(mutate(CODE, GUARD + TAIL, ELSE.replace("order.status != Received", "order.status == Received")))
+    assert any("遷移" in d.code for d in ck.diags if d.level == ERROR)
+
+
+def test_if_と_else_で同じ項目に書き分けられ_同じ道で2回書くと止まる():
+    both = "  if order.status != Received { return WrongStatus }\n  if order.total <= 0 { return ZeroTotal }\n  if order.total > 1000 {\n    order.status = PaymentRequested\n  } else {\n    order.status = PaymentRequested\n  }\n  return Requested\n"
+    src = mutate(mutate(CODE, GUARD + TAIL, both), "  effects Payment.charge\n\n  let order = Order", "  effects none\n\n  let order = Order")
+    assert not msgs(chk(src), ERROR), chk(src).diags
+    twice = mutate(src, "  } else {\n    order.status = PaymentRequested\n  }\n", "  }\n  order.status = PaymentRequested\n")
+    ck = chk(twice)
+    line = twice.split("\n").index("  order.status = PaymentRequested", twice.split("\n").index("  if order.total > 1000 {") + 3) + 1
+    assert [(d.msg, d.line) for d in ck.diags if d.code == "書込"] == [("1つの処理で「注文.状態」に2回書いています（要素が重なると結果が順序で変わります。if と else のように、同時には通らない道で書き分けるのはかまいません）", line)]
+    # 先に return する道で書いて、残りの道で書くのも、同じ道ではない
+    early = mutate(src, "  if order.total > 1000 {\n    order.status = PaymentRequested\n  } else {\n    order.status = PaymentRequested\n  }\n",
+                   "  if order.total > 1000 {\n    order.status = PaymentRequested\n    return Requested\n  }\n  order.status = PaymentRequested\n")
+    assert not msgs(chk(early), ERROR), chk(early).diags
+
+
+def test_if_と_else_の両方で_return_すると_その後ろには届かない():
+    ends = mutate(CODE, GUARD + TAIL, "  if order.status != Received { return WrongStatus }\n  if order.total <= 0 {\n    return ZeroTotal\n  } else {\n"
+                  "    order.status = PaymentRequested\n    request Payment.charge(order_id, order.total, idempotency_key = order_id)\n    return Requested\n  }\n")
+    assert not msgs(chk(ends), ERROR), chk(ends).diags  # 処理の最後が、両方 return する if でもよい
+    dead = mutate(ends, "    return Requested\n  }\n", "    return Requested\n  }\n  return Requested\n")
+    line = dead.split("\n").index("  return Requested") + 1
+    assert [d.line for d in chk(dead).diags if "届きません" in d.msg] == [line]
+    after_return = mutate(CODE, GUARD + TAIL, GUARD + "  return Requested\n" + TAIL)
+    assert any("届きません" in m for m in msgs(chk(after_return), ERROR))
+    open_end = mutate(ends, "    return Requested\n  }\n", "  }\n")
+    assert any("最後は return" in m for m in msgs(chk(open_end), ERROR))
+
+
+def test_else_の中も書ける文は_if_の中と同じで_空の_else_は止まる():
+    let_in = mutate(CODE, GUARD + TAIL, "  if order.total <= 0 {\n    return ZeroTotal\n  } else {\n    let x = Order[order_id] else { return NoSuchOrder }\n  }\n" + GUARD + TAIL)
+    assert any("else の中に書けるのは" in m for m in msgs(chk(let_in), ERROR))
+    empty = mutate(CODE, TAIL, "  if order.total > 0 {\n    request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  } else {\n  }\n  return Requested\n")
+    assert any("else の中が空です" in m for m in msgs(chk(empty), ERROR))
+
+
+def test_else_のある_1行の確認は_変異検査で消さない():
+    from geas.mutate import mutants_of
+    src = "  if a > 1 { return X }\n  if a > 2 { return X } else { return Y }\n"
+    assert [m.line for m in mutants_of(src) if m.kind == "確認を消す"] == [1]
 
 
 # ---- 問い合わせの条件（または・数との比較） ----
@@ -1143,7 +1203,7 @@ def test_長さや文字が広い入力を項目へ入れると止まる():
 
 
 def test_文字種の書き方の誤りは止まる():
-    for bad in ('of "z-a"', 'of ""', 'of "a\\"'):
+    for bad in ('of "z-a"', 'of ""', 'of "a\\\\"'):  # 最後は、文字種の値が a\（\ のあとに文字が無い）
         with pytest.raises(ParseError):
             chk(mutate(TEXT, 'of "a-z0-9_"\n', bad + "\n"))
 
@@ -1400,7 +1460,7 @@ query 一覧 {
   input 最小: int
   from メモ
   filter 重さ at_least 最小
-  order 重さ newest
+  order 重さ desc
   select メモID, 書いた人.名前 as 名前, sum(札) as 札数, count(札) as 札の種類
   reads メモ.メモID, メモ.書いた人, 人.名前, メモ.重さ, メモ.札
 }
@@ -1440,13 +1500,13 @@ entity メモ {
 query 一覧 {
   input 件数: 件数値
   from メモ
-  order 重さ newest
+  order 重さ desc
   page 件数
   reads メモ.重さ
 }
 query 先頭 {
   from メモ
-  order 重さ oldest
+  order 重さ asc
   page 2
   reads メモ.重さ
 }
@@ -1455,7 +1515,7 @@ query 先頭 {
 
 def test_page_は_order_が無いとエラーで_limit_は使えない():
     assert chk(PAGEQ).ok, chk(PAGEQ).diags
-    ck = chk(mutate(PAGEQ, "  order 重さ oldest\n  page 2", "  page 2"))
+    ck = chk(mutate(PAGEQ, "  order 重さ asc\n  page 2", "  page 2"))
     assert any("order が要ります" in m for m in msgs(ck, ERROR)), ck.diags
     with pytest.raises(ParseError, match="page に替わりました"):
         chk(mutate(PAGEQ, "page 2", "limit 2"))
@@ -1465,8 +1525,22 @@ def test_page_は_order_が無いとエラーで_limit_は使えない():
 
 def test_page_の件数は仕様書に出る():
     from geas.spec import query_rows
-    rows = {q.name: query_rows(q) for q in chk(PAGEQ).p.queries}
+    ck = chk(PAGEQ)
+    rows = {q.name: query_rows(ck, q) for q in ck.p.queries}
     assert rows["先頭"]["ページ"] == "2件" and rows["一覧"]["ページ"] == "件数（件数が無ければ全件）"
+
+
+def test_並びの向きは_仕様書では日時なら新しい順_数なら大きい順と読む():
+    from geas.spec import query_rows
+    ck = chk(PAGEQ)
+    rows = {q.name: query_rows(ck, q) for q in ck.p.queries}
+    assert rows["一覧"]["並び"] == "重さ 大きい順" and rows["先頭"]["並び"] == "重さ 小さい順"
+    timed = mutate(mutate(mutate(PAGEQ, "  重さ: 重さ値\n", "  重さ: 重さ値\n  書いた時刻: time\n"),
+                          "  order 重さ desc", "  order 書いた時刻 desc"), "  order 重さ asc", "  order 書いた時刻 asc")
+    ck = chk(timed.replace("reads メモ.重さ", "reads メモ.書いた時刻"))
+    assert ck.ok, ck.diags
+    rows = {q.name: query_rows(ck, q) for q in ck.p.queries}
+    assert rows["一覧"]["並び"] == "書いた時刻 新しい順" and rows["先頭"]["並び"] == "書いた時刻 古い順"
 
 
 @needs_cargo
@@ -1484,7 +1558,7 @@ fn main() {
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     a, b = r.stdout.splitlines()
-    assert a == '["A", "C"]' and b == '["B", "C"]', (a, b)  # oldest の先頭2件／newest の先頭2件
+    assert a == '["A", "C"]' and b == '["B", "C"]', (a, b)  # asc の先頭2件／desc の先頭2件
 
 
 def test_問いが残っているうちは生成しない():
@@ -2891,6 +2965,46 @@ fn main() {
     assert outs[' trust assume "契約 §4"'].startswith("Ok("), outs  # 1000 × 3/2 × 1/2 = 750。範囲外の税率がそのまま通る
 
 
+# ---- 文字列の書き方：行末の \ で次の行へ続け、改行そのものは \n ----
+REASON = r"""ltype Qty = int 0..99
+ltype Code = text 1..8 of "a\\-z"
+entity Item {
+  item_id: id unique
+  stock: Qty required
+  code: Code
+}
+result AddResult { Done, NoItem }
+deed add {
+  input item_id: id required
+  reads Item.stock
+  writes Item.stock
+  result AddResult
+  effects none
+  let it = Item[item_id] else { return NoItem }
+  it.stock += 1 saturating "在庫は棚の上限で止める。\
+                            棚に入りきらないため\n（\"倉庫\" と相談済み）"
+  return Done
+}
+"""
+
+
+def test_文字列は行末の_バックスラッシュで続け_改行は_n_で書き_仕様書の表を崩さない():
+    from geas.ast import StrLit, show
+    from geas.review import review
+    ck = chk(REASON)
+    assert ck.ok, ck.diags
+    why = '在庫は棚の上限で止める。棚に入りきらないため\n（"倉庫" と相談済み）'  # 続きの行の頭の空白は入らない
+    assert ck.infos["add"].guards == [("Item.stock", "+=", "saturating", why)]
+    assert show_type(next(f.type for f in ck.p.data[0].fields if f.name == "code")) == r"文字列 1..8 文字種 [\-az]"  # \\- は文字種の - そのもの
+    assert show(StrLit(why)) == r'"在庫は棚の上限で止める。棚に入りきらないため\n（\"倉庫\" と相談済み）"'  # コードの形に戻すと、書いたとおり
+    md = render(ck, build(ck))
+    assert '棚に入りきらないため<br>（"倉庫" と相談済み）' in md  # 表の1行は1行のまま（改行は表の中の改行）
+    assert all(not line.startswith("（") for line in md.splitlines())
+    assert "棚に入りきらないため<br>（&quot;倉庫&quot; と相談済み）" in review(ck)
+    with pytest.raises(LexError, match=r"「\\d」は書けません.*\\\\ と書きます"):
+        parse(mutate(REASON, r'of "a\\-z"', r'of "\d"'))
+
+
 # ---- raw と、型に結んだ raw から変換する convert（入力の選別を通す境界） ----
 RAW_SRC = """ltype PartNo = text 8..8 of "0-9" read part_no_reader
 ltype Plain = text 8..8 of "0-9"
@@ -2963,6 +3077,23 @@ fn main() {
     assert a.startswith("Ok(") and "12345678" in a, a
     assert b.startswith("Err(") and "8桁" in b, b
     assert c.startswith("Err(") and "数字だけ" in c, c
+
+
+@needs_cargo
+def test_拒否の理由に引用符と改行と_バックスラッシュを書いても_そのまま返る(tmp_path):
+    src = mutate(RAW_SRC, '"8桁にしてください"', r'"8桁に\n\"してください\"\\"')
+    ck = chk(src)
+    assert ck.ready, ck.diags
+    main = """use geas_app::host::call;
+fn main() {
+    let req = r#"{"name":"put_item","ctx":{"new_Item_id":"A"},"input":{"part_no":"1234567"},"store":{}}"#;
+    match call(req) { Ok(s) => println!("OK {}", s), Err(e) => println!("ERR {}", e) }
+}
+"""
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    assert r.stdout == 'ERR 8桁に\n"してください"\\\n', r.stdout
 
 
 # ---- raw の文字位置を回る sum と、条件の式（検査数字を geas の式で書く） ----

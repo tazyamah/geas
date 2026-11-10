@@ -53,7 +53,7 @@ def inline(s: str) -> str:
 
 def table(head, rows, cls="") -> str:
     th = "".join(f"<th>{escape(h)}</th>" for h in head)
-    body = "".join("<tr>" + "".join(f"<td>{inline(c) if isinstance(c, str) else escape(str(c))}</td>" for c in r) + "</tr>" for r in rows)
+    body = "".join("<tr>" + "".join(f"<td>{inline(c).replace(chr(10), '<br>') if isinstance(c, str) else escape(str(c))}</td>" for c in r) + "</tr>" for r in rows)
     return f'<div class="scroll"><table class="grid {cls}"><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
 
 

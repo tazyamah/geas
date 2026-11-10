@@ -193,7 +193,7 @@ class Query:
     target: str = ""
     conds: list[list[tuple[str, str, str]]] = field(default_factory=list)  # where 1行 = または でつないだ組。行どうしは かつ。要素は (項目, 比較, 状態名か数)
     filters: list[tuple[str, str, str]] = field(default_factory=list)  # (項目, 以上／以下／含む／直近, 入力名／秒数)
-    order: Optional[tuple[str, str]] = None  # (項目, 新しい順／古い順)
+    order: Optional[tuple[str, str]] = None  # (項目, 降順／昇順)。仕様書では、日時なら新しい順／古い順、数なら大きい順／小さい順
     page: Optional[str] = None  # 1ページの件数 N を持つ入力名（数を直接書いたときは page_n）
     page_n: Optional[int] = None  # 1ページの件数（数を直接書いたとき）
     select: list[Column] = field(default_factory=list)  # 空なら、対象のIDの列を返す
@@ -474,6 +474,18 @@ class If:
     cond: object
     body: list  # 条件が成り立つときの文（return・項目の更新・update・request・入れ子の if）
     line: int = 0
+    els: Optional[list] = None  # 成り立たないときの文（else）。else if は、入れ子の If 1つだけの並び
+    else_line: int = 0
+
+
+def always_returns(stmts: list) -> bool:
+    """文の並びが、どの道でも return で終わるか（最後が return か、if と else の両方がそうなっている if）"""
+    if not stmts:
+        return False
+    last = stmts[-1]
+    if isinstance(last, Return):
+        return True
+    return isinstance(last, If) and last.els is not None and always_returns(last.body) and always_returns(last.els)
 
 
 @dataclass
@@ -561,13 +573,21 @@ def show_type(t: Type) -> str:
     raise ValueError(k)
 
 
+STR_ESC = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t"}
+
+
+def quote_str(s: str) -> str:
+    """文字列を、.geas に書く形（"…"）に戻す。字句解析の逆で、\\・"・改行・タブを逃がす"""
+    return '"' + "".join(STR_ESC.get(c, c) for c in s) + '"'
+
+
 def show(e) -> str:
     if isinstance(e, Num):
         return str(e.v)
     if isinstance(e, Null):
         return "null"
     if isinstance(e, StrLit):
-        return '"' + e.s + '"'
+        return quote_str(e.s)
     if isinstance(e, BoolLit):
         return "true" if e.v else "false"
     if isinstance(e, Not):

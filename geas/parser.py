@@ -5,7 +5,7 @@ import copy
 from pathlib import Path
 
 from .ast import *  # noqa: F401,F403
-from .foreign import ELSE_HOW, FOREIGN_NAMES, TOP_KEYWORDS, brace_hint, def_hint, shown, stmt_hint, string_hint, token_hint
+from .foreign import FOREIGN_NAMES, TOP_KEYWORDS, brace_hint, def_hint, shown, stmt_hint, token_hint
 from .lexer import Tok, lex
 from .modules import ModuleError, expand, statement_starts
 
@@ -826,6 +826,19 @@ class Parser:
             self.skip_nl()
         return body
 
+    def if_stmt(self, line) -> If:
+        """if 条件 { … } [else { … } | else if …]。else は、閉じる } と同じ行に続けて書く"""
+        s = If(self.expr(), self.if_block(), line)
+        if self.is_("else"):
+            s.else_line = self.next().line
+            if self.is_("if"):
+                s.els = [self.if_stmt(self.next().line)]
+            elif self.is_("{"):
+                s.els = self.if_block()
+            else:
+                raise self.err("else の後ろには { … } か if を書きます", "if 条件 { … } else { … }、または } else if 条件 { … } と続けます")
+        return s
+
     def binder(self) -> Binder:
         if self.accept("("):
             names = self.comma_list(self.name)
@@ -840,10 +853,7 @@ class Parser:
         if self.is_("return"):
             s = self.ret()
         elif self.accept("if"):
-            cond = self.expr()
-            s = If(cond, self.if_block(), line)
-            if self.is_("else"):
-                raise self.err("文の if に else は書けません", ELSE_HOW)
+            s = self.if_stmt(line)
         elif self.accept("update"):
             self.expect("{")
             target = self.postfix()
@@ -1124,7 +1134,8 @@ class Parser:
     # ---- 問い合わせ（読むだけの処理） ----
     FILTER_OPS = {"at_least": "以上", "at_most": "以下", "equals": "一致"}
     FOLDS = {"ignore_case": "大小無視", "ignore_kana": "かな無視", "ignore_width": "幅無視"}
-    ORDERS = {"newest": "新しい順", "oldest": "古い順"}
+    ORDERS = {"desc": "降順", "asc": "昇順"}
+    ORDER_HOW = "order 項目 desc は大きい順（日時なら新しい順）、order 項目 asc は小さい順（古い順）です"
 
     def query(self, line) -> Query:
         q = Query(self.name(), line=line)
@@ -1178,10 +1189,12 @@ class Parser:
                     raise self.err(f"filter の種類「{op}」は使えません（equals・at_least・at_most・contains・within）")
             elif kw == "order":
                 f = self.name()
+                if self.peek().kind != "NAME":
+                    raise self.err("order の向き（desc か asc）を、項目の後ろに書きます", self.ORDER_HOW)
                 d = self.name()
                 if d not in self.ORDERS:
-                    raise self.err("order は「newest」か「oldest」です",
-                                   "newest は大きい順（日時なら新しい順）、oldest は小さい順（古い順）です（asc・desc・by はありません）")
+                    how = ("by は書きません。" if f == "by" else "向きは小文字です。" if d.lower() in self.ORDERS else "") + self.ORDER_HOW
+                    raise self.err(f"order の向きは desc か asc です（「{d}」は使えません）", how)
                 q.order = (f, self.ORDERS[d])
             elif kw == "page":  # 1ページ分（最大 N 件）。N は数か、整数の入力の名前
                 if self.peek().kind == "NUM":
@@ -1512,9 +1525,9 @@ def parse_toks(toks, origin) -> Program:
     except ParseError as e:
         if not e.file and not e.col:  # 行だけで作ったエラー：いまの位置の字句から、どのファイルかを補う
             e.file = ps.peek().file
-        for h in (string_hint(toks), brace_hint(toks)):  # 閉じ忘れの " は、後ろの { } の対応も崩すので先に言う
-            if h and h not in e.hint:
-                e.hint = (e.hint + "。" if e.hint else "") + h
+        h = brace_hint(toks)
+        if h and h not in e.hint:
+            e.hint = (e.hint + "。" if e.hint else "") + h
         raise
     p.tz_offset = tz
     p.labels = collect_labels(toks)

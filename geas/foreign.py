@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""他の言語の書き方（`&&`・`else`・`string`・`True` など）で書いたときの、直し方の手がかり。
+"""他の言語の書き方（`&&`・`elif`・`string`・`True` など）で書いたときの、直し方の手がかり。
 
 geas を書くのは AI で、AI は他の言語のノリで書きやすい。構文エラーと検査の指摘に、geas での書き方を添える。
 ここは手がかりの表だけで、受け付ける書き方は増やさない（言語は変えない）。
@@ -50,9 +50,9 @@ def name_hint(name: str) -> str:
 
 
 # ---- 構文：字句 ----
-ELSE_HOW = ("成り立つときの分岐の中で return し、成り立たないときの文を if の後ろに続けて書きます"
-            "（値を選ぶだけなら、式の if 条件 then 式 else 式）。let の else は、let x = … else { return … } と同じ行に続けて書きます")
-ELSE = "文の if に else はありません。" + ELSE_HOW
+ELSE = ("else は、if 条件 { … } の閉じる } と同じ行に続けて書きます（} else { … }、} else if 条件 { … }）。"
+        "let の else も、let x = … else { return … } と同じ行に書きます")
+ELIF = "else if 条件 { … } と書きます（elif・elsif はありません）"
 
 
 def shown(t) -> str:
@@ -62,7 +62,8 @@ def shown(t) -> str:
     if t.kind == "EOF":
         return "ファイルの終わり"
     if t.kind == "STR":
-        return f'"{t.val}"'
+        from .ast import quote_str
+        return quote_str(t.val)
     return t.val
 
 
@@ -94,7 +95,7 @@ def token_hint(toks, i: int) -> str:
     if v == "?" or v.endswith("?"):
         return "? はありません。値を選ぶ式は if 条件 then 式 else 式、無いかもしれない項目は書かなければそう扱われます"
     if v in ("elif", "elsif", "elseif"):
-        return ELSE
+        return ELIF
     if t.kind == "NAME" and (v.startswith("'") or v.endswith("'")):
         return "文字列は \"…\" で囲みます（' は使えません）"
     if v in FOREIGN_NAMES:
@@ -132,11 +133,12 @@ def def_hint(kw: str) -> str:
 STMT_HINTS = {
     **dict.fromkeys(("var", "const", "val", "mut", "auto"), "変数は let で作ります（let x = 式）"),
     **dict.fromkeys(("while", "loop", "do", "repeat", "until"), "繰り返しは for 要素 in 集まり { … } だけです（while はありません）"),
-    **dict.fromkeys(("match", "switch", "case", "when"), "分岐は if 条件 { … } を並べて書きます（match・switch はありません）"),
+    **dict.fromkeys(("match", "switch", "case", "when"), "分岐は if 条件 { … } else if 条件 { … } else { … } で書きます（match・switch はありません）"),
     **dict.fromkeys(("throw", "raise", "panic", "error", "fail", "abort", "try", "catch"),
                     "例外はありません。失敗も結果の種類にして return します（return OutOfStock など）"),
     **dict.fromkeys(("print", "println", "log", "console", "debug", "echo"), "画面や記録への出力は書けません（処理は結果を返すだけです）"),
-    **dict.fromkeys(("else", "elif", "elsif", "elseif"), ELSE),
+    "else": ELSE,
+    **dict.fromkeys(("elif", "elsif", "elseif"), ELIF),
     **dict.fromkeys(("assert", "require", "ensure", "guard"), "処理の中の確かめは if 条件 { return 結果の種類 } と書きます（require は raw から変換する convert の中だけ）"),
     **dict.fromkeys(("await", "async", "emit", "publish", "send", "call", "fetch"), "外への要求は request 名前空間.操作(…, idempotency_key = …) で書き、返事は trigger で待ちます"),
     **dict.fromkeys(("set",), "項目の更新は 名前.項目 = 値 と書きます"),
@@ -176,9 +178,3 @@ def brace_hint(toks) -> str:
         if st:
             return f"{place(st[-1])}の {{ が閉じていません（}} が足りません）"
     return ""
-
-
-def string_hint(toks) -> str:
-    """行をまたぐ文字列があれば、その場所（たいていは " の閉じ忘れ）。無ければ空"""
-    t = next((t for t in toks if t.kind == "STR" and "\n" in t.val), None)
-    return f'{place(t)}の文字列が行をまたいでいます（" の閉じ忘れかもしれません）' if t else ""
