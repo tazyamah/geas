@@ -52,6 +52,10 @@ geas rust アプリ.geas -o 出力先 --host --runtime --standalone
 cd 出力先/window
 CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc cargo build --release --target x86_64-pc-windows-gnu
 # できる物：target/x86_64-pc-windows-gnu/release/geas_window.exe
+# mingw で組むと WebView2Loader.dll が別ファイルで要る。exe と同じフォルダに置く：
+#   target/x86_64-pc-windows-gnu/release/build/webview2-com-sys-*/out/x64/WebView2Loader.dll
 ```
+
+`WebView2Loader.dll` が exe の隣になければ、起動時に「WebView2Loader.dll が見つからない」と出ます（Windows 実機で確認済み）。MSVC で組めば dll は exe に静的に入ります。署名のない exe なので、「不明な発行元」の警告が出ます。
 
 Windows 側では、WebView2 ランタイム（Windows 11 は標準）が要ります。確認の順は、`geas_window.exe --selftest`（窓が開いて画面が描かれたら終了コード 0）、通常の起動、（常駐を宣言したアプリは）トレイのアイコンのクリック・右クリックのメニュー・窓を閉じて隠れる動き。保存先は `%APPDATA%\アプリ名\app.sqlite`。
