@@ -221,6 +221,10 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
+            elif kw == "resident":  # resident { tooltip "…" ／ start hidden ／ menu "ラベル" → 画面 }：常駐（タスクトレイ・メニューバー）
+                if p.resident is not None:
+                    raise ParseError("resident は 1 つだけ書けます", line)
+                p.resident = self.resident_decl(line)
             elif kw == "app":  # app "名前"：アプリの名前（画面の見出しとインストール名）
                 t = self.peek()
                 if t.kind != "STR" or not t.val:
@@ -622,6 +626,34 @@ class Parser:
         if http is None:
             self.end_line()
         return EffectDecl(name, params, line, failures, no_wait, joins, replies, http)
+
+    def resident_decl(self, line) -> ResidentDecl:
+        """resident { tooltip "説明" ／ start shown|hidden ／ menu "ラベル" → 画面名 }"""
+        r = ResidentDecl(line=line)
+        self.block_open()
+        while not self.accept("}"):
+            ln = self.peek().line
+            kw = self.name()
+            if kw == "tooltip":
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err('tooltip のあとには、説明を "…" で書きます')
+                r.tooltip = t.val
+            elif kw == "start":
+                r.start = self.name()
+                if r.start not in ("shown", "hidden"):
+                    raise self.err("start のあとには shown（窓を開いて始める）か hidden（アイコンだけで始める）を書きます")
+            elif kw == "menu":
+                t = self.next()
+                if t.kind != "STR":
+                    raise self.err('menu のあとには、項目のラベルを "…" で書きます（例：menu "つぶやきを書く" → TweetList）')
+                self.expect("→")
+                r.menu.append((t.val, self.name(), ln))
+            else:
+                raise self.err(f"resident の中に「{kw}」は書けません（tooltip・start・menu）")
+            self.end_line()
+        self.end_line()
+        return r
 
     def http_decl(self, line) -> HttpDecl:
         """over http { METHOD "https://…" ／ bearer 外部.名前 ／ body 引数, … ／ status 201 → 種類 [take 中身 from "道すじ"] ／ status 400..499 → 種類 ／ status other → 種類 }"""

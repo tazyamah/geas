@@ -89,3 +89,39 @@ def test_窓の画面の呼び出しは_fetchを通らず_ipc経由になって�
     js = (ROOT / "geas" / "ui" / "ui.js").read_text(encoding="utf-8")
     assert js.count("fetch(") == js.count("xfetch(") + 1  # fetch( の直接の呼び出しは xfetch の定義の 1 か所だけ
     assert "window.ipc.postMessage" in js and "viaIpc" in js
+
+
+@pytest.fixture(scope="module")
+def built_resident(tmp_path_factory):
+    """常駐（resident）と実通信（over http）を宣言したつぶやきの見本から、窓を組む"""
+    out = tmp_path_factory.mktemp("window_resident")
+    subprocess.run([sys.executable, "-m", "geas", "rust", str(ROOT / "tests" / "fixtures" / "solo_tweet" / "solo_tweet.geas"), "-o", str(out), "--host", "--runtime", "--standalone"],
+                   check=True, capture_output=True, text=True, cwd=ROOT)
+    r = subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=out / "window", capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    return out / "window" / "target" / "release" / "geas_window"
+
+
+def test_常駐の部品は_residentを宣言したアプリだけに入る(built, built_resident):
+    assert "tray-icon" not in (built.parents[2] / "Cargo.toml").read_text()
+    assert "tray-icon" in (built_resident.parents[2] / "Cargo.toml").read_text()
+
+
+def test_常駐の窓は開き_トレイのアイコンを作る(built_resident, tmp_path):
+    r = subprocess.run(["xvfb-run", "-a", str(built_resident), "--db", str(tmp_path / "r.sqlite"), "--selftest"], capture_output=True, text=True, timeout=90)
+    log = r.stdout + r.stderr
+    assert r.returncode == 0, log[-2000:]
+    # トレイが使える環境ではアイコンを作る。使えない環境では、窓を出したまま、常駐にせずに動く（隠れて開けなくならない）
+    assert "常駐：トレイのアイコンを作りました" in log or "常駐にせず" in log
+
+
+def test_常駐のアプリは_同じ保存先で1つだけ起動できる(built_resident, tmp_path):
+    db = str(tmp_path / "s.sqlite")
+    first = subprocess.Popen(["xvfb-run", "-a", str(built_resident), "--db", db], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(6)
+        second = subprocess.run(["xvfb-run", "-a", str(built_resident), "--db", db], capture_output=True, text=True, timeout=60)
+        assert second.returncode == 0 and "すでに起動しています" in second.stdout + second.stderr
+    finally:
+        subprocess.run(["pkill", "-f", str(built_resident)])
+        first.wait(timeout=20)

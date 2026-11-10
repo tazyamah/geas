@@ -304,6 +304,7 @@ class Checker:
         self.check_deletes()
         self.check_isolations()
         self.check_needs()
+        self.check_resident()
         self.check_states()
         self.check_invariants()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
@@ -1078,6 +1079,32 @@ class Checker:
             elif who == "store" and kind not in VERIFIED_STORES and not why.strip():
                 self.diags.append(Diag(ERROR, "直列", f"保存先 {where}", f'保存先の種類「{kind}」は geas が確かめていないので、人の保証として理由を "…" で書いてください'
                                        f"（確かめてある種類：{'・'.join(VERIFIED_STORES)}）", line))
+
+    def check_resident(self):
+        """resident（常駐）：メニューが開く画面は、入口（entry か最初の画面）で、引数を持たないこと"""
+        r = self.p.resident
+        if r is None:
+            return
+        scr = {s.name: s for s in self.p.screens}
+        first = self.p.screens[0].name if self.p.screens else ""
+        if not self.p.screens:
+            self.d(ERROR, "常駐", "resident", "常駐の窓が開く画面（screen）がありません")
+        if len(r.tooltip) > 64:
+            self.d(ERROR, "常駐", "resident / tooltip", "tooltip は 64 文字までです（アイコンに載せる短い説明）")
+        labels = [m[0] for m in r.menu]
+        if len(set(labels)) != len(labels):
+            self.d(ERROR, "常駐", "resident / menu", "menu のラベルが重なっています")
+        for label, name, line in r.menu:
+            where = f"resident / menu「{label}」"
+            if not label.strip() or len(label) > 40:
+                self.d(ERROR, "常駐", where, "menu のラベルは 1〜40 文字で書きます", line)
+            s = scr.get(name)
+            if s is None:
+                self.d(ERROR, "常駐", where, f"画面「{name}」がありません", line)
+            elif not (s.entry or name == first) or s.params:
+                self.d(ERROR, "常駐", where, f"画面「{name}」は開けません（メニューが開けるのは、入口の画面（entry か最初の画面）で、引数を持たないものだけです）", line)
+        if any(l.strip() in ("終了", "開く") for l in labels):
+            self.d(ERROR, "常駐", "resident / menu", "「開く」（窓を出す）と「終了」の項目は、言語が常に足します。書かないでください")
 
     def check_needs(self):
         """needs（アプリが環境に要求すること）の検査。環境の実際は書かないので、ここで見るのは書き方と、導出した保証との食い違いだけ"""

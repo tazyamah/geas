@@ -469,7 +469,7 @@ def main(argv=None) -> int:
         if a.host and a.runtime:
             write_server(Path(a.o), Path(a.seed) if a.seed else None, net=any(e.http for e in ck.p.effects))
             if a.standalone:
-                write_window(Path(a.o))
+                write_window(Path(a.o), resident=ck.p.resident is not None)
             if a.plan:
                 from .testgen import write_url_tests
                 try:

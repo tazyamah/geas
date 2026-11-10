@@ -17,14 +17,16 @@ geas_server = { path = "../server" }
 serde_json = "1"
 tao = "0.34"
 wry = "0.54"
-
+{RESIDENT_DEP}
+[features]
+{RESIDENT_FEATURES}
 # 整数の溢れの確認は、リリースビルドでも付ける（server と同じ理由。起点のクレートの [profile] だけが使われる）
 [profile.release]
 overflow-checks = true
 '''
 
 
-def write_window(dest) -> None:
+def write_window(dest, resident: bool = False) -> None:
     src = Path(__file__).parent / "window"
     out = Path(dest) / "window"
     (out / "src").mkdir(parents=True, exist_ok=True)
@@ -32,5 +34,8 @@ def write_window(dest) -> None:
     lock = src / "Cargo.lock"
     if lock.exists():
         shutil.copy(lock, out / "Cargo.lock")
-    (out / "Cargo.toml").write_text(CARGO, encoding="utf-8")
+    # 常駐（resident）を宣言したアプリだけに、トレイの部品（tray-icon）を足す
+    cargo = CARGO.replace("{RESIDENT_DEP}\n", 'tray-icon = { version = "0.26", optional = true }\n' if resident else "", 1)
+    cargo = cargo.replace("{RESIDENT_FEATURES}", 'resident = ["dep:tray-icon"]\ndefault = ["resident"]\n' if resident else "resident = []\n", 1)
+    (out / "Cargo.toml").write_text(cargo, encoding="utf-8")
     (out / ".gitignore").write_text("target/\n*.sqlite\n*.sqlite-*\n", encoding="utf-8")
