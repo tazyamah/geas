@@ -104,6 +104,7 @@ class Parser:
         self.i = 0
         self.ltypes: dict[str, Type] = {}
         self.ltype_lines: dict[str, int] = {}  # 論理型の名前 → 宣言した行
+        self.auto_parts: list = []  # ltype 名前 = path が言語として足す、raw から変換する convert
         self.in_ltype = False  # ltype の右辺の中だけ、範囲や組み合わせを直に書ける
         self.composites: set[str] = {"vtime"}  # 合成型の名前（Make の見分けに使う）
         self.used_builtin: set[str] = set()  # 使われた組み込みの合成型
@@ -268,6 +269,7 @@ class Parser:
                                  def_hint(kw) or f"書ける定義は {'・'.join(TOP_KEYWORDS)} です")
             self.skip_nl()
         p.ltype_names = list(self.ltypes)
+        p.parts.extend(self.auto_parts)
         p.ltype_lines = dict(self.ltype_lines)
         p.composites = [t for t in self.ltypes.values() if t.kind == "合成" and t.target in self.composites]
         if "vtime" in self.used_builtin:
@@ -393,6 +395,17 @@ class Parser:
             self.composites.add(name)
             return
         self.expect("=")
+        if self.peek().kind == "NAME" and self.peek().val == "path":  # ltype 名前 = path：実行時にユーザーが入力するパス（実行中の OS の書式だけ）
+            self.next()
+            self.end_line()
+            import re as _re
+            reader = _re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() + "_os_path"  # UpperCamel → lower_snake（部品の名前の決まり）
+            t = Type("文字列", range=Range(1, 4096))
+            t.read = reader
+            self.auto_parts.append(Part(reader, [("r", Type("生"))], Type("文字列", range=Range(1, 4096), read=reader), None, line, Call("os_path", [Name("r")]), {}, requires=[]))
+            self.ltypes[name] = t
+            self.ltype_lines[name] = line
+            return
         self.in_ltype = True
         t = self.type()
         self.in_ltype = False

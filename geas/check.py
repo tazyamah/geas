@@ -30,7 +30,7 @@ def unit_label(u: str) -> str:
 
 
 CURRENCIES = ("JPY", "USD", "EUR")  # 金額の単位。金額は最小単位（円・セント）の整数で持つ
-RAW_OPS = ("len", "only", "text", "positions", "digit", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
+RAW_OPS = ("len", "only", "text", "positions", "digit", "os_path", "to_raw", "raw_cat")  # 後ろ2つは dangerous の入力を中継する処理の中で使う  # 生データ（raw）に使える操作。どれも失敗せず、メモリの安全を崩さない
 CONVERSIONS = {"money": ("Int", "Money"), "int": ("Money", "Int"), "time": ("Int", "Time")}  # 名前 → (変える前, 変えた後)
 
 
@@ -2252,8 +2252,8 @@ class ProcChecker:
 
     def raw_op(self, e: Call, env) -> str:
         """raw の操作：len(r)＝文字数、only(r, "文字種")＝文字種だけか、text(r)＝文字列として取り出す"""
-        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2, "to_raw": 1, "raw_cat": 2}[e.n]
-        if e.n in ("only", "text", "positions", "digit") and not getattr(self, "raw_convert", False):
+        n = {"len": 1, "only": 2, "text": 1, "positions": 1, "digit": 2, "os_path": 1, "to_raw": 1, "raw_cat": 2}[e.n]
+        if e.n in ("only", "text", "positions", "digit", "os_path") and not getattr(self, "raw_convert", False):
             self.d(ERROR, "型", f"{e.n}( ) は、raw から変換する convert の中でだけ使えます（処理の中で raw に使えるのは len・to_raw・raw_cat です）")
             return "?"
         if len(e.args) != n:
