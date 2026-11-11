@@ -48,7 +48,9 @@ def type_schema(ck, t: Type) -> dict:
     if k == "集合":
         return {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
     if k == "名前":
-        st = ck.states[t.target]
+        st = ck.states.get(t.target)
+        if st is None:  # 型の定義が無い（検査がエラーにしている）。仕様書は落とさずに出す
+            return {"type": "string"}
         return {"type": "string", "enum": [st.initial, *st.middle, *st.final]}
     if k == "合成":
         return {"type": "object", "properties": {n: type_schema(ck, pt) for n, pt in t.parts},
