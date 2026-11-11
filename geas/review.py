@@ -516,6 +516,9 @@ svg.diagram { display: block; font-family: var(--font-body); font-size: 13px; }
 svg.diagram text { fill: var(--ink); }
 svg.diagram .node rect { fill: var(--surface); stroke: var(--muted); stroke-width: 1.25; }
 svg.diagram .node rect.inner { fill: none; stroke-width: 1; }
+svg.diagram .node.step path { fill: var(--surface); stroke: var(--muted); stroke-width: 1.25; }
+svg.diagram .node.step.final rect { stroke: var(--accent); stroke-width: 2; }
+svg.diagram .steplabel { font-size: 11.5px; fill: var(--muted); }
 svg.diagram .node.start rect { stroke: var(--accent); stroke-width: 2; }
 svg.diagram .node.outside rect { fill: none; stroke-dasharray: 3 3; }
 svg.diagram .node.added rect { fill: var(--add-soft); stroke: var(--add); }
@@ -880,8 +883,9 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
     procs = [(x["処理"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["書く"]), " / ".join(f"{v}→{d}" for v, d in x["結果"]), ", ".join(x["外部"]) or "なし") for x in spec["処理"]]
     rules = "<h3>処理</h3>" + table(["処理", "入力", "読む", "書く", "結果 → 行き先", "外部作用"], procs)
-    rules += "<h3>処理の中身</h3>" + lead("上から順に進みます。「結果」に着いたら、そこで終わりです。ここに出ない動きを、処理は持ちません。") + "".join(
-        f'<h4>{escape(x["処理"])}</h4>' + (lead("外から決まる値（slot）：" + "、".join(f"{n}: {ty}" for n, ty in x["参照"])) if x["参照"] else "") + '<ol class="steps">' + "".join(f'<li style="margin-left:{(len(s) - len(s.lstrip("　"))) * 1.2}em">{escape(s.lstrip("　"))}</li>' for s in x["手順"]) + "</ol>"
+    rules += "<h3>処理の中身</h3>" + lead("上から下へ進みます。四角は「すること」、六角は「分かれ道」、角の丸い太枠は「結果」で、そこで終わりです。ここに出ない動きを、処理は持ちません。") + "".join(
+        f'<h4>{escape(x["処理"])}</h4>' + (lead("外から決まる値（slot）：" + "、".join(f"{n}: {ty}" for n, ty in x["参照"])) if x["参照"] else "")
+        + fig(svg.steps(x["図"], f"処理の中身 {x['処理']}"))
         for x in spec["処理"])
     if spec["問い合わせ"]:
         rules += "<h3>問い合わせ</h3>" + table(["問い合わせ", "入力", "読む", "条件", "並び", "ページ"],

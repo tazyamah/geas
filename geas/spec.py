@@ -142,6 +142,26 @@ def step_lines(body, depth: int = 0) -> list[str]:
     return out
 
 
+def step_tree(body) -> list:
+    """処理の中身を、図（フローチャート）にするための木にする。step_lines と同じ内容で、形だけが違う。
+    ("する", 文)／("結果", 文)／("もし", 条件, 成り立つときの木, 成り立たないときの木 か None)／("無ければ", 文, 結果の文)／("各", 見出し, 木)"""
+    out = []
+    for st in body:
+        line = step_lines([st])[0].strip()
+        if isinstance(st, Return):
+            out.append(("結果", line[3:]))
+        elif isinstance(st, Assign) and st.absent is not None:
+            head, _, r = line.partition("。無ければ 結果 ")
+            out.append(("無ければ", head, r))
+        elif isinstance(st, If):
+            out.append(("もし", show(st.cond), step_tree(st.body), step_tree(st.els) if st.els is not None else None))
+        elif isinstance(st, ForEach):
+            out.append(("各", line.rstrip("："), step_tree(st.body)))
+        else:
+            out.append(("する", line))
+    return out
+
+
 def build(ck: Checker) -> dict:
     from .rest import INTERNAL, OPEN, internal_targets, routes
     spec = build_raw(ck)
@@ -196,6 +216,7 @@ def build_raw(ck: Checker) -> dict:
             "書く": sorted(info.writes),
             "結果": rs,
             "手順": step_lines(proc.body),
+            "図": step_tree(proc.body),
             "外部": sorted(f"{e}(冪等キー={k})" for e, k in info.effects),
             "参照": [(n, show_type(t)) for n, t in proc.refs],
             "採番": sorted(set(info.new_ids)),

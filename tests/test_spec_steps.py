@@ -29,9 +29,10 @@ def changed(old, new):
 def test_処理の中身が仕様書に出る():
     _, md, html = views(BASE)
     for text in (md, html):
-        assert "顧客.ポイント に足す： 10" in text
+        assert "顧客.ポイント に足す： 10" in text  # HTML では図の中の文字
         assert "顧客.ポイント に足す： 5" in text
-        assert "order.状態 != 決済要求済 なら 結果 状態違い" in text
+    assert "order.状態 != 決済要求済 なら 結果 状態違い" in md
+    assert "order.状態 != 決済要求済" in html and "処理の中身 ポイントの加算" in html  # HTML はフローチャート（分かれ道と結果は別の箱）
 
 
 def test_比較の向きを変えると仕様書と変更点に出る():
