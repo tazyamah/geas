@@ -80,12 +80,86 @@ def read_text(rd) -> str:
     """ページからの読み方を、人向けの一文に"""
     if rd is None:
         return ""
-    parts = [f"{rd.subject}を、" + "・".join([f"URL（{u}）" for u in rd.urls] + [f"要素 {sel}" for sel, _ in rd.elements]) + "から読む"]
+    parts = [f"{rd.subject}を、" + "・".join([f"URL（{u}）" for u in rd.urls] + [f"要素 {sel}" + (f"（形 {m}）" if m else "") for sel, m in rd.elements]) + "から読む"]
     if rd.value_rows:
         parts.append("値は、" + "・".join(rd.value_rows) + " の行から読む")
     if rd.lookup:
-        parts.append(f"読めなければ対応表（{len(rd.lookup)}件）から引く")
+        parts.append(f"読めなければ対応表（{len(rd.lookup)}件：" + "、".join(f"{k}→{v}" for k, v in rd.lookup.items()) + "）から引く")
     return "。".join(parts)
+
+
+def step_lines(body, depth: int = 0) -> list[str]:
+    """処理の中身を、上から順の手順にする（1 行 = 1 文。入れ子は行頭の「　」の数）。
+    仕様書の「読む・書く・結果」だけでは、どの条件でどの結果になるか、何をいくつ書くかが出ないので、
+    コードの文をそのまま（名前は表示名で）並べる。ここに出ない動きを、処理は持たない"""
+    pad = "　" * depth
+    out: list[str] = []
+
+    def ret(r) -> str:
+        return "結果 " + r.variant + (f"（{', '.join(show(a) for a in r.args)}）" if r.args else "")
+
+    for st in body:
+        if isinstance(st, Return):
+            out.append(pad + ret(st))
+        elif isinstance(st, Assign):
+            out.append(pad + f"{st.name} = {show(st.e)}" + (f"。無ければ {ret(st.absent)}" if st.absent is not None else ""))
+        elif isinstance(st, Create):
+            out.append(pad + f"{st.name} = {st.data} を新しく作る（{', '.join(f'{n}: {show(x)}' for n, x in st.fields)}）")
+        elif isinstance(st, Delete):
+            out.append(pad + f"{st.var} を消す")
+        elif isinstance(st, If):
+            if len(st.body) == 1 and isinstance(st.body[0], Return) and st.els is None:
+                out.append(pad + f"{show(st.cond)} なら {ret(st.body[0])}")
+            else:
+                out.append(pad + f"{show(st.cond)} なら：")
+                out += step_lines(st.body, depth + 1)
+                if st.els is not None:
+                    out.append(pad + "そうでなければ：")
+                    out += step_lines(st.els, depth + 1)
+        elif isinstance(st, SetField):
+            if st.op in ("+=", "-=") and isinstance(st.e, Bin):
+                text = f"{st.var}.{st.f} {'に足す' if st.op == '+=' else 'から引く'}： {show(st.e.r)}"
+            else:
+                text = f"{st.var}.{st.f} = {show(st.e)}"
+            if st.guard:
+                text += "（範囲の端で止める）" if st.guard[0] == "saturating" else "（範囲は確かめない）"
+            out.append(pad + text)
+        elif isinstance(st, Update):
+            b = st.binder
+            names = b.names[0] if len(b.names) == 1 else f"({', '.join(b.names)})"
+            op = {"+=": "に足す", "-=": "から引く"}.get(st.op)
+            head = f"{show(b.src)} の各 {names} について" + (f"（{show(st.cond)} のものだけ）" if st.cond is not None else "") + "、"
+            out.append(pad + head + (f"{show(st.target)} {op}： {show(st.value)}" if op else f"{show(st.target)} {st.op} {show(st.value)}"))
+        elif isinstance(st, Request):
+            out.append(pad + f"外部作用 {st.effect}（{', '.join(show(a) for a in st.args)}）を要求する" + (f"（冪等キー = {show(st.idem)}）" if st.idem is not None else ""))
+        elif isinstance(st, ForEach):
+            b = st.binder
+            names = b.names[0] if len(b.names) == 1 else f"({', '.join(b.names)})"
+            out.append(pad + f"{show(b.src)} の各 {names} について：")
+            out += step_lines(st.body, depth + 1)
+        else:
+            raise ValueError(st)
+    return out
+
+
+def step_tree(body) -> list:
+    """処理の中身を、図（フローチャート）にするための木にする。step_lines と同じ内容で、形だけが違う。
+    ("する", 文)／("結果", 文)／("もし", 条件, 成り立つときの木, 成り立たないときの木 か None)／("無ければ", 文, 結果の文)／("各", 見出し, 木)"""
+    out = []
+    for st in body:
+        line = step_lines([st])[0].strip()
+        if isinstance(st, Return):
+            out.append(("結果", line[3:]))
+        elif isinstance(st, Assign) and st.absent is not None:
+            head, _, r = line.partition("。無ければ 結果 ")
+            out.append(("無ければ", head, r))
+        elif isinstance(st, If):
+            out.append(("もし", show(st.cond), step_tree(st.body), step_tree(st.els) if st.els is not None else None))
+        elif isinstance(st, ForEach):
+            out.append(("各", line.rstrip("："), step_tree(st.body)))
+        else:
+            out.append(("する", line))
+    return out
 
 
 def build(ck: Checker) -> dict:
@@ -104,6 +178,7 @@ def build(ck: Checker) -> dict:
 def build_raw(ck: Checker) -> dict:
     p = ck.p
     spec: dict = {}
+    spec["アプリ"] = [("アプリの名前", p.title)] if p.title else []
     spec["データ"] = [
         (d.name, f.name, show_type(f.type), "" if f.type.optional else "○", "○" if f.unique else "")
         for d in p.data
@@ -112,7 +187,7 @@ def build_raw(ck: Checker) -> dict:
     states, trans, rejects = [], [], []
     for d in p.data:
         for f in d.fields:
-            if f.type.kind == "名前" and not ck.states[f.type.target].plain:
+            if f.type.kind == "名前" and f.type.target in ck.states and not ck.states[f.type.target].plain:
                 s = ck.states[f.type.target]
                 states.append((d.name, s.initial, "初期"))
                 states += [(d.name, x, "中間") for x in s.middle]
@@ -140,6 +215,8 @@ def build_raw(ck: Checker) -> dict:
             "読む": sorted(info.reads),
             "書く": sorted(info.writes),
             "結果": rs,
+            "手順": step_lines(proc.body),
+            "図": step_tree(proc.body),
             "外部": sorted(f"{e}(冪等キー={k})" for e, k in info.effects),
             "参照": [(n, show_type(t)) for n, t in proc.refs],
             "採番": sorted(set(info.new_ids)),
@@ -158,7 +235,8 @@ def build_raw(ck: Checker) -> dict:
     spec["決め方"] = [(f.slot, " かつ ".join(f"{pa} = {v}" for pa, v in conds) or "上のどれでもない", str(val)) for f in p.rules for conds, val in f.rows]
     spec["外部作用"] = [(e.name, ", ".join(f"{n}: {show_type(t)}" for n, t in e.params)) for e in p.effects]
     spec["通信"] = [(e.name, f"{e.http.method} {e.http.url}", e.http.bearer or "なし", "、".join(k if k == n else f"{k}←{n}" for k, n in e.http.body) or "なし",
-                  " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" for lo, hi, o, _ in e.http.statuses) + (f" ／ その他 → {e.http.other[0]}" if e.http.other else ""))
+                  " ／ ".join(f"{lo if lo == hi else f'{lo}〜{hi}'} → {o}" + "".join(f"（{n}←{path}）" for n, path in tk) for lo, hi, o, tk in e.http.statuses)
+                  + (f" ／ その他 → {e.http.other[0]}" + "".join(f"（{n}←{path}）" for n, path in e.http.other[1]) if e.http.other else ""))
                  for e in p.effects if e.http]
     spec["データ用フォルダ"] = ([("データ用フォルダ", f"パス {p.data_folder[0]}")] if p.data_folder else []) + [
         (f"パス {n}（{os_name or '相対：exe のあるフォルダが起点'}）", path) for n, _, es, _ in p.paths for os_name, path, _ in es]
@@ -302,6 +380,8 @@ def flow_diagram(fl) -> list[str]:
 
 def render(ck: Checker, spec: dict, name="") -> str:
     out = [f"# 生成した仕様書（③）{name}", "", "コードから生成。人が直さない。◆の欄は plan の仕様書（①）と機械で突合する。", ""]
+    if spec.get("アプリ"):
+        out += [f"アプリの名前：{spec['アプリ'][0][1]}", ""]
     out += ["## データ", "", "| データ | 項目 | ◆型・範囲 | ◆必須 | ◆一意 |", "|---|---|---|---|---|"]
     out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["データ"]]
     out += ["", "## 状態と遷移", "", "| データ | ◆状態 | ◆区分 |", "|---|---|---|"]
@@ -314,6 +394,12 @@ def render(ck: Checker, spec: dict, name="") -> str:
     for x in spec["処理"]:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
+    out += ["", "## 処理の中身（上から順に進む。「結果」に着いたら、そこで終わる）"]
+    for x in spec["処理"]:
+        out += ["", f"### {x['処理']}", ""]
+        if x["参照"]:
+            out += ["外から決まる値（slot）：" + "、".join(f"{n}: {ty}" for n, ty in x["参照"]), ""]
+        out += [f"{i}. {s}" for i, s in enumerate(x["手順"], 1)]
     for fl in ck.p.flows:
         out += ["", f"## フロー図 {fl.name}（×＝結果で行き先が分かれる、＋＝並列に起こす）", "", "```mermaid", *map(ck.p.show_names, flow_diagram(fl)), "```"]
     if spec["問い合わせ"]:

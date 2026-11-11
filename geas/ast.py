@@ -609,7 +609,7 @@ def show_type(t: Type) -> str:
     if k == "合成":
         return f"{t.target}（{'、'.join(f'{n}: {show_type(pt)}' for n, pt in t.parts)}）"
     if k == "写像":
-        return f"{t.key} → {show_type(t.value)}"
+        return f"{t.key} → {show_type(t.value)}" + (f"（最大 {t.maxn} 件）" if t.maxn is not None else "")
     if k == "集合":
         return f"{show_type(t.value)} の集合"
     raise ValueError(k)

@@ -311,3 +311,111 @@ def sequence(participants: list[str], messages: list[Message], title: str = "") 
             f'<g class="mlabel{flag}"><text x="{(x1 + x2) / 2:.1f}" y="{y - 7}" text-anchor="middle">{escape(m.label)}</text></g>'
         )
     return _svg(total_w, total_h, parts, title)
+
+
+# ---- 処理の中身のフローチャート ----
+STEP_W = 300  # 箱の幅の上限（スマホの幅に収める）
+STEP_IN = 34  # 枝の字下げ
+LINE_H = 18
+
+
+def wrap(s: str, width: float, size: float = FONT) -> list[str]:
+    """文字の幅で折り返す（SVG は自動で折り返さない）。空白の所を優先し、無ければ文字の途中で切る"""
+    lines, cur = [], ""
+    for word in s.replace(" ", " \0").split("\0"):
+        while text_width(cur + word, size) > width:
+            if cur.strip():
+                lines.append(cur.rstrip())
+                cur = ""
+                continue
+            cut = 1
+            while cut < len(word) and text_width(word[: cut + 1], size) <= width:
+                cut += 1
+            lines.append(word[:cut])
+            word = word[cut:]
+        cur += word
+    if cur.strip():
+        lines.append(cur.rstrip())
+    return lines or [""]
+
+
+def steps(tree: list, title: str = "") -> str:
+    """処理の中身のフローチャート。上から下へ進む。四角は「すること」、六角は「分かれ道」、角の丸い太枠は「結果（ここで終わる）」。
+    分かれ道の先は右にずらして下に描き、終わらなければ元の線へ戻る"""
+    parts: list[str] = []
+    right = [0.0]
+
+    def box(kind: str, text: str, x: float, y: float) -> tuple[float, float]:
+        """箱を描いて、(下の端, 幅) を返す"""
+        lines = wrap(text, STEP_W - 28)
+        w = min(STEP_W, max(text_width(ln) for ln in lines) + 28)
+        h = len(lines) * LINE_H + 14
+        if kind == "分かれ道":
+            shape = f'<path d="M{x + 10} {y} H{x + w - 10} L{x + w} {y + h / 2} L{x + w - 10} {y + h} H{x + 10} L{x} {y + h / 2} Z"/>'
+        else:
+            shape = f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h}" rx="{h / 2 if kind == "結果" else 4:.1f}"/>'
+        cls = {"結果": "node step final", "分かれ道": "node step branch"}.get(kind, "node step")
+        text_svg = "".join(f'<text x="{x + 14:.1f}" y="{y + 7 + LINE_H * (i + 1) - 5:.1f}">{escape(ln)}</text>' for i, ln in enumerate(lines))
+        parts.append(f'<g class="{cls}">{shape}{text_svg}</g>')
+        right[0] = max(right[0], x + w)
+        return y + h, w
+
+    def label(text: str, x: float, y: float):
+        parts.append(f'<text class="steplabel" x="{x:.1f}" y="{y:.1f}">{escape(text)}</text>')
+
+    def arrow(d: str):
+        parts.append(f'<path class="edge same" d="{d}" marker-end="url(#arrow-same)"/>')
+
+    def branch(sub: list, text: str, x: float, y_from: float, y: float) -> tuple[float, bool]:
+        """幹（x + 14）から右へ出る枝。(下の端, 幹へ戻るか)"""
+        sx, bx = x + 14, x + STEP_IN
+        label(text, bx + 18, y + 10)
+        top = y + 16
+        arrow(f"M{sx} {y_from} V{top - 8} H{bx + 14} V{top - 2}")
+        bottom, ends = seq(sub, bx, top)
+        if not ends:
+            parts.append(f'<path class="edge same" d="M{bx + 14} {bottom} V{bottom + 8} H{sx}"/>')
+            bottom += 8
+        return bottom, not ends
+
+    def seq(nodes: list, x: float, y: float) -> tuple[float, bool]:
+        """文の並びを上から描く。(下の端, ここで終わるか)"""
+        sx = x + 14
+        prev = None  # 前の箱の下の端。そこから次の箱へ矢印を引く
+        for node in nodes:
+            kind = node[0]
+            if prev is not None:
+                arrow(f"M{sx} {prev} V{y - 2}")
+            if kind == "結果":
+                y, _ = box("結果", node[1], x, y)
+                return y, True
+            if kind == "する":
+                prev, _ = box("する", node[1], x, y)
+                y = prev + 16
+                continue
+            if kind == "無ければ":
+                bottom, _ = box("する", node[1], x, y)
+                end, _ = branch([("結果", node[2])], "無ければ", x, bottom, bottom + 2)
+                prev, y = bottom, end + 22
+                label("あれば", sx + 6, y - 8)
+                continue
+            if kind == "各":
+                bottom, _ = box("分かれ道", node[1], x, y)
+                end, _ = branch(node[2], "1 つずつ", x, bottom, bottom + 2)
+                prev, y = bottom, end + 16
+                continue
+            cond, then, els = node[1], node[2], node[3]
+            bottom, _ = box("分かれ道", cond, x, y)
+            end, back = branch(then, "はい", x, bottom, bottom + 2)
+            if els is not None:
+                end2, back2 = branch(els, "いいえ", x, bottom, end + 6)
+                if not (back or back2):
+                    return end2, True
+                prev, y = bottom, end2 + 16
+            else:
+                prev, y = bottom, end + 22
+                label("いいえ", sx + 6, y - 8)
+        return (prev if prev is not None else y), False
+
+    bottom, _ = seq(tree, PAD / 2, PAD / 2)
+    return _svg(right[0] + PAD / 2, bottom + PAD / 2, parts, title)

@@ -2,8 +2,11 @@
 # 生成したアプリを cargo で組むテストは --offline で組むので、先に見本のアプリを生成して、依存の crate を取っておく。
 name: test
 
+# 文書（docs/）だけを変えた PR では走らせない。テストは docs/ を読まない。
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
   push:
     branches: [main]
 
@@ -18,16 +21,48 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # 時間の大半は、生成したアプリを cargo で組むところ（依存の crate を、テストのたびに組み直している）。
+    # sccache を rustc と cc の前に挟んで、組んだ結果を GitHub のキャッシュに置き、次の回と、同じ回の別のテストで使い回す。
+    # 生成したアプリ自身のコードは毎回組む（置き場所が毎回違うので、キャッシュに当たらない）。
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      CC: sccache cc
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # 窓つき exe の試験（WebKitGTK・仮想ディスプレイ）と、常駐のトレイの部品
+      # 窓つき exe の試験（WebKitGTK・仮想ディスプレイ）と、常駐のトレイの部品。
+      # apt の配布元が遅い・つながらないことがある（37 分かかって失敗した回があった）ので、
+      # 取ってきた .deb をキャッシュに置き、次からは配布元に行かずにそこから入れる。
+      # ランナーの版が変わったら取り直す。配布元に行くときは、再試行と時間切れをつける。
+      - name: ランナーの版を調べる
+        id: image
+        run: echo "version=$ImageVersion" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: debs
+        with:
+          path: ~/apt-debs
+          key: apt-debs-v1-${{ steps.image.outputs.version }}
       - name: 窓の試験に要る部品を入れる
+        timeout-minutes: 10
+        env:
+          PKGS: libwebkit2gtk-4.1-dev xvfb libxdo-dev libayatana-appindicator3-dev
+          APT: -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q libwebkit2gtk-4.1-dev xvfb libxdo-dev libayatana-appindicator3-dev
+          if ls ~/apt-debs/*.deb >/dev/null 2>&1 && sudo dpkg -i ~/apt-debs/*.deb >/dev/null; then
+            echo "キャッシュの .deb から入れました"
+          else
+            mkdir -p ~/apt-debs/partial
+            sudo apt-get $APT update -q
+            sudo apt-get $APT install -y -q --no-install-recommends --download-only -o Dir::Cache::archives="$HOME/apt-debs" $PKGS
+            sudo apt-get $APT install -y -q --no-install-recommends -o Dir::Cache::archives="$HOME/apt-debs" $PKGS
+            sudo rm -rf ~/apt-debs/partial ~/apt-debs/lock
+            sudo chown -R "$USER" ~/apt-debs
+          fi
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: actions/cache@v4
         with:
           path: |
@@ -44,4 +79,7 @@ jobs:
       - name: テスト
         run: |
           python -m pip install -q pytest
-          python -m pytest tests -q -rs
+          python -m pytest tests -q -rs --durations=15
+      - name: 組んだ結果の使い回しの成績
+        if: always()
+        run: sccache --show-stats || true

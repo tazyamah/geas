@@ -557,6 +557,8 @@ class Checker:
     def check_flows(self):
         in_flow = {}  # 処理 → (最初に書いたフロー, 行き先)
         for fl in self.p.flows:
+            if not fl.entries:
+                self.d(ERROR, "行き先", f"フロー {fl.name}", "流れの中身がありません。`処理: 結果 → 行き先` の行を 1 つ以上書くか、この流れを消してください")
             for proc, routes in fl.entries:
                 where = f"フロー {fl.name} / {proc}"
                 if proc not in self.procs:

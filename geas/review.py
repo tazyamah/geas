@@ -516,6 +516,9 @@ svg.diagram { display: block; font-family: var(--font-body); font-size: 13px; }
 svg.diagram text { fill: var(--ink); }
 svg.diagram .node rect { fill: var(--surface); stroke: var(--muted); stroke-width: 1.25; }
 svg.diagram .node rect.inner { fill: none; stroke-width: 1; }
+svg.diagram .node.step path { fill: var(--surface); stroke: var(--muted); stroke-width: 1.25; }
+svg.diagram .node.step.final rect { stroke: var(--accent); stroke-width: 2; }
+svg.diagram .steplabel { font-size: 11.5px; fill: var(--muted); }
 svg.diagram .node.start rect { stroke: var(--accent); stroke-width: 2; }
 svg.diagram .node.outside rect { fill: none; stroke-dasharray: 3 3; }
 svg.diagram .node.added rect { fill: var(--add-soft); stroke: var(--add); }
@@ -699,13 +702,13 @@ draw();
 
 ROUTE_HEAD = ["メソッド", "経路", "動作", "呼ぶもの", "結果→状態", "外から"]
 
-CHANGE_KEYS = [("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("データ用フォルダ", "データ用フォルダ"), ("ファイル", "ファイル"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
+CHANGE_KEYS = [("アプリ", "アプリ"), ("拡張", "ブラウザ拡張"), ("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("データ用フォルダ", "データ用フォルダ"), ("ファイル", "ファイル"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
                ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存先", "保存先"), ("動かす前提", "動かす前提"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
 
 
 def _row_text(x) -> str:
     if isinstance(x, dict):
-        return "　".join(f"{k}：{v if not isinstance(v, list) else '・'.join(map(str, v))}" for k, v in x.items() if k in ("処理", "問い合わせ", "入力", "読む", "書く", "結果", "外部", "条件", "列"))
+        return "　".join(f"{k}：{v if not isinstance(v, list) else '・'.join(map(str, v))}" for k, v in x.items() if k in ("処理", "問い合わせ", "入力", "読む", "書く", "結果", "手順", "参照", "外部", "条件", "列", "並び", "ページ"))
     return "　／　".join(str(c) for c in x) if isinstance(x, (tuple, list)) else str(x)
 
 
@@ -880,6 +883,10 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
     procs = [(x["処理"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["書く"]), " / ".join(f"{v}→{d}" for v, d in x["結果"]), ", ".join(x["外部"]) or "なし") for x in spec["処理"]]
     rules = "<h3>処理</h3>" + table(["処理", "入力", "読む", "書く", "結果 → 行き先", "外部作用"], procs)
+    rules += "<h3>処理の中身</h3>" + lead("上から下へ進みます。四角は「すること」、六角は「分かれ道」、角の丸い太枠は「結果」で、そこで終わりです。ここに出ない動きを、処理は持ちません。") + "".join(
+        f'<h4>{escape(x["処理"])}</h4>' + (lead("外から決まる値（slot）：" + "、".join(f"{n}: {ty}" for n, ty in x["参照"])) if x["参照"] else "")
+        + fig(svg.steps(x["図"], f"処理の中身 {x['処理']}"))
+        for x in spec["処理"])
     if spec["問い合わせ"]:
         rules += "<h3>問い合わせ</h3>" + table(["問い合わせ", "入力", "読む", "条件", "並び", "ページ"],
                                            [(x["問い合わせ"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["条件"]), x["並び"], x["ページ"]) for x in spec["問い合わせ"]])
@@ -905,9 +912,14 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if spec["常駐"]:
         add("resident", "常駐", lead("窓を閉じても終了せず、タスクトレイ（macOS はメニューバー）のアイコンに居続けます。アイコンのクリックで窓を開閉し、メニューの項目は入口の画面を開きます。")
             + table(["項目", "内容"], spec["常駐"]))
+    if spec.get("アプリ"):
+        add("app", "アプリ", table(["項目", "内容"], spec["アプリ"]))
+    if spec["拡張"]:
+        add("ext", "ブラウザ拡張", lead("ページに出す画面と、ページから値を読む決まりです。読み方と対応表は、ここに書いたものだけです。")
+            + table(["画面", "ページ", "見せる問い合わせ", "入力", "ページからの読み方"], spec["拡張"]))
     if spec["外部作用"]:
         add("systems", "システムのつながり", system_context(spec))
-    for fl in p.flows:
+    for fl in (f for f in p.flows if f.entries):  # 中身の無い流れは検査がエラーにする。仕様書は、エラーのあるコードでも落ちずに出す
         add(f"flow-{fl.name}", f"処理の流れ：{show(fl.name)}", process_flow(ck, spec, fl))
 
     add("triggers", "待ちと期限（トリガ）", table(["トリガ", "要因", "行き先"], spec["トリガ"])
@@ -955,11 +967,11 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         add_view("act", "動作", f'<div class="pick">{sel}{devs}{hint}</div>' + "".join(by_id[a] for a, _ in origins))
     # [仕様]：上の二つに入らなかったすべて。種類ごとに分けて、一つずつ見る
     spec_groups = [
-        ("overview", "概要", ["overview", "usage"]),
+        ("overview", "概要", ["app", "overview", "usage"]),
         ("screens", "画面（流れ・一覧・デザイン・確認の網羅）", ["screens", "design", "coverage"]),
         ("data", "データと状態", ["data"] + [a for a in by_id if a.startswith("states-")]),
         ("rules", "決まりごと（処理・問い合わせ・不変条件）", ["rules", "levels", "storages", "needs", "trusts"]),
-        ("systems", "外部とのつながり・常駐", ["systems", "resident", "datafolder", "files"]),
+        ("systems", "外部とのつながり・常駐", ["systems", "ext", "resident", "datafolder", "files"]),
         ("flows", "処理の流れ", [a for a in by_id if a.startswith("flow-")]),
         ("triggers", "待ち・期限・出来事・削除", ["triggers", "deletes"]),
         ("routes", "URL", ["routes"]),
