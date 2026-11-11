@@ -67,12 +67,18 @@ pub fn seed_if_empty(db: &Db, seed: impl FnOnce() -> R<String>) -> R<()> {
         return Ok(());
     }
     db.begin()?;
+    let mut scratch = geas_app::Store::default();
     let r = rows.iter().try_for_each(|(en, rows)| {
         if !db.has_entity(en) {
             return Err(format!("実体「{}」がありません", en));
         }
         let rows = rows.as_object().ok_or("seed.json の実体は、キー→行のオブジェクトです")?;
-        rows.iter().try_for_each(|(k, v)| db.write_row(en, k, Some(&v.to_string())))
+        // 入れる前に、行を型の範囲で確かめる（範囲の外の行を DB に入れてしまうと、次の起動からも読めなくなる）
+        rows.iter().try_for_each(|(k, v)| {
+            let row = v.to_string();
+            geas_app::host::load_row(&mut scratch, en, k, &row).map_err(|x| format!("{}「{}」: {}", en, k, x))?;
+            db.write_row(en, k, Some(&row))
+        })
     });
     match r {
         Ok(()) => db.commit(),

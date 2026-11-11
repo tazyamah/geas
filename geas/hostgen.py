@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
-from .rustgen import column_type, opt, rust_str
+from .rustgen import column_type, opt, rust_str, value_checks
 from .rest import internal_targets, routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
@@ -137,6 +137,15 @@ def input_j(x: str, t: Type) -> str:
     if t.optional:
         return f'match Input.get_opt("{x}") {{ Some(v) => Some({from_j(replace(t, optional=False), "v")}), None => None }}'
     return from_j(t, f'Input.get("{x}")?')
+
+
+def stored(t: Type) -> Type:
+    """保存の行を確かめるときの型。型に結んだ変換（read）は、外から受け取るときに 1 回だけ通すものなので外す"""
+    if t.kind == "文字列" and t.read:
+        t = replace(t, read=None)
+    if t.kind == "合成":
+        t = replace(t, parts=tuple((pn, stored(pt)) for pn, pt in t.parts))
+    return t
 
 
 def from_j(t: Type, j: str) -> str:
@@ -343,10 +352,18 @@ def host_source(ck: Checker) -> str:
     # データ・保存の変換
     for d in p.data:
         key = ck.key_field(d.name).name
-        w(f"fn {d.name}_from_json(j: &J) -> Result<{d.name}, String> {{\n    Ok({d.name} {{")
+        # 保存の行も、外から来る値と同じに、型の範囲で確かめてから使う。検査器は「保存の値は型の範囲に入っている」を
+        # 前提に証明するので、範囲の外の行（最初のデータや、外で書き換えた DB）を通すと、確認を省いた変換が黙って壊れる
+        w(f"fn {d.name}_from_json(j: &J) -> Result<{d.name}, String> {{\n    let r = {d.name} {{")
         for f in d.fields:
             w(f'        {f.name}: {from_j(f.type, f"j.get(\"{f.name}\")?")},')
-        w("    })\n}")
+        w(f"    }};\n    {d.name}_row_ok(&r)?;\n    Ok(r)\n}}")
+        w(f"fn {d.name}_row_ok(r: &{d.name}) -> Result<(), String> {{")
+        for f in d.fields:
+            t = stored(f.type)
+            for c in value_checks(f"{d.name}.{f.name}", replace(t, optional=False), "x" if t.optional else f"r.{f.name}", t.optional):
+                w(f"    if let Some(x) = &r.{f.name} {{ {c} }}" if t.optional else f"    {c}")
+        w("    Ok(())\n}")
         w(f"fn {d.name}_to_json(r: &{d.name}) -> String {{\n    let mut v: Vec<String> = Vec::new();")
         for f in d.fields:
             w(f'    v.push(format!("{{}}:{{}}", js_str("{f.name}"), {to_j(f.type, f"r.{f.name}")}));')
