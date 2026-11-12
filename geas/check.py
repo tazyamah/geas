@@ -560,68 +560,119 @@ class Checker:
         """保存の形の版。migration を書いていなければ 1"""
         return max([m.version for m in self.p.migrations], default=1)
 
+    def migration_steps(self) -> list:
+        """migration の手順を、書いた順に 1 列にしたもの。(版, すること, 実体, 項目, 中身, 行)"""
+        return [(m.version, op, dn, fn, arg, line) for m in self.p.migrations for op, dn, fn, arg, line in m.steps]
+
+    @staticmethod
+    def migration_final(steps: list, i: int):
+        """i 番目の手順（add か rename）が作った項目の、最後の名前。あとの手順で名前が変われば追い、消されたら None"""
+        _, op, dn, fn, arg, _ = steps[i]
+        name = arg[1] if op == "rename" else fn
+        for _, op2, dn2, fn2, arg2, _ in steps[i + 1:]:
+            if dn2 != dn or fn2 != name:
+                continue
+            if op2 == "drop":
+                return None
+            if op2 == "rename":
+                name = arg2[1]
+        return name
+
     def check_migrations(self):
-        """migration：版は 2 から 1 ずつ増える。add は、今ある実体の項目に、その型と範囲に入る値を書く"""
-        added = set()
+        """migration：版は 2 から 1 ずつ増える。手順を上から順に当てた結果が、今の実体の項目と合っていること。
+        add の値は、その項目（あとで名前が変わるなら、変わった先）の型と範囲に入っていること"""
         for i, m in enumerate(self.p.migrations):
             where = f"migration {m.version}"
             if m.version != i + 2:
                 self.d(ERROR, "移行", where, f"版は 2 から 1 ずつ増やします（ここは {i + 2} のはずです）。前の migration は消さずに残します", m.line)
             if not m.steps:
-                self.d(ERROR, "移行", where, "中身がありません（add 実体.項目 = 値）", m.line)
-            for _, dn, fn, (kind, val), line in m.steps:
-                d = self.data.get(dn)
-                f = next((x for x in d.fields if x.name == fn), None) if d else None
-                if f is None:
-                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」は、今の実体の項目にありません" + (near(dn, self.data) if d is None else near(fn, [x.name for x in d.fields])), line)
+                self.d(ERROR, "移行", where, "中身がありません（add 実体.項目 = 値、rename 実体.項目 to 新しい名前、drop 実体.項目）", m.line)
+        steps = self.migration_steps()
+        live: set = set()  # migration が作って、まだ消えていない項目
+        for i, (version, op, dn, fn, arg, line) in enumerate(steps):
+            where = f"migration {version}"
+            d = self.data.get(dn)
+            if d is None:
+                self.d(ERROR, "移行", where, f"実体「{dn}」がありません" + near(dn, self.data), line)
+                continue
+            now = [x.name for x in d.fields]
+            # あとの手順が、同じ名前の項目をもう一度作るか（作るなら、ここで消えた名前が今の項目にあってよい）
+            back = lambda n: any(dn2 == dn and ((op2 == "add" and fn2 == n) or (op2 == "rename" and arg2[1] == n)) for _, op2, dn2, fn2, arg2, _ in steps[i + 1:])
+            if op in ("rename", "drop"):
+                live.discard((dn, fn))
+                if fn in now and not back(fn):
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」は、今も実体の項目にあります。" + (f"名前を変えたなら、実体の項目も「{arg[1]}」にしてください" if op == "rename" else "消すなら、実体の項目からも消してください"), line)
+                if op == "drop":
                     continue
-                if (dn, fn) in added:
-                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」の add が 2 つあります", line)
-                added.add((dn, fn))
-                t = f.type
-                if f is self.key_field(dn):
-                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」は行のキーなので、あとから足せません", line)
-                elif kind == "null":
-                    if not t.optional:
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は必ずある項目（required）なので、null にできません。前からある行へ入れる値を書いてください", line)
-                elif t.kind in ("整数", "金額", "日時"):
-                    if kind != "int":
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は{t.kind}なので、値は数です", line)
-                    elif t.range and not ((t.range.lo is None or t.range.lo <= val) and (t.range.hi is None or val <= t.range.hi)):
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値 {val} が、型の範囲（{show_type(t)}）の外です", line)
-                elif t.kind == "文字列":
-                    if kind != "str":
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は文字列なので、値は \"…\" で書きます", line)
-                    elif t.range and not ((t.range.lo is None or t.range.lo <= len(val)) and (t.range.hi is None or len(val) <= t.range.hi)):
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値の長さ {len(val)} が、型の範囲（{show_type(t)}）の外です", line)
-                elif t.kind == "真偽":
-                    if kind != "bool":
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は真偽なので、値は true か false です", line)
-                elif t.kind == "名前":
-                    st = self.states.get(t.target)
-                    names = [st.initial, *st.middle, *st.final] if st else []
-                    if kind != "name" or val not in names:
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値は、状態 {t.target} の名前です" + (near(val, names) if kind == "name" else ""), line)
-                elif t.kind == "割合":
-                    if kind not in ("ratio", "int"):
-                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は割合なので、値は 分子/分母 です", line)
-                else:
-                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」（{show_type(t)}）には、まだ add で値を書けません（無いかもしれない項目にして = null なら書けます）", line)
+                if arg[1] == fn:
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」の新しい名前が、前と同じです", line)
+                    continue
+            made = arg[1] if op == "rename" else fn
+            if (dn, made) in live:
+                self.d(ERROR, "移行", where, f"「{dn}.{made}」は、前の手順でもう作っています" + ("（add が 2 つあります）" if op == "add" else ""), line)
+            live.add((dn, made))
+            final = self.migration_final(steps, i)
+            if final is None:
+                continue  # あとで消える項目。今の実体に無くてよく、値の型も問わない
+            f = next((x for x in d.fields if x.name == final), None)
+            if f is None:
+                self.d(ERROR, "移行", where, f"「{dn}.{final}」は、今の実体の項目にありません" + near(final, now), line)
+                continue
+            if op == "add":
+                self.check_migration_value(where, dn, fn, f, arg, line)
+
+    def check_migration_value(self, where: str, dn: str, fn: str, f, value, line: int):
+        """add の値が、項目の型と範囲に入っているか"""
+        kind, val = value
+        t = f.type
+        if f is self.key_field(dn):
+            self.d(ERROR, "移行", where, f"「{dn}.{fn}」は行のキーなので、あとから足せません", line)
+        elif kind == "null":
+            if not t.optional:
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」は必ずある項目（required）なので、null にできません。前からある行へ入れる値を書いてください", line)
+        elif t.kind in ("整数", "金額", "日時"):
+            if kind != "int":
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」は{t.kind}なので、値は数です", line)
+            elif t.range and not ((t.range.lo is None or t.range.lo <= val) and (t.range.hi is None or val <= t.range.hi)):
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値 {val} が、型の範囲（{show_type(t)}）の外です", line)
+        elif t.kind == "文字列":
+            if kind != "str":
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」は文字列なので、値は \"…\" で書きます", line)
+            elif t.range and not ((t.range.lo is None or t.range.lo <= len(val)) and (t.range.hi is None or len(val) <= t.range.hi)):
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値の長さ {len(val)} が、型の範囲（{show_type(t)}）の外です", line)
+        elif t.kind == "真偽":
+            if kind != "bool":
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」は真偽なので、値は true か false です", line)
+        elif t.kind == "名前":
+            st = self.states.get(t.target)
+            names = [st.initial, *st.middle, *st.final] if st else []
+            if kind != "name" or val not in names:
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値は、状態 {t.target} の名前です" + (near(val, names) if kind == "name" else ""), line)
+        elif t.kind == "割合":
+            if kind not in ("ratio", "int"):
+                self.d(ERROR, "移行", where, f"「{dn}.{fn}」は割合なので、値は 分子/分母 です", line)
+        else:
+            self.d(ERROR, "移行", where, f"「{dn}.{fn}」（{show_type(t)}）には、まだ add で値を書けません（無いかもしれない項目にして = null なら書けます）", line)
 
     def check_against(self, base: "Checker"):
-        """前の版と比べて、保存の形の変更に migration があるかを見る（前の版の DB が、今の版で開けるか）。
-        前の版にもある実体に足した項目は、前の版より新しい migration の add が要る。消した・名前を変えた項目は、まだ書き方が無いので注意にとどめる"""
-        declared = {(dn, fn) for m in self.p.migrations if m.version > base.schema_version for _, dn, fn, _, _ in m.steps}
+        """前の版と比べて、保存の形の変更に migration があるかを見る（前の版の DB が、今の版で正しく開けるか）。
+        前の版にもある実体で、増えた項目には add か rename の先が、減った項目には drop か rename の元が、前の版より新しい migration に要る。
+        減った項目を書かずに済ませると、行に古い値が残り、同じ名前の項目をあとで足したときに、その値が生き返る"""
+        steps = [s for s in self.migration_steps() if s[0] > base.schema_version]
+        made = {(dn, arg[1] if op == "rename" else fn) for _, op, dn, fn, arg, _ in steps if op in ("add", "rename")}
+        gone = {(dn, fn) for _, op, dn, fn, _, _ in steps if op in ("rename", "drop")}
+        nxt = self.schema_version if self.schema_version > base.schema_version else base.schema_version + 1
         for dn, d in self.data.items():
             old = base.data.get(dn)
             if old is None:
                 continue
-            was, now = {f.name for f in old.fields}, {f.name for f in d.fields}
-            for fn in [f.name for f in d.fields if f.name not in was and (dn, f.name) not in declared]:
-                self.d(ERROR, "移行", f"データ {dn}", f"前の版に無い項目「{fn}」を足しましたが、migration に add がありません。前の版の DB が起動で止まります"
-                       f"（migration {max(self.schema_version, base.schema_version + 1) if self.schema_version > base.schema_version else base.schema_version + 1} {{ add {dn}.{fn} = 値 }} を書いてください）")
-            for fn in sorted(was - now):
-                self.d(WARN, "移行", f"データ {dn}", f"前の版にあった項目「{fn}」がありません。消す・名前を変える migration はまだ書けないので、前の版の DB の扱いは別に決めてください")
+            was, now = [f.name for f in old.fields], [f.name for f in d.fields]
+            for fn in [n for n in now if n not in was and (dn, n) not in made]:
+                self.d(ERROR, "移行", f"データ {dn}", f"前の版に無い項目「{fn}」が増えましたが、migration に書いてありません。前の版の DB が起動で止まります"
+                       f"（migration {nxt} {{ add {dn}.{fn} = 値 }}。名前を変えたのなら rename {dn}.前の名前 to {fn}）")
+            for fn in [n for n in was if n not in now and (dn, n) not in gone]:
+                self.d(ERROR, "移行", f"データ {dn}", f"前の版にあった項目「{fn}」がありませんが、migration に書いてありません。前の版の DB の行に、この項目の値が残ります"
+                       f"（migration {nxt} {{ drop {dn}.{fn} }}。名前を変えたのなら rename {dn}.{fn} to 新しい名前）")
         if self.schema_version < base.schema_version:
             self.d(ERROR, "移行", "migration", f"前の版の保存の形は版 {base.schema_version} です。migration は消さずに残します")
         order = {ERROR: 0, QUESTION: 1, WARN: 2}

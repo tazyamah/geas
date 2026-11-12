@@ -85,10 +85,31 @@ pub fn migrate(db: &Db, defs: &Value) -> R<()> {
             }
             for st in m["steps"].as_array().unwrap_or(&empty_steps) {
                 let (en, field) = (st["entity"].as_str().unwrap_or(""), st["field"].as_str().unwrap_or(""));
-                for (_, _, row) in rows.iter_mut().filter(|(e, _, _)| e == en) {
-                    // 足す：項目の無い行にだけ入れる（もうある行はそのまま）
-                    if let Some(obj) = row.as_object_mut() {
-                        obj.entry(field.to_string()).or_insert_with(|| st["value"].clone());
+                let (op, to) = (st["op"].as_str().unwrap_or(""), st["to"].as_str().unwrap_or(""));
+                for (_, k, row) in rows.iter_mut().filter(|(e, _, _)| e == en) {
+                    let obj = match row.as_object_mut() {
+                        Some(o) => o,
+                        None => continue, // 行の形でないものは、あとの確かめで止まる
+                    };
+                    match op {
+                        // 足す：項目の無い行にだけ入れる（もうある行はそのまま）
+                        "add" => {
+                            obj.entry(field.to_string()).or_insert_with(|| st["value"].clone());
+                        }
+                        // 名前を変える：値をそのまま、新しい名前へ移す。両方ある行は、どちらの値を残すか決まらないので止まる
+                        "rename" => {
+                            if let Some(v) = obj.remove(field) {
+                                if obj.contains_key(to) {
+                                    return Err(format!("{}「{}」に、前の名前「{}」と新しい名前「{}」の両方があります", en, k, field, to));
+                                }
+                                obj.insert(to.to_string(), v);
+                            }
+                        }
+                        // 消す：値を捨てる
+                        "drop" => {
+                            obj.remove(field);
+                        }
+                        other => return Err(format!("知らない手順「{}」があります（このサーバーより新しい geas で生成した定義です）", other)),
                     }
                 }
             }

@@ -291,11 +291,22 @@ def http_def(e) -> dict:
             "other": row(*h.other) if h.other else None}
 
 
-def migration_value(ck, dn: str, fn: str, v):
-    """add の値を、保存の行の JSON での形にする（割合は "分子/分母" の文字列、状態は名前の文字列）"""
-    kind, val = v
-    t = next(f for f in ck.data[dn].fields if f.name == fn).type
-    return f"{val}/1" if kind == "int" and t.kind == "割合" else val
+def migration_defs(ck) -> list:
+    """migration の手順を、サーバーが起動時に当てる形にする。add の値は、保存の行の JSON での形
+    （割合は "分子/分母" の文字列、状態は名前の文字列）。型は、その項目の最後の名前（あとで rename されるなら、その先）で見る"""
+    steps = ck.migration_steps()
+    out: dict = {}
+    for i, (version, op, dn, fn, arg, _) in enumerate(steps):
+        st = {"op": op, "entity": dn, "field": fn}
+        if op == "rename":
+            st["to"] = arg[1]
+        elif op == "add":
+            kind, val = arg
+            final = ck.migration_final(steps, i)
+            f = next((x for x in ck.data[dn].fields if x.name == final), None) if final else None
+            st["value"] = f"{val}/1" if kind == "int" and f is not None and f.type.kind == "割合" else val
+        out.setdefault(version, []).append(st)
+    return [{"version": m.version, "steps": out.get(m.version, [])} for m in ck.p.migrations]
 
 
 def definitions(ck: Checker) -> dict:
@@ -325,8 +336,7 @@ def definitions(ck: Checker) -> dict:
         "mcp": tool_defs(ck),
         # 保存の形の版と、前の版の DB を今の形へ書き換える手順（値は、保存の行の JSON での形）
         "schema_version": ck.schema_version,
-        "migrations": [{"version": m.version, "steps": [{"op": op, "entity": dn, "field": fn, "value": migration_value(ck, dn, fn, v)} for op, dn, fn, v, _ in m.steps]}
-                       for m in ck.p.migrations],
+        "migrations": migration_defs(ck),
         "triggers": [{"name": t.name, "args": [n for n, _ in t.params],
                   "causes": [{"kind": k, "key": key, "secs": int(key) if k == "deadline" else None, "replies": key.split(",") if k == "all" else None, "dest": d} for k, key, d in t.causes]} for t in p.triggers],
     }
