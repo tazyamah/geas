@@ -57,6 +57,9 @@ def query_rows(ck: Checker, q) -> dict:
         t = ins.get(x)
         return f"（{x}が無ければ{what}）" if t is not None and t.optional else ""
 
+    sc = scope_of(ck.p, q)
+    if sc:  # 見える範囲：呼んだ本人の分だけ
+        conds.append(f"{sc[2]} 一致 呼んだ本人のID（見える範囲 {sc[0]}）")
     conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}{absent(a, '絞らない')}"
               for f, op, a in q.filters]
     cols = [c.name for c in q.select]
@@ -210,6 +213,10 @@ ACTOR_NOTE = ("役割は、前に置くプロキシが本人を確かめ、ヘ�
               "ヘッダの無い呼び出しは 401、役割が合わない呼び出しは 403 で断ります")
 
 
+SCOPE_NOTE = ("本人のID は、前に置くプロキシが本人を確かめ、ヘッダ X-Geas-Actor-Id に載せて渡します。"
+              "呼ぶ側は渡せません。ヘッダの無い呼び出しは 401 で断ります")
+
+
 def actor_rows(p, route_rows) -> list[tuple]:
     """仕様書の「役割」の表：(役割, ヘッダに載せる名前, 呼べる URL)。ヘッダに載せる名前は、コードの名前そのまま（プロキシの設定に書く値）。
     誰でも呼べる口は、最後の「誰でも」の行にまとめる"""
@@ -231,6 +238,8 @@ def build(ck: Checker) -> dict:
     spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner))
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["役割"] = actor_rows(ck.p, spec["ルート"])
+    show = ck.p.show_names
+    spec["見える範囲"] = [(show(n), show(d), f"{show(f)} が、呼んだ本人のID と同じ行だけ", "、".join(show(q.name) for q in ck.p.queries if q.scope == n) or "なし") for n, d, f, _ in ck.p.scopes]
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
@@ -538,6 +547,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
                 "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
         out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
+    if spec.get("見える範囲"):
+        out += ["", f"## 見える範囲（呼んだ本人の分だけを返す問い合わせ。{SCOPE_NOTE}）", "", "| 範囲 | データ | 見える行 | 使う問い合わせ |", "|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["見える範囲"]]
     if spec.get("役割"):
         out += ["", f"## 役割（呼べる人の区別。{ACTOR_NOTE}）", "", "| 役割 | ヘッダに載せる名前 | 呼べる URL |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["役割"]]

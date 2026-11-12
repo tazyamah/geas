@@ -50,6 +50,7 @@ def internal_targets(p) -> set[str]:
 
 
 ANYONE = "anyone"  # for anyone：誰でも呼べる口
+ACTOR_ID_HEADER = "X-Geas-Actor-Id"  # 同じく、確かめた本人の ID を載せるヘッダ（見える範囲 scope が比べる値）
 ACTOR_HEADER = "X-Geas-Actor"  # 前に置くプロキシが、確かめた役割の名前を載せるヘッダ（複数はカンマ区切り）
 
 
@@ -67,7 +68,8 @@ def actors_text(p, target, inner) -> str:
     who = route_actors(p).get(target)
     if who is None:
         return ""
-    return "誰でも" if who == [ANYONE] else "、".join(p.show_names(x) for x in who)
+    own = "（本人の分だけ）" if any(q.name == target and q.scope for q in p.queries) else ""
+    return "誰でも" if who == [ANYONE] else "、".join(p.show_names(x) for x in who) + own
 
 
 def _table(p) -> tuple[list, dict]:

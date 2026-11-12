@@ -426,7 +426,30 @@ resource Orders { create place_order for Customer, Staff { Received → 201 } } 
 - ヘッダの無い呼び出しは 401、役割が合わない呼び出しは 403 で、処理は動きません。この 2 つは言語が決めていて、結果の種類ごとの状態には書きません。
 - 仕様書の URL の表に「呼べる人」の列と、役割ごとの「呼べる URL」の表が出ます。「動かす前提」には、プロキシが外から来た `X-Geas-Actor` を捨てて、確かめた役割を載せる、という人の保証（`actor`）が出ます。呼べる人が広がった変更は、レシートの「弱くなった」に出ます。
 - 役割のあるアプリは、窓つき exe（`--standalone`・`resident`）にできません（前にプロキシがいないため）。
-- 役割ではなく本人との一致（「自分の注文だけ見られる」）は、まだ書けません。
+
+### 見える範囲（scope）：本人の分だけを返す問い合わせ
+
+```
+scope own_orders on Order {
+  filter customer equals caller            // caller は、呼んだ本人の ID
+}
+
+query my_orders {
+  from Order in own_orders                 // 範囲の中の行だけが見える
+  select order_id, status, total
+  reads Order.customer, Order.order_id, Order.status, Order.total   // 範囲の項目（customer）も読む
+}
+
+resource MyOrders {
+  index my_orders for Customer             // URL に客の ID は要らない（/my_orders）
+}
+```
+
+- `scope 名前 on データ { filter 項目 equals caller }`：項目は ID か参照（`ref`）。書ける filter は 1 つです。
+- 問い合わせの `from データ in 範囲` で使うと、**保存してある行の項目**が、呼んだ本人の ID と同じ行だけを返します。`caller` は、呼ぶ側が渡す値ではありません（入力の名前にも使えません）。プロキシがヘッダ `X-Geas-Actor-Id` に載せた値を、サーバーが入れます。ヘッダが無ければ 401 です。
+- 範囲を使う問い合わせを呼ぶ動作には、役割（`for 役割`）が要ります。`for anyone` にはできません。出来事の `each` にも使えません（呼んだ本人がいないため）。
+- 仕様書に「見える範囲」の表が出て、URL の表の「呼べる人」は「客（本人の分だけ）」になります。
+- まだ書けないこと：処理（deed）が ID で 1 件を引くとき（`Order[id]`）に範囲を通すこと。範囲を役割ごとに分けること（どの役割で呼んでも、同じ ID で比べます）。
 
 ## 11. 検査の結果の種類
 
