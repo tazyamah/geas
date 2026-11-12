@@ -107,6 +107,16 @@ impl Db {
         Ok(true)
     }
 
+    /// 覚えている数（保存の形の版など）。無ければ None
+    pub fn kv(&self, name: &str) -> R<Option<i64>> {
+        use rusqlite::OptionalExtension;
+        self.conn.query_row("SELECT v FROM geas_kv WHERE k = ?1", params![name], |r| r.get(0)).optional().map_err(e)
+    }
+
+    pub fn set_kv(&self, name: &str, v: i64) -> R<()> {
+        self.conn.execute("INSERT INTO geas_kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2", params![name, v]).map(|_| ()).map_err(e)
+    }
+
     pub fn has_entity(&self, entity: &str) -> bool {
         self.entities.iter().any(|x| x == entity)
     }

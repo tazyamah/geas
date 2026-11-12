@@ -53,6 +53,63 @@ pub fn fill_ctx(db: &Db, defs: &Value, refs: &[String], new_ids: &[String], inpu
     Ok(Value::Object(ctx))
 }
 
+/// 保存の形の版を合わせる（`.geas` の migration）。DB は自分の版を覚えている（覚えていなければ 1）。
+/// 行のある DB が古い版なら、足りない版の手順を順に当て、書き換えた行を今の型の範囲で確かめてから、版を進める。
+/// 全部を 1 つのトランザクションで行い、途中で失敗したら何も変えずに止まる。行の無い DB は、今の版として始める
+pub fn migrate(db: &Db, defs: &Value) -> R<()> {
+    const KEY: &str = "schema_version";
+    let current = defs["schema_version"].as_i64().unwrap_or(1);
+    let empty = db.is_empty()?;
+    let have = match db.kv(KEY)? {
+        Some(v) => v,
+        None if empty => current,
+        None => 1,
+    };
+    if have > current {
+        return Err(format!("DB の保存の形は版 {} で、このアプリ（版 {}）より新しいです。新しい版のアプリで開いてください", have, current));
+    }
+    if have == current && (db.kv(KEY)?.is_some() || current == 1) {
+        return Ok(());
+    }
+    db.begin()?;
+    let r = (|| {
+        let mut rows: Vec<(String, String, Value)> = Vec::new();
+        db.each_row(|en, k, row| {
+            rows.push((en.to_string(), k.to_string(), serde_json::from_str(row).map_err(|x| format!("保存の行 {}「{}」が読めません: {}", en, k, x))?));
+            Ok(())
+        })?;
+        let empty_steps = Vec::new();
+        for m in defs["migrations"].as_array().unwrap_or(&empty_steps) {
+            if m["version"].as_i64().unwrap_or(0) <= have {
+                continue;
+            }
+            for st in m["steps"].as_array().unwrap_or(&empty_steps) {
+                let (en, field) = (st["entity"].as_str().unwrap_or(""), st["field"].as_str().unwrap_or(""));
+                for (_, _, row) in rows.iter_mut().filter(|(e, _, _)| e == en) {
+                    // 足す：項目の無い行にだけ入れる（もうある行はそのまま）
+                    if let Some(obj) = row.as_object_mut() {
+                        obj.entry(field.to_string()).or_insert_with(|| st["value"].clone());
+                    }
+                }
+            }
+        }
+        let mut scratch = geas_app::Store::default();
+        for (en, k, row) in &rows {
+            let text = row.to_string();
+            geas_app::host::load_row(&mut scratch, en, k, &text).map_err(|x| format!("版 {} の形にした {}「{}」が、今の定義に合いません: {}", current, en, k, x))?;
+            db.write_row(en, k, Some(&text))?;
+        }
+        db.set_kv(KEY, current)
+    })();
+    match r {
+        Ok(()) => db.commit(),
+        Err(x) => {
+            db.rollback();
+            Err(x)
+        }
+    }
+}
+
 /// DB が空のときだけ、最初のデータ（seed.json。実体名→キー→行）を入れる。
 /// 空かどうかは各表に 1 行でもあるかで見る（保存の全件は読まない）。最初のデータは、空のときだけ読む
 /// （大きいと、起動のたびに読んで解析する時間とメモリが、件数に比例してかかるため）

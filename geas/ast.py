@@ -166,6 +166,15 @@ class ReplyDef:
 
 
 @dataclass
+class Migration:
+    """保存の形の版（migration N { … }）。前の版の DB を、起動時にこの版の形へ書き換える。消さずに積む。
+    steps は ("add", 実体, 項目, 値, 行)。値は (種類, 中身)：("int", 数)・("str", 文字列)・("bool", 真偽)・("null", None)・("name", 状態の名前)・("ratio", "n/d")"""
+    version: int
+    steps: list
+    line: int = 0
+
+
+@dataclass
 class SlotRule:
     """slot の値の決め方（rule）。上から順に当てはまる最初の行の値になる。
     行は (条件の列, 値)。条件は (入力や slot の名前の道すじ, 比べる値)、条件が空の行は default。値は割合なら "n/d"、整数や金額なら数"""
@@ -303,6 +312,7 @@ class Program:
     triggers: list[Trigger] = field(default_factory=list)
     replies: list[ReplyDef] = field(default_factory=list)
     rules: list[SlotRule] = field(default_factory=list)
+    migrations: list = field(default_factory=list)  # 保存の形の版（migration N { … }）。書いた順
     queries: list[Query] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     screens: list[Screen] = field(default_factory=list)

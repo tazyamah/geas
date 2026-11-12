@@ -314,6 +314,7 @@ class Checker:
         self.check_data_folders()
         self.check_states()
         self.check_invariants()
+        self.check_migrations()
         order = {ERROR: 0, QUESTION: 1, WARN: 2}
         self.diags.sort(key=lambda x: order[x.level])
         return self.diags
@@ -553,6 +554,78 @@ class Checker:
                 for x in (a, b):
                     if x not in known:
                         self.d(ERROR, "名前", f"状態 {s.name}", f"拒否に書かれた「{x}」は状態にありません")
+
+    @property
+    def schema_version(self) -> int:
+        """保存の形の版。migration を書いていなければ 1"""
+        return max([m.version for m in self.p.migrations], default=1)
+
+    def check_migrations(self):
+        """migration：版は 2 から 1 ずつ増える。add は、今ある実体の項目に、その型と範囲に入る値を書く"""
+        added = set()
+        for i, m in enumerate(self.p.migrations):
+            where = f"migration {m.version}"
+            if m.version != i + 2:
+                self.d(ERROR, "移行", where, f"版は 2 から 1 ずつ増やします（ここは {i + 2} のはずです）。前の migration は消さずに残します", m.line)
+            if not m.steps:
+                self.d(ERROR, "移行", where, "中身がありません（add 実体.項目 = 値）", m.line)
+            for _, dn, fn, (kind, val), line in m.steps:
+                d = self.data.get(dn)
+                f = next((x for x in d.fields if x.name == fn), None) if d else None
+                if f is None:
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」は、今の実体の項目にありません" + (near(dn, self.data) if d is None else near(fn, [x.name for x in d.fields])), line)
+                    continue
+                if (dn, fn) in added:
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」の add が 2 つあります", line)
+                added.add((dn, fn))
+                t = f.type
+                if f is self.key_field(dn):
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」は行のキーなので、あとから足せません", line)
+                elif kind == "null":
+                    if not t.optional:
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は必ずある項目（required）なので、null にできません。前からある行へ入れる値を書いてください", line)
+                elif t.kind in ("整数", "金額", "日時"):
+                    if kind != "int":
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は{t.kind}なので、値は数です", line)
+                    elif t.range and not ((t.range.lo is None or t.range.lo <= val) and (t.range.hi is None or val <= t.range.hi)):
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値 {val} が、型の範囲（{show_type(t)}）の外です", line)
+                elif t.kind == "文字列":
+                    if kind != "str":
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は文字列なので、値は \"…\" で書きます", line)
+                    elif t.range and not ((t.range.lo is None or t.range.lo <= len(val)) and (t.range.hi is None or len(val) <= t.range.hi)):
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値の長さ {len(val)} が、型の範囲（{show_type(t)}）の外です", line)
+                elif t.kind == "真偽":
+                    if kind != "bool":
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は真偽なので、値は true か false です", line)
+                elif t.kind == "名前":
+                    st = self.states.get(t.target)
+                    names = [st.initial, *st.middle, *st.final] if st else []
+                    if kind != "name" or val not in names:
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」の値は、状態 {t.target} の名前です" + (near(val, names) if kind == "name" else ""), line)
+                elif t.kind == "割合":
+                    if kind not in ("ratio", "int"):
+                        self.d(ERROR, "移行", where, f"「{dn}.{fn}」は割合なので、値は 分子/分母 です", line)
+                else:
+                    self.d(ERROR, "移行", where, f"「{dn}.{fn}」（{show_type(t)}）には、まだ add で値を書けません（無いかもしれない項目にして = null なら書けます）", line)
+
+    def check_against(self, base: "Checker"):
+        """前の版と比べて、保存の形の変更に migration があるかを見る（前の版の DB が、今の版で開けるか）。
+        前の版にもある実体に足した項目は、前の版より新しい migration の add が要る。消した・名前を変えた項目は、まだ書き方が無いので注意にとどめる"""
+        declared = {(dn, fn) for m in self.p.migrations if m.version > base.schema_version for _, dn, fn, _, _ in m.steps}
+        for dn, d in self.data.items():
+            old = base.data.get(dn)
+            if old is None:
+                continue
+            was, now = {f.name for f in old.fields}, {f.name for f in d.fields}
+            for fn in [f.name for f in d.fields if f.name not in was and (dn, f.name) not in declared]:
+                self.d(ERROR, "移行", f"データ {dn}", f"前の版に無い項目「{fn}」を足しましたが、migration に add がありません。前の版の DB が起動で止まります"
+                       f"（migration {max(self.schema_version, base.schema_version + 1) if self.schema_version > base.schema_version else base.schema_version + 1} {{ add {dn}.{fn} = 値 }} を書いてください）")
+            for fn in sorted(was - now):
+                self.d(WARN, "移行", f"データ {dn}", f"前の版にあった項目「{fn}」がありません。消す・名前を変える migration はまだ書けないので、前の版の DB の扱いは別に決めてください")
+        if self.schema_version < base.schema_version:
+            self.d(ERROR, "移行", "migration", f"前の版の保存の形は版 {base.schema_version} です。migration は消さずに残します")
+        order = {ERROR: 0, QUESTION: 1, WARN: 2}
+        self.diags.sort(key=lambda x: order[x.level])
 
     def check_flows(self):
         in_flow = {}  # 処理 → (最初に書いたフロー, 行き先)

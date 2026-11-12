@@ -22,6 +22,8 @@ pub fn open_engine(db_path: &str, seed: impl FnOnce() -> Result<String, String>)
     let empty: serde_json::Value = serde_json::from_str(&geas_app::host::write_store(&geas_app::Store::default())).map_err(|_| "保存の形が読めません")?;
     let entities: Vec<String> = empty.as_object().ok_or("保存の形が読めません")?.keys().cloned().collect();
     let db = db::Db::open(db_path, entities).map_err(|e| format!("DB を開けません: {}", e))?;
+    let defs: serde_json::Value = serde_json::from_str(geas_app::host::DEFS_JSON).map_err(|e| format!("定義が読めません: {}", e))?;
+    app::migrate(&db, &defs).map_err(|e| format!("DB {} を、今の保存の形に合わせられません（{}）。DB は変えていません", db_path, e))?;
     app::seed_if_empty(&db, seed).map_err(|e| format!("最初のデータを入れられません: {}", e))?;
     let mut en = engine::Engine::new(db).map_err(|e| format!("定義が読めません: {}", e))?;
     // 保存の行を、ここで 1 回ぜんぶ読む。.geas の実体の項目を変えたあとに前の版の DB を開くと、行が今の形で読めない。
