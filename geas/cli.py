@@ -512,6 +512,9 @@ def main(argv=None) -> int:
         print(counts_line(ck), file=sys.stderr)
         print("検査にエラーか問いが残っているので、続けません（問いに答えて、コードか計画書に反映してください）。", file=sys.stderr)
         return 1
+    if a.cmd == "rust" and a.standalone and ck.p.actors:
+        print("役割（actor）のあるアプリは、窓つき exe（--standalone）にできません。窓つき exe には、役割を確かめるプロキシが前にいないためです。", file=sys.stderr)
+        return 1
     if a.cmd == "rust" and a.standalone and ck.p.paths:
         # 組む OS では、すべての絶対パス（absolute）が、その OS の行を持つこと
         target = a.target or {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")

@@ -225,6 +225,9 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
+            elif kw == "actor":  # actor 名前：役割。resource の動作の `for 役割, …` に書く（誰でもよい口は for anyone）
+                p.actors.append((self.name(), line))
+                self.end_line()
             elif kw == "path":  # path 名前 = absolute { windows "…" macos "…" linux "…" } ／ path 名前 = relative "…"：パスの値
                 pd = self.path_decl(line)
                 if any(x[0] == pd[0] for x in p.paths):
@@ -1528,7 +1531,7 @@ class Parser:
         return sc
 
     def resource(self, line) -> Resource:
-        """resource 名前 [under 親] [key 名前] { index 問い合わせ / show 問い合わせ / create 処理 { 結果 → 状態 } / update 処理 {…} / destroy 処理 {…} }"""
+        """resource 名前 [under 親] [key 名前] { index 問い合わせ [for 役割, …] / show 問い合わせ / create 処理 [for 役割, …] { 結果 → 状態 } / update 処理 {…} / destroy 処理 {…} }"""
         rs = Resource(self.name(), line=line)
         while self.peek().val != "{" and self.peek().kind not in ("NL", "EOF"):
             kw = self.name()
@@ -1543,9 +1546,9 @@ class Parser:
             l2 = self.peek().line
             kw = self.name()
             if kw in ("index", "show"):
-                rs.actions.append(ResAction(kw, self.name(), line=l2))
+                rs.actions.append(ResAction(kw, self.name(), line=l2, actors=self.for_actors()))
             elif kw in ("create", "update", "destroy"):
-                act = ResAction(kw, self.name(), line=l2)
+                act = ResAction(kw, self.name(), line=l2, actors=self.for_actors())
                 if self.peek().val == "{":  # 出来事を呼ぶ create は、結果の種類を持たないので省ける
                     self.block_open()
                     while not self.accept("}"):
@@ -1560,6 +1563,12 @@ class Parser:
                 raise self.err("resource の中は「index」「show」「create」「update」「destroy」です", verbs.get(kw.lower(), ""))
             self.end_line()
         return rs
+
+    def for_actors(self):
+        """resource の動作の `for 役割, …`（呼べる役割）。誰でもよい口は `for anyone`。書いていなければ None"""
+        if not self.accept("for"):
+            return None
+        return self.comma_list(self.name)
 
     # ---- トリガ ----
     def reply_def(self, line) -> ReplyDef:
@@ -1723,7 +1732,7 @@ class Parser:
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
 DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow",
-                 "trigger", "query", "event", "screen", "resource", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
+                 "trigger", "query", "event", "screen", "resource", "actor", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 
 def collect_labels(toks: list[Tok]) -> dict:

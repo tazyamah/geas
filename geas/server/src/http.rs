@@ -218,7 +218,7 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
     let wants_html = req.header("Accept").map_or(false, |v| v.contains("text/html"));
     if method == "GET" && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim())) {
+    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor")) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -291,7 +291,9 @@ fn routes() -> &'static [Value] {
 /// 外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるため。
 /// 問い合わせ（index・show）の応答には、答えの版（ETag）を付ける。送られてきた If-None-Match が今の版と同じなら、
 /// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
-fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>) -> Option<Resp> {
+/// 役割（定義の for）のある URL は、前に置くプロキシが載せたヘッダ X-Geas-Actor（actor。複数はカンマ区切り）と比べる。
+/// ヘッダが無ければ 401、どの役割も合わなければ 403。本人の確かめはプロキシの仕事で、ここではしない（仕様書の「動かす前提」）
+fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>) -> Option<Resp> {
     let started = std::time::Instant::now();
     let verb = match method {
         "GET" | "POST" | "PUT" | "DELETE" => method,
@@ -314,6 +316,23 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
         Some((r, caps))
     });
     if let Some((r, caps)) = matched {
+        if let Some(allowed) = r["for"].as_array() {
+            let given: Vec<&str> = actor.unwrap_or("").split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+            let refuse = if given.is_empty() {
+                Some((401, "役割が分かりません（この URL は、役割を確かめた呼び出しだけが呼べます）"))
+            } else if !given.iter().any(|g| allowed.iter().any(|a| a.as_str() == Some(*g))) {
+                Some((403, "この役割では呼べません"))
+            } else {
+                None
+            };
+            if let Some((code, m)) = refuse {
+                eprintln!("{}", json!({
+                    "log": "geas.route", "ts_ms": now_ms(), "method": verb, "route": r["path"], "target": r["target"],
+                    "result": Value::Null, "status": code, "ms": started.elapsed().as_millis() as u64,
+                }));
+                return Some(json_resp(code, json!({ "error": m })));
+            }
+        }
         let mut en = crate::engine::lock(engine);
         let target = r["target"].as_str().unwrap_or("").to_string();
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(body).unwrap_or(Value::Null) };

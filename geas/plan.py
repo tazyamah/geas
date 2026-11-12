@@ -211,8 +211,9 @@ def compare_static(spec: dict, plan: dict) -> list[Finding]:
     # ルート（URL。経路ごとの動作・呼ぶもの・結果の種類ごとの HTTP の状態）
     # 「外から」（呼べる／内部）は、計画書の表に列があるときだけ比べる
     a = {(r["メソッド"].strip(), r["経路"].strip()): {"動作": r["動作"].strip(), "呼ぶもの": n(r["呼ぶもの"]), "結果→状態": items(r.get("結果→状態", "")),
-                                                     **({"外から": n(r["外から"])} if "外から" in r else {})} for r in sect("ルート")}
-    b = {(m, path): {"動作": kind, "呼ぶもの": n(tgt), "結果→状態": items(st), "外から": n(outside)} for m, path, kind, tgt, st, outside in spec["ルート"]}
+                                                     **({"外から": n(r["外から"])} if "外から" in r else {}),
+                                                     **({"呼べる人": sorted(n(x) for x in r["呼べる人"].split("、") if x.strip())} if "呼べる人" in r else {})} for r in sect("ルート")}
+    b = {(m, path): {"動作": kind, "呼ぶもの": n(tgt), "結果→状態": items(st), "外から": n(outside), "呼べる人": sorted(n(x) for x in who.split("、") if x.strip())} for m, path, kind, tgt, st, outside, who in spec["ルート"]}
     if a or not b:
         cmp_map("ルート", a, b, out, lambda k: f"{k[0]} {k[1]}")
     out += check_usecases(spec, sect("ユースケース"))

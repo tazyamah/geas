@@ -10,7 +10,7 @@ from .ast import *  # noqa: F401,F403
 from .check import QUESTION, WARN
 from . import svg
 from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, split_top, tables, usecases
-from .spec import build
+from .spec import ACTOR_NOTE, build
 from .mcp import tool_defs
 
 
@@ -702,8 +702,15 @@ draw();
 
 ROUTE_HEAD = ["メソッド", "経路", "動作", "呼ぶもの", "結果→状態", "外から"]
 
+
+def route_table(spec) -> str:
+    """URL の表。役割を宣言したアプリでは「呼べる人」の列が付く"""
+    if spec.get("役割"):
+        return table(ROUTE_HEAD + ["呼べる人"], spec["ルート"])
+    return table(ROUTE_HEAD, [x[:6] for x in spec["ルート"]])
+
 CHANGE_KEYS = [("アプリ", "アプリ"), ("拡張", "ブラウザ拡張"), ("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("データ用フォルダ", "データ用フォルダ"), ("ファイル", "ファイル"), ("流れ", "流れ（処理を書いた順）"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
-               ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存の形", "保存の形の変更"), ("保存先", "保存先"), ("動かす前提", "動かす前提"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
+               ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存の形", "保存の形の変更"), ("保存先", "保存先"), ("動かす前提", "動かす前提"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("役割", "役割（呼べる人）"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
 
 
 def _row_text(x) -> str:
@@ -884,7 +891,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         url_ex = plan.get("URL例", [])
         add("api", None, lead("API は押して動かせません。計画書の URL の具体例を、リクエストと期待する応答の表にしています。")
             + (table(["ID", "メソッド", "経路", "入力", "期待する結果", "期待する状態"], [(r["ID"], r["メソッド"], r["経路"], r["入力"], r["期待する結果"], r["期待する状態"]) for r in url_ex])
-               if url_ex else table(ROUTE_HEAD, spec["ルート"])))
+               if url_ex else route_table(spec)))
 
     # 決まりごと
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
@@ -949,7 +956,8 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     if spec["ルート"]:
         add("routes", "URL（ルート）", lead("外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。クエリ文字列は使わず、パスで表します。")
             + lead("「外から」が「内部（流れの途中）」の URL は、返事・期限・前の処理の結果から進む処理を呼ぶものです。外から直接呼ぶと、決済の返事などの確かめを飛ばせてしまうので、サーバーは答えません（テストのために --test で起こしたときだけ答えます）。")
-            + table(ROUTE_HEAD, spec["ルート"]))
+            + route_table(spec)
+            + ("<h3>役割（呼べる人の区別）</h3>" + lead(ACTOR_NOTE + "。「呼べる人」の列に無い役割は、その URL を呼べません。") + table(["役割", "ヘッダに載せる名前", "呼べる URL"], spec["役割"]) if spec.get("役割") else ""))
 
     if records:
         add("open", "意図的に決めていないこと", lead("計画書で「未規定」としたところです。実装が自由に選んでよい箇所で、書き忘れとは区別して記録しています。") + f'<div class="cards">{"".join(records)}</div>')

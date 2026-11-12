@@ -205,14 +205,32 @@ def step_tree(body) -> list:
     return out
 
 
+# 役割の節の前置き（仕様書とレビュー画面で同じ文）
+ACTOR_NOTE = ("役割は、前に置くプロキシが本人を確かめ、ヘッダ X-Geas-Actor に載せて渡します。"
+              "ヘッダの無い呼び出しは 401、役割が合わない呼び出しは 403 で断ります")
+
+
+def actor_rows(p, route_rows) -> list[tuple]:
+    """仕様書の「役割」の表：(役割, ヘッダに載せる名前, 呼べる URL)。ヘッダに載せる名前は、コードの名前そのまま（プロキシの設定に書く値）。
+    誰でも呼べる口は、最後の「誰でも」の行にまとめる"""
+    from .rest import ANYONE, internal_targets, route_actors, routes
+    if not p.actors:
+        return []
+    who, inner = route_actors(p), internal_targets(p)
+    urls = [(f"{m} {path}", who.get(tgt)) for m, path, _, tgt, _, _ in routes(p) if tgt not in inner]
+    out = [(p.show_names(n), n, "、".join(u for u, w in urls if w and n in w) or "なし") for n, _ in p.actors]
+    return out + [("誰でも", "（要らない）", "、".join(u for u, w in urls if w == [ANYONE]) or "なし")]
+
+
 def build(ck: Checker) -> dict:
-    from .rest import INTERNAL, OPEN, internal_targets, routes
+    from .rest import INTERNAL, OPEN, actors_text, internal_targets, routes
     spec = build_raw(ck)
     names = spec["名前"]
     spec = show_all(ck.p, spec)
     inner = internal_targets(ck.p)
-    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN)
+    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner))
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
+    spec["役割"] = actor_rows(ck.p, spec["ルート"])
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
@@ -518,8 +536,11 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["削除"]]
     if spec["ルート"]:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
-                "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |", "|---|---|---|---|---|---|"]
-        out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" for a, b, c, d, e, f in spec["ルート"]]
+                "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
+        out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
+    if spec.get("役割"):
+        out += ["", f"## 役割（呼べる人の区別。{ACTOR_NOTE}）", "", "| 役割 | ヘッダに載せる名前 | 呼べる URL |", "|---|---|---|"]
+        out += [f"| {a} | {b} | {c} |" for a, b, c in spec["役割"]]
     out += ["", "## 不変条件", "", "| ◆内容 | 検査の結果 |", "|---|---|"]
     for text, rows in ck.invariant_status:
         out.append(f"| {text} | " + "／".join(f"{p}: {s}" for p, s in rows) + " |")
