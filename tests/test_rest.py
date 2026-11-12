@@ -61,7 +61,7 @@ def test_流れの途中の処理の_URL_は内部として仕様書に出て_�
     from geas.hostgen import definitions
     from geas.rest import INTERNAL, OPEN
     ck = chk(CODE)
-    outside = {(m, path): o for m, path, *_, o in build(ck)["ルート"]}
+    outside = {(m, path): o for m, path, _k, _t, _s, o, _who in build(ck)["ルート"]}
     assert outside[("POST", "/orders")] == OPEN and outside[("PUT", "/products/:id")] == OPEN and outside[("GET", "/orders")] == OPEN
     assert outside[("POST", "/order_completions")] == INTERNAL  # 決済と在庫の見立ての結果から（前の処理の結果）
     assert outside[("POST", "/point_grants")] == INTERNAL  # 受付のあとの並列の枝

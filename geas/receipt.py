@@ -92,12 +92,24 @@ def build_receipt(ck, base_ck, code_path: str, base_text: str | None, label: str
     r.strengthened += [(p[1], p[0], "（無くなった）", p[2]) for p in old if key_of(p) not in new_keys and p[0] in WEAK]
     # 流れの途中から外れて、外から直接呼べるようになった URL は、確かめを飛ばせる口が増えたので「弱くなった」に出す
     was_out = {(x[0], x[1]): x[5] for x in old_spec["ルート"]}
-    for m, path, *_, now in new_spec["ルート"]:
+    for m, path, _kind, _tgt, _st, now, *_ in new_spec["ルート"]:
         was = was_out.get((m, path))
         if was == INTERNAL and now == OPEN:
             r.weakened.append((f"URL {m} {path}", was, now, "流れの途中から外れ、外から直接呼べるようになりました"))
         elif was == OPEN and now == INTERNAL:
             r.strengthened.append((f"URL {m} {path}", was, now, "流れの途中の処理になり、サーバーは外に出さなくなりました"))
+    # 呼べる人が広がった URL（役割が増えた・誰でも呼べるようになった・役割の区別が無くなった）は「弱くなった」に出す
+    was_who = {(x[0], x[1]): x[6] for x in old_spec["ルート"] if len(x) > 6}
+    for m, path, *_, now in new_spec["ルート"]:
+        was = was_who.get((m, path))
+        if was is None or was == now or "外から呼べない" in was + now:
+            continue
+        a, b = set(was.split("、")) - {""}, set(now.split("、")) - {""}
+        wide = lambda s: not s or "誰でも" in s  # 役割の無い口と「誰でも」は、いちばん広い
+        if (wide(b) and not wide(a)) or (not wide(a) and not wide(b) and b > a):
+            r.weakened.append((f"URL {m} {path}", was or "（区別なし）", now or "（区別なし）", "呼べる人が広がりました"))
+        elif (wide(a) and not wide(b)) or (not wide(a) and not wide(b) and b < a):
+            r.strengthened.append((f"URL {m} {path}", was or "（区別なし）", now or "（区別なし）", "呼べる人が狭まりました"))
     r.impact = impact_of(new_spec, old_spec, plan_rows)
     r.errors = sum(1 for d in ck.diags if d.level == ERROR)
     r.questions = sum(1 for d in ck.diags if d.level == QUESTION)

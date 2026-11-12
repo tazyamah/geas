@@ -49,6 +49,27 @@ def internal_targets(p) -> set[str]:
     return out | {d for t in p.triggers for _, _, d in t.causes}
 
 
+ANYONE = "anyone"  # for anyone：誰でも呼べる口
+ACTOR_HEADER = "X-Geas-Actor"  # 前に置くプロキシが、確かめた役割の名前を載せるヘッダ（複数はカンマ区切り）
+
+
+def route_actors(p) -> dict:
+    """呼ぶもの（処理・問い合わせ・出来事）→ 呼べる役割の名前の並び。誰でも呼べる口は ["anyone"]。for の無い動作は入らない"""
+    return {a.target: list(a.actors) for res in p.resources for a in res.actions if a.actors is not None}
+
+
+def actors_text(p, target, inner) -> str:
+    """仕様書の URL の表の「呼べる人」の列。役割を宣言していないアプリでは空"""
+    if not p.actors:
+        return ""
+    if target in inner:
+        return "（外から呼べない）"
+    who = route_actors(p).get(target)
+    if who is None:
+        return ""
+    return "誰でも" if who == [ANYONE] else "、".join(p.show_names(x) for x in who)
+
+
 def _table(p) -> tuple[list, dict]:
     """(ルートの一覧, 対象 → (経路, 動作) の表)。画面ごと・生成物ごとに何度も引くので、Program ごとに 1 回だけ作る
     （リソースの宣言は構文解析の後に変わらない。差し替えられたら作り直す）"""

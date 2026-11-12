@@ -8,6 +8,8 @@
 """
 import re
 
+from .rest import ACTOR_HEADER
+
 # 番号は、導出元から決まる名前（項目が増減しても、ほかの項目の番号はずれない）
 ASPECTS = ("安全性", "到達性", "機密", "資源")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -116,6 +118,13 @@ def items(p) -> list[dict]:
             n = len(p.resources)
             text = (f"インターネットに公開する口は、リソース {n} 件の経路を出すものだけ" if value == "public" else "インターネットから届く口が無い")
             out.append(_item("exposure", "到達性", text, f"人が書いた（{why}）", ["plan", "実環境"], ["公開ポート", "公開の許可"], why=why, cond={"internet": value}))
+    # ---- 役割の確かめ（前に置くプロキシが担う） ----
+    if p.actors:
+        names = "・".join(n for n, _ in p.actors)
+        out.append(_item("actor", "安全性", f"サーバーに届く要求は、すべて前に置くプロキシを通る。プロキシは本人を確かめ、外から来たヘッダ {ACTOR_HEADER} を捨てて、"
+                         f"確かめた役割の名前（{names}。複数はカンマ区切り）を載せる",
+                         f"導出（役割 {names} の宣言。サーバーはこのヘッダの値だけで役割を決め、本人は確かめない）",
+                         ["人の保証"], [], trust=True, why="外から確かめられない"))
     # ---- 前段の約束（外から確かめられない） ----
     if p.resources:
         out.append(_item("limits", "資源", "前段（LB・プロキシ）が、遅い読み込みを切る時間切れを持つ",

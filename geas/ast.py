@@ -288,6 +288,7 @@ class ResAction:
     target: str
     statuses: list[tuple[str, int]] = field(default_factory=list)
     line: int = 0
+    actors: Optional[list] = None  # 呼べる役割（for 役割, …）。for anyone は ["anyone"]。書いていなければ None
 
 
 @dataclass
@@ -318,6 +319,7 @@ class Program:
     events: list[Event] = field(default_factory=list)
     screens: list[Screen] = field(default_factory=list)
     resources: list[Resource] = field(default_factory=list)
+    actors: list = field(default_factory=list)  # 役割（actor 名前）：[(名前, 行)]。resource の動作の for に書く。表示名は説明コメント（///）
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)
     ltype_names: list = field(default_factory=list)  # 宣言した論理型の名前（名前の書き方の検査に使う）

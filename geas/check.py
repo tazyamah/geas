@@ -1522,6 +1522,7 @@ class Checker:
                             self.d(ERROR, "リソース", w, f"結果「{v}」の状態が複数あります")
                         if not 200 <= code <= 599:
                             self.d(ERROR, "リソース", w, f"状態 {code} は 200〜599 で書きます")
+        self.check_actors()
         for m, path, kind, tgt, rn, _ in routes(p):
             if (m, path) in seen_routes:
                 self.d(ERROR, "リソース", f"リソース {rn}", f"{m} {path} が {seen_routes[(m, path)]} と重なります")
@@ -1550,6 +1551,46 @@ class Checker:
         for e in p.events:
             if e.name not in used:
                 self.d(WARN, "リソース", f"出来事 {e.name}", "どのリソースの create にも割り当てていません（外から起こせません）")
+
+    def check_actors(self):
+        """役割（actor）の検査。役割を 1 つでも宣言したら、外から呼べる動作すべてに `for 役割, …` か `for anyone` が要る
+        （書き忘れで、誰でも呼べる口を作らないため）。流れの途中の処理は外から呼べないので、for は書けない。"""
+        from .rest import ANYONE, internal_targets
+        p = self.p
+        names = [n for n, _ in p.actors]
+        for n, line in p.actors:
+            if n == ANYONE:
+                self.d(ERROR, "役割", f"役割 {n}", "anyone は「誰でも」を表す語なので、役割の名前にできません", line)
+            if names.count(n) > 1:
+                self.d(ERROR, "役割", f"役割 {n}", "同じ名前の役割が2つ以上あります", line)
+        inner = internal_targets(p)
+        used: set[str] = set()
+        for res in p.resources:
+            for a in res.actions:
+                w = f"リソース {res.name} / {a.kind} {a.target}"
+                if a.actors is None:
+                    if names and a.target not in inner:
+                        self.d(ERROR, "役割", w, f"呼べる役割がありません。`{a.kind} {a.target} for {names[0]}` のように書きます（誰でも呼べる口は `for anyone`）", a.line)
+                    continue
+                if not names:
+                    self.d(ERROR, "役割", w, "for に書く役割が宣言されていません（`actor 名前` で宣言します）", a.line)
+                    continue
+                if a.target in inner:
+                    self.d(ERROR, "役割", w, "流れの途中の処理は外から呼べないので、for は書けません", a.line)
+                    continue
+                for x in a.actors:
+                    if x != ANYONE and x not in names:
+                        self.d(ERROR, "役割", w, f"役割「{x}」が未定義です" + near(x, names), a.line)
+                    if a.actors.count(x) > 1:
+                        self.d(ERROR, "役割", w, f"役割「{x}」を重ねて書いています", a.line)
+                if ANYONE in a.actors and len(a.actors) > 1:
+                    self.d(ERROR, "役割", w, "for anyone は誰でも呼べる口なので、ほかの役割と並べて書けません", a.line)
+                used |= set(a.actors)
+        for n, line in p.actors:
+            if p.resources and n not in used:
+                self.d(WARN, "役割", f"役割 {n}", "どの動作の for にも書かれていません", line)
+        if names and p.resident is not None:
+            self.d(ERROR, "役割", "resident", "役割のあるアプリは、常駐（窓つき exe）にできません。窓つき exe には、役割を確かめるプロキシが前にいないためです", p.resident.line if hasattr(p.resident, "line") else 0)
 
     def check_screens(self):
         """画面の検査。見せる問い合わせ・呼ぶ処理・行き先が実在し、処理の入力が入力欄か受け取る値で埋まり、
