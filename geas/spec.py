@@ -88,6 +88,49 @@ def read_text(rd) -> str:
     return "。".join(parts)
 
 
+def tell(e) -> str:
+    """処理の中身に出す式。コードの書き方（round(…)・sum { … }・if then else・and/or/not）を、読める言葉にする。
+    括弧と結びつきの強さは show と同じ。意味を変えるものは何も省かない"""
+    t = tell
+    if isinstance(e, Call) and e.n == "round" and len(e.args) == 3:
+        mode, unit = (SHOW_JA.get(show(x), show(x)) for x in e.args[1:])
+        return f"丸め（{t(e.args[0])}、{unit} の単位に{mode}）"
+    if isinstance(e, Call) and e.n in ("min", "max") and e.args:
+        return f"{'小さい' if e.n == 'min' else '大きい'}ほう（{'、'.join(t(x) for x in e.args)}）"
+    if isinstance(e, Call) and e.n == "abs" and len(e.args) == 1:
+        return f"絶対値（{t(e.args[0])}）"
+    if isinstance(e, Call) and e.n == "len" and len(e.args) == 1:
+        return f"長さ（{t(e.args[0])}）"
+    if isinstance(e, Call):
+        return f"{e.n}({', '.join(t(x) for x in e.args)})"
+    if isinstance(e, Not):
+        return f"{show_in(e.e, 9, t)} でない"
+    if isinstance(e, Cond):
+        return f"{t(e.c)} なら {t(e.a)}、そうでなければ {t(e.b)}"
+    if isinstance(e, Tuple):
+        return "(" + ", ".join(map(t, e.items)) + ")"
+    if isinstance(e, Attr):
+        return f"{t(e.e)}.{e.n}"
+    if isinstance(e, Index):
+        return f"{e.d}[{t(e.e)}]"
+    if isinstance(e, Make):
+        return f"{e.n} {{ {', '.join(f'{n}: {t(x)}' for n, x in e.fields)} }}"
+    if isinstance(e, Bin):
+        op = {"in": "が次に入っている：", "==": "=", "!=": "≠", "<=": "≦", ">=": "≧"}.get(e.op, e.op)
+        return f"{show_in(e.l, prec(e), t)} {op} {show_in(e.r, prec(e) + 1, t)}" + (f"（割る数が 0 なら {t(e.dflt)}）" if e.dflt is not None else "")
+    if isinstance(e, Pred):
+        return f"{show_in(e.e, 5, t)} が {e.kind}"
+    if isinstance(e, Implies):
+        return f"{t(e.l)} なら {t(e.r)}"
+    if isinstance(e, (SetB, SumE)):
+        b = e.binder
+        names = b.names[0] if len(b.names) == 1 else f"({', '.join(b.names)})"
+        only = f" のうち {t(e.cond)} のもの" if e.cond is not None else ""
+        head = "合計" if isinstance(e, SumE) else "集まり"
+        return f"{head}〔{t(b.src)} の各 {names}{only}について： {t(e.elem)}〕"
+    return show(e)
+
+
 def step_lines(body, depth: int = 0) -> list[str]:
     """処理の中身を、上から順の手順にする（1 行 = 1 文。入れ子は行頭の「　」の数）。
     仕様書の「読む・書く・結果」だけでは、どの条件でどの結果になるか、何をいくつ書くかが出ないので、
@@ -96,31 +139,31 @@ def step_lines(body, depth: int = 0) -> list[str]:
     out: list[str] = []
 
     def ret(r) -> str:
-        return "結果 " + r.variant + (f"（{', '.join(show(a) for a in r.args)}）" if r.args else "")
+        return "結果 " + r.variant + (f"（{', '.join(tell(a) for a in r.args)}）" if r.args else "")
 
     for st in body:
         if isinstance(st, Return):
             out.append(pad + ret(st))
         elif isinstance(st, Assign):
-            out.append(pad + f"{st.name} = {show(st.e)}" + (f"。無ければ {ret(st.absent)}" if st.absent is not None else ""))
+            out.append(pad + f"{st.name} = {tell(st.e)}" + (f"。無ければ {ret(st.absent)}" if st.absent is not None else ""))
         elif isinstance(st, Create):
-            out.append(pad + f"{st.name} = {st.data} を新しく作る（{', '.join(f'{n}: {show(x)}' for n, x in st.fields)}）")
+            out.append(pad + f"{st.name} = {st.data} を新しく作る（{', '.join(f'{n}: {tell(x)}' for n, x in st.fields)}）")
         elif isinstance(st, Delete):
             out.append(pad + f"{st.var} を消す")
         elif isinstance(st, If):
             if len(st.body) == 1 and isinstance(st.body[0], Return) and st.els is None:
-                out.append(pad + f"{show(st.cond)} なら {ret(st.body[0])}")
+                out.append(pad + f"{tell(st.cond)} なら {ret(st.body[0])}")
             else:
-                out.append(pad + f"{show(st.cond)} なら：")
+                out.append(pad + f"{tell(st.cond)} なら：")
                 out += step_lines(st.body, depth + 1)
                 if st.els is not None:
                     out.append(pad + "そうでなければ：")
                     out += step_lines(st.els, depth + 1)
         elif isinstance(st, SetField):
             if st.op in ("+=", "-=") and isinstance(st.e, Bin):
-                text = f"{st.var}.{st.f} {'に足す' if st.op == '+=' else 'から引く'}： {show(st.e.r)}"
+                text = f"{st.var}.{st.f} {'に足す' if st.op == '+=' else 'から引く'}： {tell(st.e.r)}"
             else:
-                text = f"{st.var}.{st.f} = {show(st.e)}"
+                text = f"{st.var}.{st.f} = {tell(st.e)}"
             if st.guard:
                 text += "（範囲の端で止める）" if st.guard[0] == "saturating" else "（範囲は確かめない）"
             out.append(pad + text)
@@ -128,14 +171,14 @@ def step_lines(body, depth: int = 0) -> list[str]:
             b = st.binder
             names = b.names[0] if len(b.names) == 1 else f"({', '.join(b.names)})"
             op = {"+=": "に足す", "-=": "から引く"}.get(st.op)
-            head = f"{show(b.src)} の各 {names} について" + (f"（{show(st.cond)} のものだけ）" if st.cond is not None else "") + "、"
-            out.append(pad + head + (f"{show(st.target)} {op}： {show(st.value)}" if op else f"{show(st.target)} {st.op} {show(st.value)}"))
+            head = f"{tell(b.src)} の各 {names} について" + (f"（{tell(st.cond)} のものだけ）" if st.cond is not None else "") + "、"
+            out.append(pad + head + (f"{tell(st.target)} {op}： {tell(st.value)}" if op else f"{tell(st.target)} {st.op} {tell(st.value)}"))
         elif isinstance(st, Request):
-            out.append(pad + f"外部作用 {st.effect}（{', '.join(show(a) for a in st.args)}）を要求する" + (f"（冪等キー = {show(st.idem)}）" if st.idem is not None else ""))
+            out.append(pad + f"外部作用 {st.effect}（{', '.join(tell(a) for a in st.args)}）を要求する" + (f"（冪等キー = {tell(st.idem)}）" if st.idem is not None else ""))
         elif isinstance(st, ForEach):
             b = st.binder
             names = b.names[0] if len(b.names) == 1 else f"({', '.join(b.names)})"
-            out.append(pad + f"{show(b.src)} の各 {names} について：")
+            out.append(pad + f"{tell(b.src)} の各 {names} について：")
             out += step_lines(st.body, depth + 1)
         else:
             raise ValueError(st)
@@ -154,7 +197,7 @@ def step_tree(body) -> list:
             head, _, r = line.partition("。無ければ 結果 ")
             out.append(("無ければ", head, r))
         elif isinstance(st, If):
-            out.append(("もし", show(st.cond), step_tree(st.body), step_tree(st.els) if st.els is not None else None))
+            out.append(("もし", tell(st.cond), step_tree(st.body), step_tree(st.els) if st.els is not None else None))
         elif isinstance(st, ForEach):
             out.append(("各", line.rstrip("："), step_tree(st.body)))
         else:
@@ -202,6 +245,7 @@ def build_raw(ck: Checker) -> dict:
     for fl in p.flows:
         for proc, rs in fl.entries:
             routes.setdefault(proc, {}).update({v: ja_dest(ds[0]) if len(ds) == 1 else "並列［" + " ＋ ".join(ja_dest(x) for x in ds) + "］" for v, ds in route_map(rs).items()})
+    spec["流れ"] = [(fl.name, proc) for fl in p.flows for proc, _ in fl.entries]  # 書いた順。行き先は処理の「結果」の列に出る
     procs = []
     for proc in p.processes:
         info = ck.infos[proc.name]

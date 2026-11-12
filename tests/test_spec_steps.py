@@ -31,13 +31,13 @@ def test_処理の中身が仕様書に出る():
     for text in (md, html):
         assert "顧客.ポイント に足す： 10" in text  # HTML では図の中の文字
         assert "顧客.ポイント に足す： 5" in text
-    assert "order.状態 != 決済要求済 なら 結果 状態違い" in md
-    assert "order.状態 != 決済要求済" in html and "処理の中身 ポイントの加算" in html  # HTML はフローチャート（分かれ道と結果は別の箱）
+    assert "order.状態 ≠ 決済要求済 なら 結果 状態違い" in md
+    assert "order.状態 ≠ 決済要求済" in html and "処理の中身 ポイントの加算" in html  # HTML はフローチャート（分かれ道と結果は別の箱）
 
 
 def test_比較の向きを変えると仕様書と変更点に出る():
     s0, s1, md0, md1, html1 = changed("Product[k].stock < v }", "Product[k].stock <= v }")
-    assert md0 != md1 and "商品[k].在庫 &lt;= v" in html1
+    assert md0 != md1 and "商品[k].在庫 ≦ v" in html1
     assert changes_section(s1, s0, "前") != changes_section(s0, s0, "前")
 
 
@@ -77,3 +77,31 @@ def test_エラーのあるコードでも仕様書は落ちずに出る():
         assert not ck.ok
         spec = build(ck)
         assert render(ck, spec, "") and review(ck, None, [], "")
+
+
+def test_式は読める言葉で出て_括弧は落ちない():
+    _, md, _ = views(BASE)
+    assert "合計 = subtotal + 丸め（subtotal * 税率、通貨 の単位に切り捨て） + 送料" in md
+    assert "subtotal = 合計〔明細 の各 (k, v)について： 商品[k].価格 * v〕" in md
+    assert "不足 = 集まり〔明細 の各 (k, v) のうち 商品[k].在庫 < v のものについて： k〕" in md
+    # 括弧の位置で意味が変わる式は、表示も変わる
+    from geas.ast import Bin, Name, Not, show
+    a, b, c = Name("a"), Name("b"), Name("c")
+    assert show(Bin("*", Bin("+", a, b), c)) == "(a + b) * c" and show(Bin("+", a, Bin("*", b, c))) == "a + b * c"
+    assert show(Bin("-", a, Bin("-", b, c))) == "a - (b - c)" and show(Bin("-", Bin("-", a, b), c)) == "a - b - c"
+    assert show(Not(Bin("かつ", a, b))) == "not (a かつ b)"
+
+
+def test_並びだけの変更と_同じ行の追加も_変更点に出る():
+    a = {"決め方": [("送料", "通貨 = JPY", "500"), ("送料", "上のどれでもない", "1500")]}
+    b = {"決め方": list(reversed(a["決め方"]))}
+    c = {"決め方": a["決め方"] + a["決め方"][:1]}
+    same = changes_section(a, a, "前の版")
+    assert "並びが変わりました" in changes_section(b, a, "前の版")
+    assert changes_section(c, a, "前の版") != same and "＋" in changes_section(c, a, "前の版")
+
+
+def test_同じ処理の行が流れに2つあると検査で止まる():
+    line = next(ln for ln in BASE.split("\n") if ln.strip().startswith("place_order:"))
+    ck = check(parse(BASE.replace(line, line + "\n" + line, 1), str(SRC)), strict_names=True)
+    assert not ck.ok and any("同じ流れに 2 つあります" in d.msg for d in ck.diags)

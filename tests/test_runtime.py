@@ -235,6 +235,11 @@ def test_型の範囲の外の行は_最初のデータからも_DBからも入�
         r = subprocess.run([exe, "--port", "0", "--db", str(db), "--seed", str(seed)], capture_output=True, text=True, timeout=60)
         assert r.returncode != 0 and word in r.stderr and "範囲外" in r.stderr, r.stderr[-1000:]
         assert sqlite3.connect(db).execute('SELECT count(*) FROM "Parcel"').fetchone()[0] == 0, "範囲の外の行が DB に入っている"
+    # 行を置くキーと、行の中の ID が違う最初のデータも入らない
+    seed = tmp_path / "key_seed.json"
+    seed.write_text(json.dumps({"Parcel": {"p-2": row}}), encoding="utf-8")
+    r = subprocess.run([exe, "--port", "0", "--db", str(tmp_path / "key.sqlite"), "--seed", str(seed)], capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "キー「p-2」と、行の中の ID「p-1」が違います" in r.stderr, r.stderr[-1000:]
     # 範囲の中の行は入る
     seed = tmp_path / "good_seed.json"
     seed.write_text(json.dumps({"Parcel": {"p-1": row}}), encoding="utf-8")

@@ -324,7 +324,7 @@ def definitions(ck: Checker) -> dict:
 def server_api(p) -> str:
     """サーバーの実行部（geas/server）が使う口。保存をメモリに持ったまま処理を走らせ、変わった行だけを DB と行き来する。
     1 リクエストごとに保存の全件を JSON にして渡し直さない（件数に比例する時間とメモリを使わない）"""
-    load = "\n".join(f'        "{d.name}" => {{ store.{d.name}.insert(key.to_string(), {d.name}_from_json(&j)?); Ok(()) }}' for d in p.data)
+    load = "\n".join(f'        "{d.name}" => {{ let r = {d.name}_from_json(&j)?; same_key("{d.name}", key, &r.{next(f.name for f in d.fields if f.type.kind == "ID" and f.unique)})?; store.{d.name}.insert(key.to_string(), r); Ok(()) }}' for d in p.data)
     get = "\n".join(f'        "{d.name}" => store.{d.name}.get(key).map({d.name}_to_json),' for d in p.data)
     return (
         "/// サーバーの口：メモリ上の保存に直接、処理か問い合わせを走らせる（request は name・ctx・input。保存は渡さない）。\n"
@@ -368,9 +368,12 @@ def host_source(ck: Checker) -> str:
         for f in d.fields:
             w(f'    v.push(format!("{{}}:{{}}", js_str("{f.name}"), {to_j(f.type, f"r.{f.name}")}));')
         w('    format!("{{{}}}", v.join(","))\n}')
+    w("/// 行を置くキーと、行の中のキーの項目は同じ（違う行を通すと、D[k] で引いた行の ID が k でなくなり、書き戻しで別の行ができる）\n"
+      "fn same_key(entity: &str, key: &str, id: &str) -> Result<(), String> {\n"
+      '    if key == id { Ok(()) } else { Err(format!("{} のキー「{}」と、行の中の ID「{}」が違います", entity, key, id)) }\n}')
     w("pub fn read_store(j: &J) -> Result<Store, String> {\n    let mut s = Store::default();")
     for d in p.data:
-        w(f'    if let Some(m) = j.get_opt("{d.name}") {{ for (k, v) in m.as_obj()? {{ s.{d.name}.insert(k.clone(), {d.name}_from_json(v)?); }} }}')
+        w(f'    if let Some(m) = j.get_opt("{d.name}") {{ for (k, v) in m.as_obj()? {{ let r = {d.name}_from_json(v)?; same_key("{d.name}", k, &r.{ck.key_field(d.name).name})?; s.{d.name}.insert(k.clone(), r); }} }}')
     w("    Ok(s)\n}")
     w("pub fn write_store(s: &Store) -> String {\n    let mut v: Vec<String> = Vec::new();")
     for d in p.data:
