@@ -220,6 +220,37 @@ def test_最初のデータは_DB_が空のときだけ読む(built, tmp_path):
     assert r.returncode != 0 and "seed.json" in r.stderr, r.stderr[-1000:]
 
 
+def test_型の範囲の外の行は_最初のデータからも_DBからも入らない(built, tmp_path):
+    """検査器は「保存の値は型の範囲に入っている」を前提に証明する。だから保存の行も、読むときに型の範囲で確かめる。
+    範囲の外の最初のデータは入れずに止まり（DB は空のまま）、外で書き換えた DB の行は、起動のときに止まる"""
+    import json
+    import sqlite3
+
+    exe = str(built / "server" / "target" / "release" / "geas_server")
+    row = {"parcel_id": "p-1", "kind": "light", "fee": 300, "status": "Received", "refund_ref": None}
+    for bad, word in (({"fee": -1}, "Parcel.fee"), ({"kind": "x" * 11}, "Parcel.kind")):
+        seed = tmp_path / "bad_seed.json"
+        seed.write_text(json.dumps({"Parcel": {"p-1": {**row, **bad}}}), encoding="utf-8")
+        db = tmp_path / f"bad_{word}.sqlite"
+        r = subprocess.run([exe, "--port", "0", "--db", str(db), "--seed", str(seed)], capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and word in r.stderr and "範囲外" in r.stderr, r.stderr[-1000:]
+        assert sqlite3.connect(db).execute('SELECT count(*) FROM "Parcel"').fetchone()[0] == 0, "範囲の外の行が DB に入っている"
+    # 範囲の中の行は入る
+    seed = tmp_path / "good_seed.json"
+    seed.write_text(json.dumps({"Parcel": {"p-1": row}}), encoding="utf-8")
+    s = Server(built, tmp_path / "good.sqlite", extra=["--seed", str(seed)])
+    s.start()
+    try:
+        assert s.parcels()["p-1"]["fee"] == 300
+    finally:
+        s.stop()
+    # DB の行を外から書き換えると、次の起動で止まる
+    with sqlite3.connect(s.db) as c:
+        c.execute("""UPDATE "Parcel" SET v = replace(v, '"fee":300', '"fee":-5')""")
+    r = subprocess.run([exe, "--port", "0", "--db", str(s.db)], capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "Parcel.fee=-5 は範囲外" in r.stderr, r.stderr[-1000:]
+
+
 def test_計画書のURLの具体例から生成したテストが通る(built):
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", str(built / "tests" / "test_url_examples.py")], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0 and "13 passed" in r.stdout, r.stdout + r.stderr
