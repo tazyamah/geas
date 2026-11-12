@@ -213,7 +213,7 @@ class Parser:
                 p.replies.append(self.reply_def(line))
             elif kw == "rule":  # rule slot名 { 条件 [and 条件]: 値 … default: 値 }：サーバーが決める slot の値の表
                 p.rules.append(self.slot_rule(line))
-            elif kw == "migration":  # migration 版 { add 実体.項目 = 値 … }：前の版の DB を、起動時にこの版の形へ書き換える
+            elif kw == "migration":  # migration 版 { add 実体.項目 = 値 ／ rename 実体.項目 to 新しい名前 ／ drop 実体.項目 }：前の版の DB を、起動時にこの版の形へ書き換える
                 p.migrations.append(self.migration(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
@@ -1584,10 +1584,23 @@ class Parser:
         steps = []
         while not self.accept("}"):
             t = self.peek()
-            if self.accept("rename") or self.accept("drop"):
-                raise ParseError(f"migration の {t.val} は、まだ書けません（いま書けるのは add 実体.項目 = 値 だけです）", t.line)
+            if self.accept("rename"):  # rename 実体.項目 to 新しい名前
+                entity = self.name()
+                self.expect(".")
+                fname = self.name()
+                if not self.accept("to"):
+                    raise self.unexpected("名前の変更は「rename 実体.項目 to 新しい名前」です（to が要ります）")
+                steps.append(("rename", entity, fname, ("to", self.name()), t.line))
+                self.end_line()
+                continue
+            if self.accept("drop"):  # drop 実体.項目
+                entity = self.name()
+                self.expect(".")
+                steps.append(("drop", entity, self.name(), None, t.line))
+                self.end_line()
+                continue
             if not self.accept("add"):
-                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」です（「{shown(t)}」があります）")
+                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」「rename 実体.項目 to 新しい名前」「drop 実体.項目」です（「{shown(t)}」があります）")
             entity = self.name()
             self.expect(".")
             fname = self.name()

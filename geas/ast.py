@@ -168,7 +168,8 @@ class ReplyDef:
 @dataclass
 class Migration:
     """保存の形の版（migration N { … }）。前の版の DB を、起動時にこの版の形へ書き換える。消さずに積む。
-    steps は ("add", 実体, 項目, 値, 行)。値は (種類, 中身)：("int", 数)・("str", 文字列)・("bool", 真偽)・("null", None)・("name", 状態の名前)・("ratio", "n/d")"""
+    steps は (すること, 実体, 項目, 中身, 行)。すること は add（中身は値）・rename（中身は ("to", 新しい名前)）・drop（中身は None）。
+    add の値は (種類, 中身)：("int", 数)・("str", 文字列)・("bool", 真偽)・("null", None)・("name", 状態の名前)・("ratio", "n/d")"""
     version: int
     steps: list
     line: int = 0
