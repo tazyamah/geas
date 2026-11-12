@@ -309,6 +309,8 @@ def build_raw(ck: Checker) -> dict:
                   for d in p.data if d.keep or d.removable or d.on_delete or d.name in deleted]
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
+    spec["保存の形"] = [(f"版 {m.version}", "項目を足す", f"{dn}.{fn}", {"null": "空（無い）", "str": quote_str(str(val))}.get(kind, str(val).lower() if kind == "bool" else str(val)))
+                    for m in p.migrations for _, dn, fn, (kind, val), _ in m.steps]
     spec["保存先"] = [(d.name, d.store, {"process": "このアプリのプロセスの中だけ", "store": "保存先が直列にする"}[p.isolations[d.store][0]]
                     + (f"（{p.isolations[d.store][1]}）" if p.isolations[d.store][0] == "store" else "")) for d in p.data if d.store and d.store in p.isolations]
     from . import envreq
@@ -495,6 +497,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
     if spec["人の保証"]:
         out += ["", "## 人の保証（範囲の確認を、人が危険を承知で省いたもの。検査器は宣言した範囲を事実として使う）", "", "| 処理 | 入力 | 型・範囲 | 実行時の確認 | 理由 |", "|---|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in spec["人の保証"]]
+    if spec["保存の形"]:
+        out += ["", f"## 保存の形の変更（今は版 {ck.schema_version}。前の版の DB は、起動時に 1 回でまとめて今の形にする）", "", "| 版 | すること | 項目 | 前からある行へ入れる値 |", "|---|---|---|---|"]
+        out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["保存の形"]]
     if spec["保存先"]:
         out += ["", "## 保存先（entity を置く場所と、リクエストの直列を誰が保証するか）", "", "| データ | 保存先 | 直列の担い手 |", "|---|---|---|"]
         out += [f"| {a} | {b} | {c} |" for a, b, c in spec["保存先"]]

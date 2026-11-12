@@ -213,6 +213,8 @@ class Parser:
                 p.replies.append(self.reply_def(line))
             elif kw == "rule":  # rule slot名 { 条件 [and 条件]: 値 … default: 値 }：サーバーが決める slot の値の表
                 p.rules.append(self.slot_rule(line))
+            elif kw == "migration":  # migration 版 { add 実体.項目 = 値 … }：前の版の DB を、起動時にこの版の形へ書き換える
+                p.migrations.append(self.migration(line))
             elif kw == "trigger":
                 p.triggers.append(self.trigger(line))
             elif kw == "query":
@@ -1575,6 +1577,37 @@ class Parser:
                 self.end_line()
         self.end_line()
         return ReplyDef(name, params, line, outcomes)
+
+    def migration(self, line) -> Migration:
+        version = self.num()
+        self.block_open()
+        steps = []
+        while not self.accept("}"):
+            t = self.peek()
+            if self.accept("rename") or self.accept("drop"):
+                raise ParseError(f"migration の {t.val} は、まだ書けません（いま書けるのは add 実体.項目 = 値 だけです）", t.line)
+            if not self.accept("add"):
+                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」です（「{shown(t)}」があります）")
+            entity = self.name()
+            self.expect(".")
+            fname = self.name()
+            if not self.accept("="):
+                raise self.unexpected("足した項目には、前からある行へ入れる値を書きます（add 実体.項目 = 値。無いかもしれない項目なら = null）")
+            v = self.next()
+            if v.kind == "OP" and v.val == "-" and self.peek().kind == "NUM":
+                value = ("int", -self.num())
+            elif v.kind == "NUM":
+                value = ("ratio", f"{v.val}/{self.num()}") if self.accept("/") else ("int", int(v.val))
+            elif v.kind == "STR":
+                value = ("str", v.val)
+            elif v.kind == "NAME":
+                value = {"true": ("bool", True), "false": ("bool", False), "null": ("null", None)}.get(v.val, ("name", v.val))
+            else:
+                raise ParseError("add の値は、数・文字列・true/false・null・状態の名前・分子/分母 です", v.line)
+            steps.append(("add", entity, fname, value, t.line))
+            self.end_line()
+        self.end_line()
+        return Migration(version, steps, line)
 
     def slot_rule(self, line) -> SlotRule:
         slot = self.name()

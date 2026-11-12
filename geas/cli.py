@@ -345,6 +345,8 @@ def main(argv=None) -> int:
     c = sub.add_parser("check", help="コードを検査する")
     c.add_argument("code", help=".geas ファイル")
     c.add_argument("--json", action="store_true", help="結果を JSON で出す（AI が直すための手がかり hint つき）")
+    c.add_argument("--base", help="前の版のコード。保存の形（実体の項目）を変えたのに migration が無ければ、エラーにする")
+    c.add_argument("--base-git", metavar="REV", help="前の版を、git の REV（例: HEAD~1）にある同じコードにする")
     pc = sub.add_parser("parts", help="部品（library）を、引数の範囲の端の値で実際に呼んで、宣言（範囲・guarantee・panic しない）どおりかを確かめる。食い違いがあれば終了コード 1")
     pc.add_argument("code", help=".geas ファイル（module で始まるモジュールのファイルでもよい）")
     pc.add_argument("--all", action="store_true", help="呼ばれていない部品も確かめる（モジュールのファイルは、いつも全部）")
@@ -450,6 +452,13 @@ def main(argv=None) -> int:
     else:
         ck = load(a.code)
     if a.cmd == "check":
+        if a.base or a.base_git:
+            try:
+                base_text, _ = read_base(a)
+                ck.check_against(load_text(base_text, a.base or a.code))
+            except (ValueError, OSError) as e:
+                print(f"前の版を読めません: {e}", file=sys.stderr)
+                return 2
         if a.json:
             from .hints import to_json
             print(to_json(ck, a.code), end="")
@@ -482,6 +491,7 @@ def main(argv=None) -> int:
             if a.base or a.base_git:
                 base_text, base_label = read_base(a)
                 base_ck = load_text(base_text, a.base or a.code)
+                ck.check_against(base_ck)
         except ValueError as e:
             print(f"前の版を読めません: {e}", file=sys.stderr)
             return 2
