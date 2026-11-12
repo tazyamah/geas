@@ -623,6 +623,29 @@ def quote_str(s: str) -> str:
     return '"' + "".join(STR_ESC.get(c, c) for c in s) + '"'
 
 
+# 式の結びつきの強さ（構文解析と同じ順。数が大きいほど強い）。表示で、要る括弧を落とさないために使う
+_PREC = {"または": 1, "かつ": 2, "in": 4, "==": 4, "!=": 4, "<": 4, "<=": 4, ">": 4, ">=": 4, "+": 5, "-": 5, "*": 6, "/": 6, "%": 6}
+
+
+def prec(e) -> int:
+    if isinstance(e, (Cond, Implies)):
+        return 0
+    if isinstance(e, Bin):
+        return _PREC.get(e.op, 4)
+    if isinstance(e, Not):
+        return 3
+    if isinstance(e, Pred):
+        return 4
+    return 9
+
+
+def show_in(e, least: int, f=None) -> str:
+    """式 e を、結びつきの強さが least 以上の場所に置くときの表示。弱ければ括弧でくくる
+    （`(a + b) * c` と `a + b * c` が同じ表示にならないように）"""
+    s = (f or show)(e)
+    return f"({s})" if prec(e) < least else s
+
+
 def show(e) -> str:
     if isinstance(e, Num):
         return str(e.v)
@@ -633,7 +656,7 @@ def show(e) -> str:
     if isinstance(e, BoolLit):
         return "true" if e.v else "false"
     if isinstance(e, Not):
-        return f"not {show(e.e)}"
+        return f"not {show_in(e.e, 3)}"
     if isinstance(e, Cond):
         return f"if {show(e.c)} then {show(e.a)} else {show(e.b)}"
     if isinstance(e, Dur):
@@ -651,9 +674,9 @@ def show(e) -> str:
     if isinstance(e, Make):
         return f"{e.n} {{ {', '.join(f'{n}: {show(x)}' for n, x in e.fields)} }}"
     if isinstance(e, Bin):
-        return f"{show(e.l)} {e.op} {show(e.r)}" + (f" or {show(e.dflt)}" if e.dflt is not None else "")
+        return f"{show_in(e.l, prec(e))} {e.op} {show_in(e.r, prec(e) + 1)}" + (f" or {show(e.dflt)}" if e.dflt is not None else "")
     if isinstance(e, Pred):
-        return f"{show(e.e)} が {e.kind}"
+        return f"{show_in(e.e, 5)} が {e.kind}"
     if isinstance(e, Implies):
         return f"{show(e.l)} なら {show(e.r)}"
     if isinstance(e, (SetB, SumE)):

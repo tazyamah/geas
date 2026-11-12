@@ -702,7 +702,7 @@ draw();
 
 ROUTE_HEAD = ["メソッド", "経路", "動作", "呼ぶもの", "結果→状態", "外から"]
 
-CHANGE_KEYS = [("アプリ", "アプリ"), ("拡張", "ブラウザ拡張"), ("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("データ用フォルダ", "データ用フォルダ"), ("ファイル", "ファイル"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
+CHANGE_KEYS = [("アプリ", "アプリ"), ("拡張", "ブラウザ拡張"), ("データ", "データ"), ("状態", "状態"), ("遷移", "遷移"), ("拒否", "拒否"), ("トリガ", "トリガ"), ("外部作用", "外部作用"), ("通信", "通信"), ("常駐", "常駐"), ("データ用フォルダ", "データ用フォルダ"), ("ファイル", "ファイル"), ("流れ", "流れ（処理を書いた順）"), ("合流", "合流"), ("応答", "応答"), ("模擬", "模擬"),
                ("決め方", "slotの決め方"), ("出来事", "出来事"), ("削除", "削除"), ("保存先", "保存先"), ("動かす前提", "動かす前提"), ("人の保証", "人の保証"), ("保証の強さ", "保証の強さ"), ("ルート", "ルート"), ("画面", "画面"), ("画面遷移", "画面遷移"), ("画面デザイン", "画面デザイン")]
 
 
@@ -718,11 +718,18 @@ def changes_section(new: dict, old: dict, label: str) -> str:
     for key, title in CHANGE_KEYS + [("処理", "処理"), ("問い合わせ", "問い合わせ")]:
         a = [_row_text(x) for x in old.get(key, [])]
         b = [_row_text(x) for x in new.get(key, [])]
-        added = [x for x in b if x not in a]
-        removed = [x for x in a if x not in b]
-        if not (added or removed):
+        # 同じ行が増えた・減ったも数える（同じ行を 2 回書くと、2 回起こるものがある）
+        left, added = list(a), []
+        for x in b:
+            left.remove(x) if x in left else added.append(x)
+        removed = left
+        # 行は同じで、並びだけが変わった（上から順に当てはめる決まりでは、並びが意味を持つ）
+        moved = [] if (added or removed) or a == b else [f"{i + 1} 番目：{x}" for i, x in enumerate(b) if a[i] != x]
+        if not (added or removed or moved):
             continue
         items = "".join(f'<li class="removed"><span class="sign">−</span>{escape(x)}</li>' for x in removed) + "".join(f'<li class="added"><span class="sign">＋</span>{escape(x)}</li>' for x in added)
+        if moved:
+            items += '<li class="added"><span class="sign">⇅</span>並びが変わりました。新しい並び（変わった所だけ）</li>' + "".join(f'<li class="added"><span class="sign">⇅</span>{escape(x)}</li>' for x in moved)
         groups.append(f'<div class="cgroup"><h4>{escape(title)}</h4><ul class="clist">{items}</ul></div>')
     if not groups:
         return lead(f"{escape(label or '前の版')}から、仕様書に出る内容の変更はありません。")
@@ -888,8 +895,8 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         + fig(svg.steps(x["図"], f"処理の中身 {x['処理']}"))
         for x in spec["処理"])
     if spec["問い合わせ"]:
-        rules += "<h3>問い合わせ</h3>" + table(["問い合わせ", "入力", "読む", "条件", "並び", "ページ"],
-                                           [(x["問い合わせ"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["条件"]), x["並び"], x["ページ"]) for x in spec["問い合わせ"]])
+        rules += "<h3>問い合わせ</h3>" + table(["問い合わせ", "入力", "読む", "条件", "返す列（この順）", "並び", "ページ"],
+                                           [(x["問い合わせ"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["条件"]), ", ".join(x["列"]), x["並び"], x["ページ"]) for x in spec["問い合わせ"]])
     if spec["決め方"]:
         rules += "<h3>slot の決め方（サーバーが決める値。上の行から順に、最初に当てはまった値）</h3>" + table(["slot", "条件", "値"], spec["決め方"])
     rules += "<h3>いつでも成り立つこと（不変条件）</h3>" + table(["内容", "検査の結果"], [(t, "／".join(f"{a}: {b}" for a, b in rows)) for t, rows in ck.invariant_status])

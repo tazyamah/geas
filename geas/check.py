@@ -559,8 +559,12 @@ class Checker:
         for fl in self.p.flows:
             if not fl.entries:
                 self.d(ERROR, "行き先", f"フロー {fl.name}", "流れの中身がありません。`処理: 結果 → 行き先` の行を 1 つ以上書くか、この流れを消してください")
+            twice = set()
             for proc, routes in fl.entries:
                 where = f"フロー {fl.name} / {proc}"
+                if proc in twice:
+                    self.d(ERROR, "行き先", where, f"処理「{proc}」の行が、同じ流れに 2 つあります。行き先は 1 行にまとめてください")
+                twice.add(proc)
                 if proc not in self.procs:
                     self.d(ERROR, "行き先", where, f"処理「{proc}」が未定義です" + near(proc, self.procs))
                     continue
