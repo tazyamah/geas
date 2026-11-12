@@ -1024,6 +1024,8 @@ class Checker:
             if not f.rows or f.rows[-1][0]:
                 self.d(ERROR, "rule", where, "最後の行は default にしてください（どれにも当てはまらない場合の値が決まりません）")
             for i, (conds, val) in enumerate(f.rows):
+                if conds and any(sorted(c) == sorted(conds) for c, _ in f.rows[:i]):
+                    self.d(ERROR, "rule", where, f"同じ条件の行が 2 つあります（{' かつ '.join(f'{a} = {b}' for a, b in conds)}）。上から順に当てはめるので、後ろの行には決して届きません")
                 if not conds and i != len(f.rows) - 1:
                     self.d(ERROR, "rule", where, "default より後ろの行には、決して届きません")
                 if (kind == "割合") != isinstance(val, str):
@@ -1108,6 +1110,8 @@ class Checker:
                 self.d(ERROR, "名前", where, "同じ名前の出来事が複数あります")
             if not ev.steps:
                 self.d(WARN, "出来事", where, "起こす処理がありません")
+            for st in {x for x in ev.steps if ev.steps.count(x) > 1}:
+                self.d(ERROR, "出来事", where, f"同じ行が 2 つあります（処理 {st[2]}）。同じ処理が 2 回起こります。1 行にしてください")
             for kind, qn, pn in ev.steps:
                 proc = self.procs.get(pn)
                 if proc is None:
@@ -1454,6 +1458,8 @@ class Checker:
                     covered.add(n)
                     if n not in have and n not in sc.fields and not ty.optional:
                         self.d(ERROR, "画面", where, f"問い合わせ {qn} の入力「{n}」を埋めるものがありません（field か画面の受け取る値に書いてください）")
+            for tn in sorted({x for x in sc.opens if sc.opens.count(x) > 1}):
+                self.d(ERROR, "画面", where, f"「open {tn}」が 2 つあります。1 行にしてください")
             for tn in sc.opens:
                 t = scr.get(tn)
                 if t is None:

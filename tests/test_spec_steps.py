@@ -105,3 +105,17 @@ def test_同じ処理の行が流れに2つあると検査で止まる():
     line = next(ln for ln in BASE.split("\n") if ln.strip().startswith("place_order:"))
     ck = check(parse(BASE.replace(line, line + "\n" + line, 1), str(SRC)), strict_names=True)
     assert not ck.ok and any("同じ流れに 2 つあります" in d.msg for d in ck.diags)
+
+
+def test_同じ宣言を2回書くと検査で止まる():
+    """同じ行を 2 回書くと、2 回起こるもの（出来事の each）と、届かない行になるもの（rule）がある。黙って通さない"""
+    import re
+
+    cases = [("solo_tweet", r"^\s*each saved_tweets", "同じ処理が 2 回起こります"), ("solo_tweet", r"^\s*open TweetDetail", "が 2 つあります"),
+             ("overseas_shop", r"^\s*currency == JPY: 2500", "同じ条件の行が 2 つあります")]
+    for fx, pat, word in cases:
+        src = Path(f"tests/fixtures/{fx}/{fx}.geas")
+        text = src.read_text(encoding="utf-8")
+        line = next(ln for ln in text.split("\n") if re.match(pat, ln))
+        ck = check(parse(text.replace(line, line + "\n" + line, 1), str(src)), strict_names=True)
+        assert not ck.ok and any(word in d.msg for d in ck.diags), (fx, pat, [d.msg for d in ck.diags])
