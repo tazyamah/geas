@@ -44,21 +44,62 @@ def with_actors(who: dict = WHO, default: str = "Staff", actors: str = ACTORS) -
     return "\n".join(lines) + actors
 
 
-# 見える範囲：小包のうち、返金の控え（refund_ref）が、呼んだ本人の ID と同じものだけ
+# 範囲：小包のうち、返金の控え（refund_ref）が、呼んだ本人の ID と同じもの（own_parcels）と、状態で分けたもの
 SCOPE = """
 scope own_parcels on Parcel {
   filter refund_ref equals caller
 }
 
+scope live on Parcel {
+  where status != Canceled
+}
+
+scope canceled on Parcel {
+  where status == Canceled
+}
+
 /// 自分の小包
 query my_parcels {
-  from Parcel in own_parcels
+  from Parcel.own_parcels
   select parcel_id, kind
   reads Parcel.refund_ref, Parcel.parcel_id, Parcel.kind
 }
 
+/// 自分の、取り消していない小包
+query my_live_parcels {
+  from Parcel.own_parcels.live
+  select parcel_id
+  reads Parcel.refund_ref, Parcel.status, Parcel.parcel_id
+}
+
+/// 自分の、取り消した小包
+query my_canceled_parcels {
+  from Parcel.canceled.own_parcels
+  select parcel_id
+  reads Parcel.refund_ref, Parcel.status, Parcel.parcel_id
+}
+
+/// 取り消していない小包
+query live_parcels {
+  from Parcel.live
+  select parcel_id
+  reads Parcel.status, Parcel.parcel_id
+}
+
 resource MyParcels {
   index my_parcels for Customer
+}
+
+resource MyLiveParcels {
+  index my_live_parcels for Customer
+}
+
+resource MyCanceledParcels {
+  index my_canceled_parcels for Customer
+}
+
+resource LiveParcels {
+  index live_parcels for anyone
 }
 
 result ClaimResult { Claimed, NoParcel }
@@ -240,40 +281,53 @@ def test_役割の無い呼び出しは401_合わない役割は403_合えば通
     assert call(served, "POST", "/settlements", "Staff", {"parcel_id": pid})[0] == 404
 
 
-def test_見える範囲の検査と仕様書():
+def test_範囲の検査と仕様書():
     from geas.envreq import items
     from geas.hostgen import definitions
     from geas.spec import build, render
 
     assert errors(scoped()) == []
-    assert has(scoped(SCOPE.replace("in own_parcels", "in own_parcel")), "見える範囲「own_parcel」が未定義です")
-    assert has(scoped(SCOPE.replace("on Parcel", "on Package")), "データ「Package」が未定義です")
-    assert has(scoped(SCOPE.replace("filter refund_ref", "filter kind").replace("Parcel.refund_ref, ", "")), "ID か参照")
-    assert has(scoped(SCOPE.replace("Parcel.refund_ref, ", "")), "宣言（読む）にありません")  # 範囲の項目も、読む項目に数える
-    assert has(scoped(SCOPE.replace("for Customer", "for anyone")), "呼べるのは役割のある人だけです")
-    assert has(scoped(SCOPE.replace("from Parcel in own_parcels", "input caller: id required\n  from Parcel in own_parcels\n  filter parcel_id equals caller")), "入力の名前に caller は使えません")
-    # 出来事には呼んだ本人がいないので、範囲つきの問い合わせは each に使えない
-    ev = SCOPE.replace("  select parcel_id, kind\n", "").replace(", Parcel.parcel_id, Parcel.kind", "") + "\nevent Sweep {\n  each my_parcels → ask_nudge\n}\n"
-    assert has(scoped(ev), "出来事からは呼べません")
-    for bad in ("filter refund_ref == caller", "filter refund_ref equals me", "where refund_ref == caller"):
+    mine = "from Parcel.own_parcels\n"
+    assert has(scoped(SCOPE.replace(mine, "from Parcel.own_parcel\n")), "範囲「own_parcel」が未定義です")
+    assert has(scoped(SCOPE.replace(mine, "from Parcel.own_parcels.own_parcels\n")), "重ねて書いています")
+    assert has(scoped(SCOPE.replace("scope own_parcels on Parcel", "scope own_parcels on Package")), "データ「Package」が未定義です")
+    assert has(scoped(SCOPE.replace("filter refund_ref equals", "filter kind equals")), "ID か参照")
+    assert has(scoped(SCOPE.replace("where status == Canceled", "where status == Gone")), "「Gone」は項目 status の状態ではありません")
+    assert has(scoped(SCOPE.replace("scope live on", "scope kind on").replace("Parcel.live", "Parcel.kind")), "項目か範囲か分からなくなります")
+    assert has(scoped(SCOPE.replace("reads Parcel.refund_ref, Parcel.status, Parcel.parcel_id", "reads Parcel.refund_ref, Parcel.parcel_id", 1)), "宣言（読む）にありません")  # 範囲の項目も、読む項目に数える
+    assert has(scoped(SCOPE.replace("index my_parcels for Customer", "index my_parcels for anyone")), "呼べるのは役割のある人だけです")
+    assert has(scoped(SCOPE.replace(mine, "input caller: id required\n  from Parcel.own_parcels\n  filter parcel_id equals caller\n")), "入力の名前に caller は使えません")
+    # 出来事には呼んだ本人がいないので、本人で絞る範囲の問い合わせは each に使えない（本人で絞らない範囲は使える）
+    ids = "\nquery {n} {{\n  from Parcel.{s}\n  reads {r}\n}}\n\nevent Sweep{n} {{\n  each {n} → ask_nudge\n}}\n"
+    assert has(scoped(SCOPE + ids.format(n="mine_ids", s="own_parcels", r="Parcel.refund_ref")), "出来事からは呼べません")
+    assert not has(scoped(SCOPE + ids.format(n="live_ids", s="live", r="Parcel.status")), "出来事からは呼べません")
+    for bad in ("filter refund_ref == caller", "filter refund_ref equals me", "filter refund_ref equals caller\n  filter parcel_id equals caller", "order fee desc"):
         with pytest.raises(ParseError):
             parse(scoped(SCOPE.replace("filter refund_ref equals caller", bad)), str(SRC))
+    with pytest.raises(ParseError, match="範囲は in ではなく"):
+        parse(scoped(SCOPE.replace(mine, "from Parcel in own_parcels\n")), str(SRC))
     ck = ck_of(scoped())
     spec = build(ck)
     md = render(ck, spec, "")
-    assert next(x for x in spec["ルート"] if x[1] == "/my_parcels")[6] == "客（本人の分だけ）"
-    assert "## 見える範囲" in md and "X-Geas-Actor-Id" in md and "が、呼んだ本人のID と同じ行だけ" in md
-    assert any("一致 呼んだ本人のID（見える範囲 own_parcels）" in c for x in spec["問い合わせ"] if x["問い合わせ"] == "自分の小包" for c in x["条件"])
+    who = {x[1]: x[6] for x in spec["ルート"]}
+    assert who["/my_parcels"] == "客（本人の分だけ）" and who["/my_live_parcels"] == "客（本人の分だけ）" and who["/live_parcels"] == "誰でも"
+    assert "## 範囲" in md and "X-Geas-Actor-Id" in md and "すべての範囲に入る行だけ" in md
+    rows = {x[0]: x for x in spec["範囲"]}
+    assert rows["own_parcels"][2].endswith("が、呼んだ本人のID と同じ") and "!=" in rows["live"][2]
+    assert rows["live"][3] == "自分の、取り消していない小包、取り消していない小包"
+    conds = {x["問い合わせ"]: x["条件"] for x in spec["問い合わせ"]}
+    assert len(conds["自分の、取り消していない小包"]) == 2 and any("（範囲 own_parcels）" in c for c in conds["自分の、取り消していない小包"]) and any("（範囲 live）" in c for c in conds["自分の、取り消していない小包"])
     defs = definitions(ck)["queries"]
-    assert defs["my_parcels"] == {"inputs": [], "refs": [], "caller": True} and "caller" not in defs["parcel_list"]  # caller は、呼ぶ側の入力にしない
+    assert defs["my_parcels"] == {"inputs": [], "refs": [], "caller": True} and defs["my_canceled_parcels"].get("caller") is True
+    assert "caller" not in defs["parcel_list"] and "caller" not in defs["live_parcels"]  # caller は、呼ぶ側の入力にしない。本人で絞らない範囲には要らない
     assert "X-Geas-Actor-Id" in next(x for x in items(ck.p) if x["id"] == "actor")["要求"]
-    assert "見える範囲" not in render(ck_of(with_actors()), build(ck_of(with_actors())), "")
+    assert "## 範囲" not in render(ck_of(with_actors()), build(ck_of(with_actors())), "")
 
 
-def test_見える範囲の問い合わせは_本人の分だけを返す(served):
-    def get(actor=None, who=None, tag=None):
+def test_範囲つきの問い合わせは_本人の分だけを返し_並べた範囲はすべてに入る行だけになる(served):
+    def get(actor=None, who=None, tag=None, path="/my_parcels"):
         headers = {**({"X-Geas-Actor": actor} if actor else {}), **({"X-Geas-Actor-Id": who} if who is not None else {}), **({"If-None-Match": tag} if tag else {})}
-        req = urllib.request.Request(served + "/my_parcels", headers=headers)
+        req = urllib.request.Request(served + path, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, [x["parcel_id"] for x in json.loads(r.read())["rows"]], r.headers.get("ETag")
@@ -295,3 +349,8 @@ def test_見える範囲の問い合わせは_本人の分だけを返す(served
     # 別の人が、前の人の答えの版（ETag）を送っても、304 にならず自分の分が返る
     assert get("Customer", "c-1", tag_a)[0] == 304
     assert get("Customer", "c-2", tag_a)[:2] == (200, [b])
+    # 並べた範囲は、すべてに入る行だけ（順は関係しない）。本人で絞らない範囲は、誰でも呼べる口にもできる
+    assert get("Customer", "c-1", path="/my_live_parcels")[:2] == (200, [a])
+    assert get("Customer", "c-1", path="/my_canceled_parcels")[:2] == (200, [])
+    assert get("Customer", path="/my_canceled_parcels")[0] == 401
+    assert {a, b} <= set(get(path="/live_parcels")[1])

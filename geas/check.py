@@ -818,8 +818,47 @@ class Checker:
                 return
         self.d(ERROR, "合流", f"処理 {proc}", f"外部作用 {decl.name} の返事はトリガ {tg.name} に合流しますが、{tg.name} を待つ処理が、この処理自身にも、同じ並列（par）の枝にもありません")
 
+    def check_cond(self, where, f, fn, op, st, line=0):
+        """where の条件 1 つ（項目 比較 状態名か数）の型の検査。問い合わせと範囲（scope）で同じ"""
+        if st.isdigit():
+            if f.type.kind not in ("整数", "金額", "日時"):
+                self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 数との比較は、整数・金額・日時の項目にだけ使えます", line)
+        elif f.type.kind != "名前" or st not in [x for s in self.p.states if s.name == f.type.target for x in [s.initial, *s.middle, *s.final]]:
+            self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 「{st}」は項目 {fn} の状態ではありません", line)
+
+    def check_scopes(self):
+        """範囲（scope）の検査。データと項目が実在し、where の型が合い、本人で絞る項目が ID か参照であること。
+        範囲の名前は、そのデータの項目の名前と重ねられない（データ.名前 が、項目か範囲か分からなくなるため）"""
+        p = self.p
+        seen: set[str] = set()
+        for s in p.scopes:
+            w = f"範囲 {s.name}"
+            if s.name in seen:
+                self.d(ERROR, "範囲", w, "同じ名前の範囲が2つ以上あります", s.line)
+            seen.add(s.name)
+            dt = self.data.get(s.data)
+            if dt is None:
+                self.d(ERROR, "範囲", w, f"データ「{s.data}」が未定義です" + near(s.data, self.data), s.line)
+                continue
+            fields = {f.name: f for f in dt.fields}
+            if s.name in fields:
+                self.d(ERROR, "範囲", w, f"データ {s.data} に同じ名前の項目があります（{s.data}.{s.name} が、項目か範囲か分からなくなります）", s.line)
+            for g in s.conds:
+                for fn, op, st in g:
+                    if fn not in fields:
+                        self.d(ERROR, "範囲", w, f"データ {s.data} に項目「{fn}」がありません" + near(fn, list(fields)), s.line)
+                    else:
+                        self.check_cond(w, fields[fn], fn, op, st, s.line)
+            if s.caller and s.caller not in fields:
+                self.d(ERROR, "範囲", w, f"データ {s.data} に項目「{s.caller}」がありません" + near(s.caller, list(fields)), s.line)
+            elif s.caller and fields[s.caller].type.kind not in ("ID", "参照"):
+                self.d(ERROR, "範囲", w, f"「{s.caller} equals caller」は、ID か参照（ref）の項目にだけ使えます（呼んだ本人の ID と比べるため）", s.line)
+            if not any(s.name in q.scopes for q in p.queries):
+                self.d(WARN, "範囲", w, "どこにも使われていません", s.line)
+
     def check_queries(self):
         """問い合わせ（読むだけの処理）の検査。使う項目の型、入力との型の一致、宣言した「読む」と実際のずれ。"""
+        self.check_scopes()
         for q in self.p.queries:
             where = f"問い合わせ {q.name}"
             if q.name in self.procs:
@@ -831,18 +870,21 @@ class Checker:
             fields = {f.name: f for f in dt.fields}
             used, ins = set(), dict(q.inputs)
             if CALLER in ins:
-                self.d(ERROR, "範囲", where, f"入力の名前に {CALLER} は使えません（見える範囲の中で、呼んだ本人の ID を表す語です）", q.line)
-            if q.scope:
-                sc = scope_of(self.p, q)
+                self.d(ERROR, "範囲", where, f"入力の名前に {CALLER} は使えません（範囲の中で、呼んだ本人の ID を表す語です）", q.line)
+            known = {s.name: s for s in self.p.scopes}
+            for sn in q.scopes:
+                sc = known.get(sn)
                 if sc is None:
-                    self.d(ERROR, "範囲", where, f"見える範囲「{q.scope}」が未定義です" + near(q.scope, [s[0] for s in self.p.scopes]), q.line)
-                elif sc[1] != q.target:
-                    self.d(ERROR, "範囲", where, f"見える範囲 {q.scope} は {sc[1]} のものなので、from {q.target} には使えません", q.line)
-                elif sc[2] not in fields or fields[sc[2]].type.kind not in ("ID", "参照"):
-                    self.d(ERROR, "範囲", where, f"見える範囲 {q.scope} の項目「{sc[2]}」は、データ {dt.name} の ID か参照（ref）の項目である必要があります", q.line)
-                    continue
-                else:
-                    used.add(f"{dt.name}.{sc[2]}")  # 範囲の項目も読む（reads に書く）
+                    self.d(ERROR, "範囲", where, f"範囲「{sn}」が未定義です" + near(sn, list(known)), q.line)
+                elif sc.data != q.target:
+                    self.d(ERROR, "範囲", where, f"範囲 {sn} は {sc.data} のものなので、from {q.target} には使えません", q.line)
+                if q.scopes.count(sn) > 1:
+                    self.d(ERROR, "範囲", where, f"範囲「{sn}」を重ねて書いています", q.line)
+            mine = [s for s in scopes_of(self.p, q) if s.data == q.target]
+            for s in mine:  # 範囲の項目も読む（reads に書く）。項目の型は check_scopes が確かめる
+                used |= {f"{dt.name}.{fn}" for g in s.conds for fn, _, _ in g if fn in fields}
+                if s.caller in fields:
+                    used.add(f"{dt.name}.{s.caller}")
 
             def field_of(fn):
                 if fn not in fields:
@@ -854,13 +896,8 @@ class Checker:
             for group in q.conds:
                 for fn, op, st in group:
                     f = field_of(fn)
-                    if f is None:
-                        continue
-                    if st.isdigit():
-                        if f.type.kind not in ("整数", "金額", "日時"):
-                            self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 数との比較は、整数・金額・日時の項目にだけ使えます")
-                    elif f.type.kind != "名前" or st not in [x for s in self.p.states if s.name == f.type.target for x in [s.initial, *s.middle, *s.final]]:
-                        self.d(ERROR, "型", where, f"条件「{fn} {op} {st}」: 「{st}」は項目 {fn} の状態ではありません")
+                    if f is not None:
+                        self.check_cond(where, f, fn, op, st)
             for fn, op, arg in q.filters:
                 f = field_of(fn)
                 if f is None:
@@ -1263,8 +1300,8 @@ class Checker:
                 if q.select:
                     self.d(ERROR, "出来事", where, f"問い合わせ {qn} は select で列を返すので、出来事の「each」には使えません（IDの列を返す問い合わせにしてください）")
                     continue
-                if q.scope:
-                    self.d(ERROR, "出来事", where, f"問い合わせ {qn} は見える範囲（{q.scope}）を使うので、出来事からは呼べません（出来事には、呼んだ本人がいません）")
+                if uses_caller(self.p, q):
+                    self.d(ERROR, "出来事", where, f"問い合わせ {qn} は、本人で絞る範囲を使うので、出来事からは呼べません（出来事には、呼んだ本人がいません）")
                 if any(not t.optional for _, t in q.inputs):
                     self.d(ERROR, "出来事", where, f"問い合わせ {qn} は入力が要るので、出来事からは呼べません（任意の入力だけにしてください）")
                 dt = self.data.get(q.target)
@@ -1601,29 +1638,12 @@ class Checker:
                 if ANYONE in a.actors and len(a.actors) > 1:
                     self.d(ERROR, "役割", w, "for anyone は誰でも呼べる口なので、ほかの役割と並べて書けません", a.line)
                 used |= set(a.actors)
-        # 見える範囲（scope）：データと項目が実在し、項目が ID か参照であること。範囲を使う問い合わせを呼ぶ動作は、役割のある人だけが呼べること
-        seen: set[str] = set()
-        for name, dn, fn, line in p.scopes:
-            w = f"見える範囲 {name}"
-            if name in seen:
-                self.d(ERROR, "範囲", w, "同じ名前の見える範囲が2つ以上あります", line)
-            seen.add(name)
-            dt = self.data.get(dn)
-            if dt is None:
-                self.d(ERROR, "範囲", w, f"データ「{dn}」が未定義です" + near(dn, self.data), line)
-                continue
-            f = next((x for x in dt.fields if x.name == fn), None)
-            if f is None:
-                self.d(ERROR, "範囲", w, f"データ {dn} に項目「{fn}」がありません" + near(fn, [x.name for x in dt.fields]), line)
-            elif f.type.kind not in ("ID", "参照"):
-                self.d(ERROR, "範囲", w, f"「{fn} equals caller」は、ID か参照（ref）の項目にだけ使えます（呼んだ本人の ID と比べるため）", line)
-            if not any(q.scope == name for q in p.queries):
-                self.d(WARN, "範囲", w, "どの問い合わせにも使われていません", line)
-        scoped = {q.name: q.scope for q in p.queries if q.scope}
+        # 本人で絞る範囲を使う問い合わせを呼ぶ動作は、役割のある人だけが呼べること
+        scoped = {q.name for q in p.queries if uses_caller(p, q)}
         for res in p.resources:
             for a in res.actions:
                 if a.target in scoped and (a.actors is None or ANYONE in a.actors):
-                    self.d(ERROR, "範囲", f"リソース {res.name} / {a.kind} {a.target}", f"問い合わせ {a.target} は見える範囲（{scoped[a.target]}）を使うので、呼べるのは役割のある人だけです（`for 役割` を書きます。for anyone にはできません）", a.line)
+                    self.d(ERROR, "範囲", f"リソース {res.name} / {a.kind} {a.target}", f"問い合わせ {a.target} は、本人で絞る範囲を使うので、呼べるのは役割のある人だけです（`for 役割` を書きます。for anyone にはできません）", a.line)
         for n, line in p.actors:
             if p.resources and n not in used:
                 self.d(WARN, "役割", f"役割 {n}", "どの動作の for にも書かれていません", line)

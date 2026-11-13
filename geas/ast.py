@@ -235,27 +235,49 @@ class Query:
     select: list[Column] = field(default_factory=list)  # 空なら、対象のIDの列を返す
     reads: list[str] = field(default_factory=list)
     line: int = 0
-    scope: str = ""  # 見える範囲（from データ in 範囲）。呼んだ本人の分だけに絞る
+    scopes: list = field(default_factory=list)  # 範囲（from データ.範囲1.範囲2）。書いた範囲すべてに入る行だけに絞る（積集合）
 
 
-CALLER = "caller"  # 見える範囲（scope）の中で、呼んだ本人の ID を表す語。問い合わせの入力の名前には使えない
+CALLER = "caller"  # 範囲（scope）の中で、呼んだ本人の ID を表す語。問い合わせの入力の名前には使えない
 
 
-def scope_of(p, q):
-    """問い合わせの見える範囲：(名前, データ, 項目, 行)。範囲を使わない・未定義なら None"""
-    return next((s for s in p.scopes if s[0] == q.scope), None) if q.scope else None
+@dataclass
+class Scope:
+    """範囲：データの行の集合に名前を付けたもの（scope 名前 on データ { where … ／ filter 項目 equals caller }）。
+    `データ.範囲1.範囲2` と並べると、すべての範囲に入る行（積集合）になる。
+    conds は問い合わせの where と同じ形（1行 = または でつないだ組。行どうしは かつ）。caller は「項目 が 呼んだ本人の ID と同じ」の項目（無ければ空）"""
+    name: str
+    data: str
+    conds: list = field(default_factory=list)
+    caller: str = ""
+    line: int = 0
+
+
+def scopes_of(p, q) -> list:
+    """問い合わせが使う範囲（書いた順。未定義の名前は除く）"""
+    by = {s.name: s for s in reversed(p.scopes)}
+    return [by[n] for n in q.scopes if n in by]
+
+
+def uses_caller(p, q) -> bool:
+    """呼んだ本人の ID が要る問い合わせか（本人で絞る範囲を 1 つでも使う）"""
+    return any(s.caller for s in scopes_of(p, q))
 
 
 def gen_inputs(p, q) -> list:
-    """生成物での問い合わせの入力：書いた入力に、見える範囲の「呼んだ本人の ID」（caller）を足したもの。
+    """生成物での問い合わせの入力：書いた入力に、範囲の「呼んだ本人の ID」（caller）を足したもの。
     caller は、呼ぶ側が渡す値ではなく、サーバーが、プロキシの載せたヘッダから入れる"""
-    return [*q.inputs, (CALLER, Type("ID"))] if scope_of(p, q) else list(q.inputs)
+    return [*q.inputs, (CALLER, Type("ID"))] if uses_caller(p, q) else list(q.inputs)
 
 
 def gen_filters(p, q) -> list:
-    """生成物での問い合わせの絞り込み：書いた絞り込みに、見える範囲の「項目 が 呼んだ本人の ID と同じ」を足したもの"""
-    s = scope_of(p, q)
-    return [*q.filters, (s[2], "一致", CALLER)] if s else list(q.filters)
+    """生成物での問い合わせの絞り込み：書いた絞り込みに、範囲の「項目 が 呼んだ本人の ID と同じ」を足したもの"""
+    return [*q.filters, *[(s.caller, "一致", CALLER) for s in scopes_of(p, q) if s.caller]]
+
+
+def gen_conds(p, q) -> list:
+    """生成物での問い合わせの条件：書いた where に、範囲の where を足したもの（行どうしは かつ）"""
+    return [*q.conds, *[g for s in scopes_of(p, q) for g in s.conds]]
 
 
 @dataclass
@@ -340,7 +362,7 @@ class Program:
     events: list[Event] = field(default_factory=list)
     screens: list[Screen] = field(default_factory=list)
     resources: list[Resource] = field(default_factory=list)
-    scopes: list = field(default_factory=list)  # 見える範囲（scope 名前 on データ { filter 項目 equals caller }）：[(名前, データ, 項目, 行)]
+    scopes: list = field(default_factory=list)  # 範囲（scope 名前 on データ { where … ／ filter 項目 equals caller }）：Scope の並び
     actors: list = field(default_factory=list)  # 役割（actor 名前）：[(名前, 行)]。resource の動作の for に書く。表示名は説明コメント（///）
     composites: list = field(default_factory=list)  # 合成型（宣言の順）。型は Type(kind=合成)
     origin: dict = field(default_factory=dict)  # モジュールの定義名を付け替えた名前 → (モジュール名, 元の名前)

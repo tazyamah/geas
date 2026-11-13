@@ -320,8 +320,8 @@ def definitions(ck: Checker) -> dict:
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
                   "touches": touched_data(ck.infos[x.name])} for x in p.processes},
-        # caller：見える範囲を使う問い合わせ。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
-        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if scope_of(p, q) else {})} for q in p.queries},
+        # caller：本人で絞る範囲を使う問い合わせ。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
+        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if uses_caller(p, q) else {})} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {}), **({"file": file_def(e)} if e.file else {})} for e in p.effects},

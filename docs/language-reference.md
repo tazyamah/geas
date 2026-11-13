@@ -427,29 +427,35 @@ resource Orders { create place_order for Customer, Staff { Received → 201 } } 
 - 仕様書の URL の表に「呼べる人」の列と、役割ごとの「呼べる URL」の表が出ます。「動かす前提」には、プロキシが外から来た `X-Geas-Actor` を捨てて、確かめた役割を載せる、という人の保証（`actor`）が出ます。呼べる人が広がった変更は、レシートの「弱くなった」に出ます。
 - 役割のあるアプリは、窓つき exe（`--standalone`・`resident`）にできません（前にプロキシがいないため）。
 
-### 見える範囲（scope）：本人の分だけを返す問い合わせ
+### 範囲（scope）：名前を付けた行の集合
 
 ```
 scope own_orders on Order {
   filter customer equals caller            // caller は、呼んだ本人の ID
 }
 
-query my_orders {
-  from Order in own_orders                 // 範囲の中の行だけが見える
-  select order_id, status, total
-  reads Order.customer, Order.order_id, Order.status, Order.total   // 範囲の項目（customer）も読む
+scope unpaid on Order {
+  where status == PaymentRequested         // 問い合わせの where と同じ形（行どうしは and、行の中は or）
 }
 
-resource MyOrders {
-  index my_orders for Customer             // URL に客の ID は要らない（/my_orders）
+query my_unpaid_orders {
+  from Order.own_orders.unpaid             // 並べた範囲すべてに入る行だけ（積集合）。順は結果に関係しない
+  select order_id, status, total
+  reads Order.customer, Order.order_id, Order.status, Order.total   // 範囲が読む項目（customer・status）も書く
+}
+
+resource MyUnpaidOrders {
+  index my_unpaid_orders for Customer      // URL に客の ID は要らない（/my_unpaid_orders）
 }
 ```
 
-- `scope 名前 on データ { filter 項目 equals caller }`：項目は ID か参照（`ref`）。書ける filter は 1 つです。
-- 問い合わせの `from データ in 範囲` で使うと、**保存してある行の項目**が、呼んだ本人の ID と同じ行だけを返します。`caller` は、呼ぶ側が渡す値ではありません（入力の名前にも使えません）。プロキシがヘッダ `X-Geas-Actor-Id` に載せた値を、サーバーが入れます。ヘッダが無ければ 401 です。
-- 範囲を使う問い合わせを呼ぶ動作には、役割（`for 役割`）が要ります。`for anyone` にはできません。出来事の `each` にも使えません（呼んだ本人がいないため）。
-- 仕様書に「見える範囲」の表が出て、URL の表の「呼べる人」は「客（本人の分だけ）」になります。
-- まだ書けないこと：処理（deed）が ID で 1 件を引くとき（`Order[id]`）に範囲を通すこと。範囲を役割ごとに分けること（どの役割で呼んでも、同じ ID で比べます）。
+- `scope 名前 on データ { … }` は、データの行の集合に名前を付けます。中に書けるのは、`where`（状態や数との比較。問い合わせと同じ）と、`filter 項目 equals caller`（1 つまで。項目は ID か参照 `ref`）です。入力で絞る範囲は書けません。
+- 使うときは `from データ.範囲` と書き、`from データ.範囲1.範囲2` のように並べると、**すべての範囲に入る行**だけになります。和集合・差集合はありません。`from データ in 範囲` とは書きません（エラー）。
+- 範囲の名前は、そのデータの項目の名前と重ねられません。
+- `caller` は、呼ぶ側が渡す値ではありません（入力の名前にも使えません）。**保存してある行の項目**を、プロキシがヘッダ `X-Geas-Actor-Id` に載せた値と比べます。ヘッダが無ければ 401 です。
+- `caller` を使う範囲が 1 つでも入った問い合わせは、呼ぶ動作に役割（`for 役割`）が要ります。`for anyone` にはできません。出来事の `each` にも使えません（呼んだ本人がいないため）。`caller` を使わない範囲だけなら、どこでも使えます。
+- 仕様書に「範囲」の表が出て、問い合わせの条件には、範囲の条件が「（範囲 名前）」つきで並びます。本人で絞る問い合わせは、URL の表の「呼べる人」が「客（本人の分だけ）」になります。
+- まだ書けないこと：処理（deed）が ID で 1 件を引くとき（`Order.own_orders[id]`）に範囲を通すこと。範囲を役割ごとに分けること（どの役割で呼んでも、同じ ID で比べます）。
 
 ## 11. 検査の結果の種類
 
