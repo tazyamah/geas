@@ -121,7 +121,7 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 - 人は `.geas` を読みません。構文の好みを人に聞かず、約束（定義・保証・意味）が変わる問いだけを聞く。
 - 名前は半角英数（先頭は英字、あとは英数字と `_`）。型・entity・状態・結果・トリガ・フロー・出来事は UpperCamel、項目・変数・処理（deed）・問い合わせ・入力・部品は lower_snake。
 - 仕様書に出る名前には、直前に `///` で日本語の表示名を付ける（無いと警告）。
-- REST の URL（`resource`）は Rails の流儀：`index`／`show`／`create`／`update`／`destroy` だけ、PATCH なし、クエリ文字列なし、結果の種類ごとに HTTP の状態を必ず決める。流れの途中の処理（nexus・trigger の行き先）の URL は「内部」で、サーバーは `--test` のときだけ答える（画面の操作にもできない）。呼べる人を分けるなら、`actor 役割` を宣言し、外から呼べる動作すべてに `for 役割, …`（誰でもよい口は `for anyone`）を書く。本人の確かめは前に置くプロキシの仕事で、サーバーはヘッダ `X-Geas-Actor` と比べる（無ければ 401、合わなければ 403）。
+- REST の URL（`resource`）は Rails の流儀：`index`／`show`／`create`／`update`／`destroy` だけ、PATCH なし、クエリ文字列なし、結果の種類ごとに HTTP の状態を必ず決める。流れの途中の処理（nexus・trigger の行き先）の URL は「内部」で、サーバーは `--test` のときだけ答える（画面の操作にもできない）。呼べる人を分けるなら、`actor 役割` を宣言し、外から呼べる動作すべてに `for 役割, …`（誰でもよい口は `for anyone`）を書く。本人の確かめは前に置くプロキシの仕事で、サーバーはヘッダ `X-Geas-Actor` と比べる（無ければ 401、合わなければ 403）。本人の分だけを返す問い合わせは、`scope 範囲 on データ { filter 項目 equals caller }` を宣言して `from データ in 範囲` と書く（`caller` は入力にしない。URL にも本人の ID を入れない）。
 - 外部作用（`request`）には冪等キーが必須。
 - 変更は小さな PR に分ける。PR は重ねず、マージされてから次へ。
 - 生成物（`tests/fixtures/*/app/generated/` など）はコミットしない（`.gitignore` 済み）。仕様書（`*_spec.md`、`*_review.html`）はテストの見本として固定してあるので、`.geas` を変えたら再生成する：

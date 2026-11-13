@@ -105,7 +105,7 @@ def token_hint(toks, i: int) -> str:
 
 # ---- 構文：定義と文の始まり ----
 TOP_KEYWORDS = ("app", "timezone", "use", "module", "ltype", "entity", "store", "storage", "state", "result", "effect", "reply", "library", "convert",
-                "invariant", "deed", "nexus", "flow", "trigger", "rule", "migration", "query", "event", "screen", "resource", "actor", "needs", "resident", "path", "data_folder")
+                "invariant", "deed", "nexus", "flow", "trigger", "rule", "migration", "query", "event", "screen", "resource", "actor", "scope", "needs", "resident", "path", "data_folder")
 
 DEF_HINTS = {
     **dict.fromkeys(("type", "typedef", "alias", "newtype"), "型に名前を付けるのは ltype です（ltype Quantity = int 1..99）"),

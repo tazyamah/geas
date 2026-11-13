@@ -44,6 +44,56 @@ def with_actors(who: dict = WHO, default: str = "Staff", actors: str = ACTORS) -
     return "\n".join(lines) + actors
 
 
+# 見える範囲：小包のうち、返金の控え（refund_ref）が、呼んだ本人の ID と同じものだけ
+SCOPE = """
+scope own_parcels on Parcel {
+  filter refund_ref equals caller
+}
+
+/// 自分の小包
+query my_parcels {
+  from Parcel in own_parcels
+  select parcel_id, kind
+  reads Parcel.refund_ref, Parcel.parcel_id, Parcel.kind
+}
+
+resource MyParcels {
+  index my_parcels for Customer
+}
+
+result ClaimResult { Claimed, NoParcel }
+
+/// 持ち主を決める
+deed claim {
+  input parcel_id: id required
+  input owner: id required
+  reads Parcel
+  writes Parcel.refund_ref
+  result ClaimResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  p.refund_ref = owner
+  return Claimed
+}
+
+nexus Claiming {
+  claim: Claimed → reply, NoParcel → reply
+}
+
+resource Claims {
+  create claim for Staff {
+    Claimed → 201
+    NoParcel → 404
+  }
+}
+"""
+
+
+def scoped(scope: str = SCOPE) -> str:
+    return with_actors() + scope
+
+
 def ck_of(text: str):
     return check(parse(text, str(SRC)), strict_names=True)
 
@@ -133,7 +183,7 @@ def served(tmp_path_factory):
         pytest.skip("cargo が無い")
     out = tmp_path_factory.mktemp("actors")
     code = out / "actors.geas"
-    code.write_text(with_actors(), encoding="utf-8")
+    code.write_text(scoped(), encoding="utf-8")
     subprocess.run([sys.executable, "-m", "geas", "rust", str(code), "-o", str(out / "app"), "--host", "--runtime"], check=True, capture_output=True, text=True, cwd=ROOT)
     r = subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=out / "app" / "server", capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
@@ -188,3 +238,60 @@ def test_役割の無い呼び出しは401_合わない役割は403_合えば通
     assert call(served, "GET", f"/parcels/{pid}/details", "Auditor")[0] == 403
     # 流れの途中の処理は、役割があっても外から呼べない
     assert call(served, "POST", "/settlements", "Staff", {"parcel_id": pid})[0] == 404
+
+
+def test_見える範囲の検査と仕様書():
+    from geas.envreq import items
+    from geas.hostgen import definitions
+    from geas.spec import build, render
+
+    assert errors(scoped()) == []
+    assert has(scoped(SCOPE.replace("in own_parcels", "in own_parcel")), "見える範囲「own_parcel」が未定義です")
+    assert has(scoped(SCOPE.replace("on Parcel", "on Package")), "データ「Package」が未定義です")
+    assert has(scoped(SCOPE.replace("filter refund_ref", "filter kind").replace("Parcel.refund_ref, ", "")), "ID か参照")
+    assert has(scoped(SCOPE.replace("Parcel.refund_ref, ", "")), "宣言（読む）にありません")  # 範囲の項目も、読む項目に数える
+    assert has(scoped(SCOPE.replace("for Customer", "for anyone")), "呼べるのは役割のある人だけです")
+    assert has(scoped(SCOPE.replace("from Parcel in own_parcels", "input caller: id required\n  from Parcel in own_parcels\n  filter parcel_id equals caller")), "入力の名前に caller は使えません")
+    # 出来事には呼んだ本人がいないので、範囲つきの問い合わせは each に使えない
+    ev = SCOPE.replace("  select parcel_id, kind\n", "").replace(", Parcel.parcel_id, Parcel.kind", "") + "\nevent Sweep {\n  each my_parcels → ask_nudge\n}\n"
+    assert has(scoped(ev), "出来事からは呼べません")
+    for bad in ("filter refund_ref == caller", "filter refund_ref equals me", "where refund_ref == caller"):
+        with pytest.raises(ParseError):
+            parse(scoped(SCOPE.replace("filter refund_ref equals caller", bad)), str(SRC))
+    ck = ck_of(scoped())
+    spec = build(ck)
+    md = render(ck, spec, "")
+    assert next(x for x in spec["ルート"] if x[1] == "/my_parcels")[6] == "客（本人の分だけ）"
+    assert "## 見える範囲" in md and "X-Geas-Actor-Id" in md and "が、呼んだ本人のID と同じ行だけ" in md
+    assert any("一致 呼んだ本人のID（見える範囲 own_parcels）" in c for x in spec["問い合わせ"] if x["問い合わせ"] == "自分の小包" for c in x["条件"])
+    defs = definitions(ck)["queries"]
+    assert defs["my_parcels"] == {"inputs": [], "refs": [], "caller": True} and "caller" not in defs["parcel_list"]  # caller は、呼ぶ側の入力にしない
+    assert "X-Geas-Actor-Id" in next(x for x in items(ck.p) if x["id"] == "actor")["要求"]
+    assert "見える範囲" not in render(ck_of(with_actors()), build(ck_of(with_actors())), "")
+
+
+def test_見える範囲の問い合わせは_本人の分だけを返す(served):
+    def get(actor=None, who=None, tag=None):
+        headers = {**({"X-Geas-Actor": actor} if actor else {}), **({"X-Geas-Actor-Id": who} if who is not None else {}), **({"If-None-Match": tag} if tag else {})}
+        req = urllib.request.Request(served + "/my_parcels", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, [x["parcel_id"] for x in json.loads(r.read())["rows"]], r.headers.get("ETag")
+        except urllib.error.HTTPError as e:
+            return e.code, None, e.headers.get("ETag")
+
+    made = [call(served, "POST", "/parcels", "Customer", {"kind": "light"}) for _ in range(2)]
+    assert [c for c, _ in made] == [201, 201]
+    a, b = sorted(x["parcel_id"] for x in call(served, "GET", "/parcels")[1]["rows"])[-2:]
+    for pid, owner in ((a, "c-1"), (b, "c-2")):  # 控え（refund_ref）を「持ち主」に見立てて、お店の人が決める
+        assert call(served, "POST", "/claims", "Staff", {"parcel_id": pid, "owner": owner})[0] == 201
+    code, rows, tag_a = get("Customer", "c-1")
+    assert (code, rows) == (200, [a])
+    assert get("Customer", "c-2")[:2] == (200, [b])
+    assert get("Customer", "nobody")[:2] == (200, [])
+    # 本人の ID が無ければ 401、役割が無ければ 401、役割が違えば 403
+    assert get("Customer")[0] == 401 and get("Customer", " ")[0] == 401
+    assert get(None, "c-1")[0] == 401 and get("Staff", "c-1")[0] == 403
+    # 別の人が、前の人の答えの版（ETag）を送っても、304 にならず自分の分が返る
+    assert get("Customer", "c-1", tag_a)[0] == 304
+    assert get("Customer", "c-2", tag_a)[:2] == (200, [b])

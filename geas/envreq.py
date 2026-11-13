@@ -8,7 +8,7 @@
 """
 import re
 
-from .rest import ACTOR_HEADER
+from .rest import ACTOR_HEADER, ACTOR_ID_HEADER
 
 # 番号は、導出元から決まる名前（項目が増減しても、ほかの項目の番号はずれない）
 ASPECTS = ("安全性", "到達性", "機密", "資源")
@@ -122,7 +122,8 @@ def items(p) -> list[dict]:
     if p.actors:
         names = "・".join(n for n, _ in p.actors)
         out.append(_item("actor", "安全性", f"サーバーに届く要求は、すべて前に置くプロキシを通る。プロキシは本人を確かめ、外から来たヘッダ {ACTOR_HEADER} を捨てて、"
-                         f"確かめた役割の名前（{names}。複数はカンマ区切り）を載せる",
+                         f"確かめた役割の名前（{names}。複数はカンマ区切り）を載せる"
+                         + (f"。ヘッダ {ACTOR_ID_HEADER} も同じく捨てて、確かめた本人の ID（{'・'.join(dict.fromkeys(f'{d} の {f}' for _, d, f, _ in p.scopes))} と比べる値）を載せる" if p.scopes else ""),
                          f"導出（役割 {names} の宣言。サーバーはこのヘッダの値だけで役割を決め、本人は確かめない）",
                          ["人の保証"], [], trust=True, why="外から確かめられない"))
     # ---- 前段の約束（外から確かめられない） ----

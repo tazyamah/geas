@@ -320,7 +320,8 @@ def definitions(ck: Checker) -> dict:
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
                   "touches": touched_data(ck.infos[x.name])} for x in p.processes},
-        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs]} for q in p.queries},
+        # caller：見える範囲を使う問い合わせ。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
+        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if scope_of(p, q) else {})} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {}), **({"file": file_def(e)} if e.file else {})} for e in p.effects},
@@ -447,7 +448,7 @@ def host_source(ck: Checker) -> str:
     for q in p.queries:
         n = q.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
-        inf = [f"{x}: {input_j(x, t)}" for x, t in q.inputs]
+        inf = [f"{x}: {input_j(x, t)}" for x, t in gen_inputs(p, q)]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         if q.select:
             w(f'            let rows = {n}(&c, Store, &i);\n'

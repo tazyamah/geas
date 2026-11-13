@@ -218,7 +218,7 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
     let wants_html = req.header("Accept").map_or(false, |v| v.contains("text/html"));
     if method == "GET" && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor")) {
+    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor"), req.header("X-Geas-Actor-Id")) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -242,8 +242,9 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
 }
 
 /// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
-fn etag_of(version: &str, path: &str) -> String {
-    let h = path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+fn etag_of(version: &str, path: &str, caller: &str) -> String {
+    // 見える範囲を使う問い合わせの答えは、呼んだ本人で変わるので、本人の ID も混ぜる（0 は URL にも ID にも現れない区切り）
+    let h = path.bytes().chain(std::iter::once(0u8)).chain(caller.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
     format!("\"{}-{:x}\"", version, h)
 }
 
@@ -293,7 +294,7 @@ fn routes() -> &'static [Value] {
 /// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
 /// 役割（定義の for）のある URL は、前に置くプロキシが載せたヘッダ X-Geas-Actor（actor。複数はカンマ区切り）と比べる。
 /// ヘッダが無ければ 401、どの役割も合わなければ 403。本人の確かめはプロキシの仕事で、ここではしない（仕様書の「動かす前提」）
-fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>) -> Option<Resp> {
+fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>, actor_id: Option<&str>) -> Option<Resp> {
     let started = std::time::Instant::now();
     let verb = match method {
         "GET" | "POST" | "PUT" | "DELETE" => method,
@@ -333,8 +334,13 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                 return Some(json_resp(code, json!({ "error": m })));
             }
         }
-        let mut en = crate::engine::lock(engine);
         let target = r["target"].as_str().unwrap_or("").to_string();
+        // 見える範囲を使う問い合わせは、呼んだ本人の ID（ヘッダ X-Geas-Actor-Id）が要る。無ければ 401
+        let caller_id: Option<String> = actor_id.map(|x| x.trim().to_string()).filter(|x| !x.is_empty() && x.len() <= 200);
+        let mut en = crate::engine::lock(engine);
+        if matches!(r["kind"].as_str(), Some("index") | Some("show")) && en.defs["queries"][&target]["caller"] == true && caller_id.is_none() {
+            return Some(json_resp(401, json!({ "error": "呼んだ本人が分かりません（この URL は、本人の分だけを返します）" })));
+        }
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(body).unwrap_or(Value::Null) };
         if parsed.is_null() {
             return Some(json_resp(400, json!({ "error": "本文が JSON ではありません" })));
@@ -348,14 +354,19 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                 if let (Some(c), Some(name)) = (caps.first(), en.defs["queries"][&target]["inputs"][0].as_str()) {
                     args.insert(name.to_string(), Value::String(c.clone()));
                 }
-                match if_none_match.map(|seen| en.query_version().map(|v| etag_of(&v, path)).map(|now| (seen == now, now))) {
+                // 見える範囲を使う問い合わせ：呼んだ本人の ID（プロキシが載せたヘッダ）を、入力 caller に入れる。呼ぶ側は渡せない
+                let who = if en.defs["queries"][&target]["caller"] == true { caller_id.clone().unwrap_or_default() } else { String::new() };
+                if !who.is_empty() {
+                    args.insert("caller".to_string(), Value::String(who.clone()));
+                }
+                match if_none_match.map(|seen| en.query_version().map(|v| etag_of(&v, path, &who)).map(|now| (seen == now, now))) {
                     Some(Ok((true, now))) => {
                         etag = Some(now);
                         Ok((304, Value::Null))
                     }
                     Some(Err(m)) => Err(failure(m)),
                     _ => en.query_text(&target, &Value::Object(args)).map(|s| {
-                        etag = Some(etag_of(&en.version(), path));
+                        etag = Some(etag_of(&en.version(), path, &who));
                         text = Some(s);
                         (200, Value::Null)
                     }).map_err(failure),

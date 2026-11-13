@@ -225,6 +225,8 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
+            elif kw == "scope":  # scope 名前 on データ { filter 項目 equals caller }：見える範囲（呼んだ本人の分だけ）
+                p.scopes.append(self.scope_decl(line))
             elif kw == "actor":  # actor 名前：役割。resource の動作の `for 役割, …` に書く（誰でもよい口は for anyone）
                 p.actors.append((self.name(), line))
                 self.end_line()
@@ -1367,8 +1369,10 @@ class Parser:
                 q.inputs += self.comma_list(self.input_item)
             elif kw == "slot":
                 q.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
-            elif kw == "from":
+            elif kw == "from":  # from データ [in 見える範囲]
                 q.target = self.name()
+                if self.accept("in"):
+                    q.scope = self.name()
             elif kw == "where":
                 group = []
                 while True:
@@ -1564,6 +1568,25 @@ class Parser:
             self.end_line()
         return rs
 
+    def scope_decl(self, line):
+        """scope 名前 on データ { filter 項目 equals caller }。(名前, データ, 項目, 行)。
+        問い合わせの `from データ in 名前` で使うと、項目が呼んだ本人の ID と同じ行だけが見える"""
+        usage = "scope は `scope 名前 on データ { filter 項目 equals caller }` と書きます（caller は、呼んだ本人の ID）"
+        name = self.name()
+        if not self.accept("on"):
+            raise self.err("scope の名前のあとには on データ が要ります", usage)
+        data = self.name()
+        self.block_open()
+        if not self.accept("filter"):
+            raise self.err("scope の中は filter 項目 equals caller です", usage)
+        f = self.name()
+        if not (self.accept("equals") and self.accept("caller")):
+            raise self.err("scope の filter は 項目 equals caller の形です", usage)
+        self.end_line()
+        if not self.accept("}"):
+            raise self.err("scope に書ける filter は 1 つです", usage)
+        return (name, data, f, line)
+
     def for_actors(self):
         """resource の動作の `for 役割, …`（呼べる役割）。誰でもよい口は `for anyone`。書いていなければ None"""
         if not self.accept("for"):
@@ -1732,7 +1755,7 @@ class Parser:
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
 DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow",
-                 "trigger", "query", "event", "screen", "resource", "actor", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
+                 "trigger", "query", "event", "screen", "resource", "actor", "scope", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 
 def collect_labels(toks: list[Tok]) -> dict:

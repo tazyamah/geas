@@ -418,7 +418,8 @@ class Gen:
         n = q.name
         fields = {f.name: f for f in self.ck.data[q.target].fields}
         key = self.key(q.target)
-        ins = dict(q.inputs)
+        q_inputs, q_filters = gen_inputs(self.ck.p, q), gen_filters(self.ck.p, q)  # 見える範囲の「呼んだ本人の ID」を含む
+        ins = dict(q_inputs)
 
         def ty(t):
             r = rust_type(t)
@@ -426,11 +427,11 @@ class Gen:
 
         self.w(f"// ---- 問い合わせ {n}（読むだけ） ----")
         self.w(f"pub struct {n}Input {{")
-        for name, t in q.inputs:
+        for name, t in q_inputs:
             self.w(f"    pub {name}: {ty(t)},")
         self.w("}")
         self.w(f"impl {n}Input {{\n    pub fn validate(&self) -> Result<(), String> {{")
-        for line in range_checks(q.inputs):
+        for line in range_checks(q_inputs):
             self.w(line)
         self.w("        Ok(())\n    }\n}")
         self.w(f"pub struct {n}Ctx {{")
@@ -464,7 +465,7 @@ class Gen:
         for group in q.conds:
             atoms = [atom(f, op, st) for f, op, st in group]
             self.w(f"        if !({' || '.join(atoms)}) {{ return false; }}")
-        for f, op, a in q.filters:
+        for f, op, a in q_filters:
             nul = fields[f].type.optional
             v = "(*fv)" if nul else f"r.{f}"
 
