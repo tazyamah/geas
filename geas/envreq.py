@@ -123,7 +123,7 @@ def items(p) -> list[dict]:
         names = "・".join(n for n, _ in p.actors)
         out.append(_item("actor", "安全性", f"サーバーに届く要求は、すべて前に置くプロキシを通る。プロキシは本人を確かめ、外から来たヘッダ {ACTOR_HEADER} を捨てて、"
                          f"確かめた役割の名前（{names}。複数はカンマ区切り）を載せる"
-                         + (f"。ヘッダ {ACTOR_ID_HEADER} も同じく捨てて、確かめた本人の ID（{'・'.join(dict.fromkeys(f'{d} の {f}' for _, d, f, _ in p.scopes))} と比べる値）を載せる" if p.scopes else ""),
+                         + (f"。ヘッダ {ACTOR_ID_HEADER} も同じく捨てて、確かめた本人の ID（{'・'.join(dict.fromkeys(f'{s.data} の {s.caller}' for s in p.scopes if s.caller))} と比べる値）を載せる" if any(s.caller for s in p.scopes) else ""),
                          f"導出（役割 {names} の宣言。サーバーはこのヘッダの値だけで役割を決め、本人は確かめない）",
                          ["人の保証"], [], trust=True, why="外から確かめられない"))
     # ---- 前段の約束（外から確かめられない） ----

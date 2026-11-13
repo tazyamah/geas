@@ -418,7 +418,7 @@ class Gen:
         n = q.name
         fields = {f.name: f for f in self.ck.data[q.target].fields}
         key = self.key(q.target)
-        q_inputs, q_filters = gen_inputs(self.ck.p, q), gen_filters(self.ck.p, q)  # 見える範囲の「呼んだ本人の ID」を含む
+        q_inputs, q_filters = gen_inputs(self.ck.p, q), gen_filters(self.ck.p, q)  # 範囲の「呼んだ本人の ID」と条件を含む
         ins = dict(q_inputs)
 
         def ty(t):
@@ -462,7 +462,7 @@ class Gen:
                 return f"r.{f}.map_or(false, |v| (v as i128) {op} {st})"
             return f"(r.{f} as i128) {op} {st}"
 
-        for group in q.conds:
+        for group in gen_conds(self.ck.p, q):
             atoms = [atom(f, op, st) for f, op, st in group]
             self.w(f"        if !({' || '.join(atoms)}) {{ return false; }}")
         for f, op, a in q_filters:

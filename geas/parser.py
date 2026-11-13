@@ -225,7 +225,7 @@ class Parser:
                 p.screens.append(self.screen(line))
             elif kw == "resource":
                 p.resources.append(self.resource(line))
-            elif kw == "scope":  # scope 名前 on データ { filter 項目 equals caller }：見える範囲（呼んだ本人の分だけ）
+            elif kw == "scope":  # scope 名前 on データ { where … ／ filter 項目 equals caller }：範囲（行の集合に名前を付ける）
                 p.scopes.append(self.scope_decl(line))
             elif kw == "actor":  # actor 名前：役割。resource の動作の `for 役割, …` に書く（誰でもよい口は for anyone）
                 p.actors.append((self.name(), line))
@@ -1369,29 +1369,14 @@ class Parser:
                 q.inputs += self.comma_list(self.input_item)
             elif kw == "slot":
                 q.refs += self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
-            elif kw == "from":  # from データ [in 見える範囲]
+            elif kw == "from":  # from データ[.範囲1.範囲2 …]：範囲を並べると、すべてに入る行だけ（積集合）
                 q.target = self.name()
-                if self.accept("in"):
-                    q.scope = self.name()
+                while self.accept("."):
+                    q.scopes.append(self.name())
+                if self.is_("in"):
+                    raise self.err("範囲は in ではなく、データのあとに . で続けます", "from データ.範囲（複数は from データ.範囲1.範囲2。すべてに入る行だけになります）")
             elif kw == "where":
-                group = []
-                while True:
-                    f = self.name()
-                    op = self.next().val
-                    if op not in CMP:
-                        raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」の形です（or でつなげます）")
-                    if self.peek().kind == "NUM":
-                        group.append((f, op, str(self.num())))
-                    elif op in ("==", "!="):
-                        group.append((f, op, self.name()))
-                    else:
-                        raise self.err(f"「{op}」は数との比較にだけ使えます")
-                    if not self.accept("or"):
-                        break
-                if self.is_("and") or self.is_(","):
-                    raise self.unexpected(f"where の1行の中は or でつなぎます（「{self.peek().val}」は書けません）",
-                                          "「かつ」は where の行を分けて書きます（行どうしが and です）")
-                q.conds.append(group)
+                q.conds.append(self.where_group())
             elif kw == "filter":
                 f = self.name()
                 if self.peek().kind == "OP" and self.peek().val in CMP:
@@ -1568,24 +1553,52 @@ class Parser:
             self.end_line()
         return rs
 
-    def scope_decl(self, line):
-        """scope 名前 on データ { filter 項目 equals caller }。(名前, データ, 項目, 行)。
-        問い合わせの `from データ in 名前` で使うと、項目が呼んだ本人の ID と同じ行だけが見える"""
-        usage = "scope は `scope 名前 on データ { filter 項目 equals caller }` と書きます（caller は、呼んだ本人の ID）"
+    def where_group(self) -> list:
+        """where の 1 行：「項目 == 状態」「項目 != 状態」「項目 >= 数」を or でつないだ組。行どうしは and"""
+        group = []
+        while True:
+            f = self.name()
+            op = self.next().val
+            if op not in CMP:
+                raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」の形です（or でつなげます）")
+            if self.peek().kind == "NUM":
+                group.append((f, op, str(self.num())))
+            elif op in ("==", "!="):
+                group.append((f, op, self.name()))
+            else:
+                raise self.err(f"「{op}」は数との比較にだけ使えます")
+            if not self.accept("or"):
+                break
+        if self.is_("and") or self.is_(","):
+            raise self.unexpected(f"where の1行の中は or でつなぎます（「{self.peek().val}」は書けません）",
+                                  "「かつ」は where の行を分けて書きます（行どうしが and です）")
+        return group
+
+    def scope_decl(self, line) -> Scope:
+        """scope 名前 on データ { where 条件 ／ filter 項目 equals caller }：データの行の集合に名前を付ける。
+        `from データ.名前` のように使う。where は問い合わせと同じ形。filter 項目 equals caller は、項目が呼んだ本人の ID と同じ行"""
+        usage = "scope は `scope 名前 on データ { where 項目 == 状態 ／ filter 項目 equals caller }` と書きます（caller は、呼んだ本人の ID）"
         name = self.name()
         if not self.accept("on"):
             raise self.err("scope の名前のあとには on データ が要ります", usage)
-        data = self.name()
+        sc = Scope(name, self.name(), line=line)
         self.block_open()
-        if not self.accept("filter"):
-            raise self.err("scope の中は filter 項目 equals caller です", usage)
-        f = self.name()
-        if not (self.accept("equals") and self.accept("caller")):
-            raise self.err("scope の filter は 項目 equals caller の形です", usage)
-        self.end_line()
-        if not self.accept("}"):
-            raise self.err("scope に書ける filter は 1 つです", usage)
-        return (name, data, f, line)
+        while not self.accept("}"):
+            kw = self.name()
+            if kw == "where":
+                sc.conds.append(self.where_group())
+            elif kw == "filter":
+                if sc.caller:
+                    raise self.err("scope に書ける filter 項目 equals caller は 1 つです", usage)
+                sc.caller = self.name()
+                if not (self.accept("equals") and self.accept("caller")):
+                    raise self.err("scope の filter は 項目 equals caller の形です（入力で絞る範囲は書けません）", usage)
+            else:
+                raise self.err(f"scope の中に「{kw}」は書けません", usage)
+            self.end_line()
+        if not sc.conds and not sc.caller:
+            raise ParseError("scope の中身がありません。" + usage, line)
+        return sc
 
     def for_actors(self):
         """resource の動作の `for 役割, …`（呼べる役割）。誰でもよい口は `for anyone`。書いていなければ None"""

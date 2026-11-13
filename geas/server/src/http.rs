@@ -243,7 +243,7 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
 
 /// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
 fn etag_of(version: &str, path: &str, caller: &str) -> String {
-    // 見える範囲を使う問い合わせの答えは、呼んだ本人で変わるので、本人の ID も混ぜる（0 は URL にも ID にも現れない区切り）
+    // 本人で絞る範囲を使う問い合わせの答えは、呼んだ本人で変わるので、本人の ID も混ぜる（0 は URL にも ID にも現れない区切り）
     let h = path.bytes().chain(std::iter::once(0u8)).chain(caller.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
     format!("\"{}-{:x}\"", version, h)
 }
@@ -335,7 +335,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
             }
         }
         let target = r["target"].as_str().unwrap_or("").to_string();
-        // 見える範囲を使う問い合わせは、呼んだ本人の ID（ヘッダ X-Geas-Actor-Id）が要る。無ければ 401
+        // 本人で絞る範囲を使う問い合わせは、呼んだ本人の ID（ヘッダ X-Geas-Actor-Id）が要る。無ければ 401
         let caller_id: Option<String> = actor_id.map(|x| x.trim().to_string()).filter(|x| !x.is_empty() && x.len() <= 200);
         let mut en = crate::engine::lock(engine);
         if matches!(r["kind"].as_str(), Some("index") | Some("show")) && en.defs["queries"][&target]["caller"] == true && caller_id.is_none() {
@@ -354,7 +354,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                 if let (Some(c), Some(name)) = (caps.first(), en.defs["queries"][&target]["inputs"][0].as_str()) {
                     args.insert(name.to_string(), Value::String(c.clone()));
                 }
-                // 見える範囲を使う問い合わせ：呼んだ本人の ID（プロキシが載せたヘッダ）を、入力 caller に入れる。呼ぶ側は渡せない
+                // 本人で絞る範囲を使う問い合わせ：呼んだ本人の ID（プロキシが載せたヘッダ）を、入力 caller に入れる。呼ぶ側は渡せない
                 let who = if en.defs["queries"][&target]["caller"] == true { caller_id.clone().unwrap_or_default() } else { String::new() };
                 if !who.is_empty() {
                     args.insert("caller".to_string(), Value::String(who.clone()));
