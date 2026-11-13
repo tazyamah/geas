@@ -236,6 +236,7 @@ class Query:
     reads: list[str] = field(default_factory=list)
     line: int = 0
     scopes: list = field(default_factory=list)  # 範囲（from データ.範囲1.範囲2）。書いた範囲すべてに入る行だけに絞る（積集合）
+    scope_args: dict = field(default_factory=dict)  # 範囲の名前 → 渡す入力の名前の並び（from データ.範囲(入力, …)）
 
 
 CALLER = "caller"  # 範囲（scope）の中で、呼んだ本人の ID を表す語。問い合わせの入力の名前には使えない
@@ -245,11 +246,14 @@ CALLER = "caller"  # 範囲（scope）の中で、呼んだ本人の ID を表�
 class Scope:
     """範囲：データの行の集合に名前を付けたもの（scope 名前 on データ { where … ／ filter 項目 equals caller }）。
     `データ.範囲1.範囲2` と並べると、すべての範囲に入る行（積集合）になる。
-    conds は問い合わせの where と同じ形（1行 = または でつないだ組。行どうしは かつ）。caller は「項目 が 呼んだ本人の ID と同じ」の項目（無ければ空）"""
+    conds は問い合わせの where と同じ形（1行 = または でつないだ組。行どうしは かつ）。caller は「項目 が 呼んだ本人の ID と同じ」の項目（無ければ空）。
+    params は引数（名前, 型）で、filters は引数で絞る条件（項目, 一致／以上／以下, 引数の名前）。使う側は、引数に問い合わせの入力を渡す"""
     name: str
     data: str
     conds: list = field(default_factory=list)
     caller: str = ""
+    params: list = field(default_factory=list)
+    filters: list = field(default_factory=list)
     line: int = 0
 
 
@@ -271,8 +275,15 @@ def gen_inputs(p, q) -> list:
 
 
 def gen_filters(p, q) -> list:
-    """生成物での問い合わせの絞り込み：書いた絞り込みに、範囲の「項目 が 呼んだ本人の ID と同じ」を足したもの"""
-    return [*q.filters, *[(s.caller, "一致", CALLER) for s in scopes_of(p, q) if s.caller]]
+    """生成物での問い合わせの絞り込み：書いた絞り込みに、範囲の引数で絞る条件（引数を、渡した入力に置き換える）と、
+    「項目 が 呼んだ本人の ID と同じ」を足したもの"""
+    out = list(q.filters)
+    for s in scopes_of(p, q):
+        given = dict(zip([n for n, _ in s.params], q.scope_args.get(s.name, [])))  # 範囲の引数 → 渡した入力
+        out += [(f, op, given[a]) for f, op, a in s.filters if a in given]
+        if s.caller:
+            out.append((s.caller, "一致", CALLER))
+    return out
 
 
 def gen_conds(p, q) -> list:

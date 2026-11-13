@@ -86,6 +86,22 @@ query live_parcels {
   reads Parcel.status, Parcel.parcel_id
 }
 
+scope of_kind(k: Kind) on Parcel {
+  filter kind equals k
+}
+
+/// 種類ごとの、自分の小包
+query my_parcels_of_kind {
+  input kind: Kind required
+  from Parcel.of_kind(kind).own_parcels
+  select parcel_id
+  reads Parcel.kind, Parcel.refund_ref, Parcel.parcel_id
+}
+
+resource MyParcelsOfKinds key kind {
+  show my_parcels_of_kind for Customer
+}
+
 resource MyParcels {
   index my_parcels for Customer
 }
@@ -301,14 +317,29 @@ def test_範囲の検査と仕様書():
     ids = "\nquery {n} {{\n  from Parcel.{s}\n  reads {r}\n}}\n\nevent Sweep{n} {{\n  each {n} → ask_nudge\n}}\n"
     assert has(scoped(SCOPE + ids.format(n="mine_ids", s="own_parcels", r="Parcel.refund_ref")), "出来事からは呼べません")
     assert not has(scoped(SCOPE + ids.format(n="live_ids", s="live", r="Parcel.status")), "出来事からは呼べません")
-    for bad in ("filter refund_ref == caller", "filter refund_ref equals me", "filter refund_ref equals caller\n  filter parcel_id equals caller", "order fee desc"):
+    assert has(scoped(SCOPE.replace("filter refund_ref equals caller", "filter refund_ref equals me")), "範囲の引数にありません")
+    for bad in ("filter refund_ref == caller", "filter refund_ref equals caller\n  filter parcel_id equals caller", "order fee desc"):
         with pytest.raises(ParseError):
             parse(scoped(SCOPE.replace("filter refund_ref equals caller", bad)), str(SRC))
     with pytest.raises(ParseError, match="範囲は in ではなく"):
         parse(scoped(SCOPE.replace(mine, "from Parcel in own_parcels\n")), str(SRC))
+    # 引数つきの範囲：渡すのは問い合わせの必ずある入力で、数と型が合うこと
+    use = "from Parcel.of_kind(kind).own_parcels"
+    assert has(scoped(SCOPE.replace(use, "from Parcel.of_kind.own_parcels")), "範囲 of_kind の引数は 1 個です")
+    assert has(scoped(SCOPE.replace(use, "from Parcel.of_kind(kind, kind).own_parcels")), "渡しているのは 2 個です")
+    assert has(scoped(SCOPE.replace(use, "from Parcel.of_kind(kin).own_parcels")), "入力にありません")
+    assert has(scoped(SCOPE.replace("input kind: Kind required\n  from Parcel.of_kind", "input kind: Kind\n  from Parcel.of_kind")), "required にしてください")
+    assert has(scoped(SCOPE.replace("scope of_kind(k: Kind)", "scope of_kind(k: id)")), "同じ種類の文字列・ID・整数どうし")
+    assert has(scoped(SCOPE.replace("filter kind equals k\n", "filter kind equals kk\n")), "範囲の引数にありません")
+    assert has(scoped(SCOPE.replace("scope of_kind(k: Kind)", "scope of_kind(k: Kind, extra: Kind)").replace(use, "from Parcel.of_kind(kind, kind).own_parcels")), "どの filter にも使われていません")
+    assert has(scoped(SCOPE.replace("filter kind equals k\n", "filter fee at_least k\n").replace("reads Parcel.kind, Parcel.refund_ref", "reads Parcel.fee, Parcel.refund_ref")), "同じ種類の数・日時どうし")
+    with pytest.raises(ParseError, match="equals だけ"):
+        parse(scoped(SCOPE.replace("filter refund_ref equals caller", "filter refund_ref at_least caller")), str(SRC))
     ck = ck_of(scoped())
     spec = build(ck)
     md = render(ck, spec, "")
+    assert any(x[0] == "of_kind（k）" and "が、引数 k と同じ" in x[2] for x in spec["範囲"])
+    assert any("一致 kind（範囲 of_kind）" in c for x in spec["問い合わせ"] if x["問い合わせ"] == "種類ごとの、自分の小包" for c in x["条件"])
     who = {x[1]: x[6] for x in spec["ルート"]}
     assert who["/my_parcels"] == "客（本人の分だけ）" and who["/my_live_parcels"] == "客（本人の分だけ）" and who["/live_parcels"] == "誰でも"
     assert "## 範囲" in md and "X-Geas-Actor-Id" in md and "すべての範囲に入る行だけ" in md
@@ -354,3 +385,7 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert get("Customer", "c-1", path="/my_canceled_parcels")[:2] == (200, [])
     assert get("Customer", path="/my_canceled_parcels")[0] == 401
     assert {a, b} <= set(get(path="/live_parcels")[1])
+    # 引数つきの範囲：URL の種類（入力）を範囲に渡す。本人の分との積集合になる
+    assert get("Customer", "c-1", path="/my_parcels_of_kinds/light")[:2] == (200, [a])
+    assert get("Customer", "c-2", path="/my_parcels_of_kinds/light")[:2] == (200, [b])
+    assert get("Customer", "c-1", path="/my_parcels_of_kinds/heavy")[:2] == (200, [])
