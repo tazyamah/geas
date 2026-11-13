@@ -438,8 +438,13 @@ scope unpaid on Order {
   where status == PaymentRequested         // 問い合わせの where と同じ形（行どうしは and、行の中は or）
 }
 
+scope since(from_time: time) on Order {    // 引数つきの範囲。引数で絞る filter は equals・at_least・at_most
+  filter ordered_at at_least from_time
+}
+
 query my_unpaid_orders {
-  from Order.own_orders.unpaid             // 並べた範囲すべてに入る行だけ（積集合）。順は結果に関係しない
+  input from_time: time required
+  from Order.own_orders.unpaid.since(from_time)   // 並べた範囲すべてに入る行だけ（積集合）。順は結果に関係しない
   select order_id, status, total
   reads Order.customer, Order.order_id, Order.status, Order.total   // 範囲が読む項目（customer・status）も書く
 }
@@ -449,8 +454,9 @@ resource MyUnpaidOrders {
 }
 ```
 
-- `scope 名前 on データ { … }` は、データの行の集合に名前を付けます。中に書けるのは、`where`（状態や数との比較。問い合わせと同じ）と、`filter 項目 equals caller`（1 つまで。項目は ID か参照 `ref`）です。入力で絞る範囲は書けません。
-- 使うときは `from データ.範囲` と書き、`from データ.範囲1.範囲2` のように並べると、**すべての範囲に入る行**だけになります。和集合・差集合はありません。`from データ in 範囲` とは書きません（エラー）。
+- `scope 名前 on データ { … }` は、データの行の集合に名前を付けます。中に書けるのは、`where`（状態や数との比較。問い合わせと同じ）と、`filter 項目 equals caller`（1 つまで。項目は ID か参照 `ref`）です。
+- 引数つきの範囲（`scope 名前(引数: 型, …) on データ { filter 項目 equals 引数 }`）は、使う側が `データ.範囲(入力, …)` と、問い合わせの入力を渡します。渡す入力は `required` で、数と型が引数に合うこと。引数は、どれかの filter で使います。
+- 使うときは `from データ.範囲` と書き、`from データ.範囲1.範囲2` のように並べると、**すべての範囲に入る行**だけになります。和集合・差集合はありません（要るときは、resource を分けます）。`from データ in 範囲` とは書きません（エラー）。
 - 範囲の名前は、そのデータの項目の名前と重ねられません。
 - `caller` は、呼ぶ側が渡す値ではありません（入力の名前にも使えません）。**保存してある行の項目**を、プロキシがヘッダ `X-Geas-Actor-Id` に載せた値と比べます。ヘッダが無ければ 401 です。
 - `caller` を使う範囲が 1 つでも入った問い合わせは、呼ぶ動作に役割（`for 役割`）が要ります。`for anyone` にはできません。出来事の `each` にも使えません（呼んだ本人がいないため）。`caller` を使わない範囲だけなら、どこでも使えます。

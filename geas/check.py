@@ -849,6 +849,25 @@ class Checker:
                         self.d(ERROR, "範囲", w, f"データ {s.data} に項目「{fn}」がありません" + near(fn, list(fields)), s.line)
                     else:
                         self.check_cond(w, fields[fn], fn, op, st, s.line)
+            names = [n for n, _ in s.params]
+            for n in names:
+                if names.count(n) > 1:
+                    self.d(ERROR, "範囲", w, f"引数「{n}」が重なっています", s.line)
+                if n == CALLER:
+                    self.d(ERROR, "範囲", w, f"引数の名前に {CALLER} は使えません（呼んだ本人の ID を表す語です）", s.line)
+                if not any(a == n for _, _, a in s.filters):
+                    self.d(ERROR, "範囲", w, f"引数「{n}」が、どの filter にも使われていません", s.line)
+            for fn, op, a in s.filters:
+                if fn not in fields:
+                    self.d(ERROR, "範囲", w, f"データ {s.data} に項目「{fn}」がありません" + near(fn, list(fields)), s.line)
+                elif a not in names:
+                    self.d(ERROR, "範囲", w, f"filter の相手「{a}」が、範囲の引数にありません（比べられるのは、引数か caller です）" + near(a, names), s.line)
+                else:
+                    ft, t = fields[fn].type, dict(s.params)[a]
+                    if op == "一致" and not ((ft.kind == t.kind and ft.kind in ("文字列", "ID", "整数")) or (ft.kind == "参照" and t.kind == "ID")):
+                        self.d(ERROR, "型", w, f"「{fn} equals {a}」は同じ種類の文字列・ID・整数どうし（参照の項目はIDの引数）にだけ使えます", s.line)
+                    if op in ("以上", "以下") and not (ft.kind == t.kind and ft.kind in ("日時", "整数", "金額")):
+                        self.d(ERROR, "型", w, f"「{fn} {op} {a}」は同じ種類の数・日時どうしにだけ使えます", s.line)
             if s.caller and s.caller not in fields:
                 self.d(ERROR, "範囲", w, f"データ {s.data} に項目「{s.caller}」がありません" + near(s.caller, list(fields)), s.line)
             elif s.caller and fields[s.caller].type.kind not in ("ID", "参照"):
@@ -883,6 +902,7 @@ class Checker:
             mine = [s for s in scopes_of(self.p, q) if s.data == q.target]
             for s in mine:  # 範囲の項目も読む（reads に書く）。項目の型は check_scopes が確かめる
                 used |= {f"{dt.name}.{fn}" for g in s.conds for fn, _, _ in g if fn in fields}
+                used |= {f"{dt.name}.{fn}" for fn, _, _ in s.filters if fn in fields}
                 if s.caller in fields:
                     used.add(f"{dt.name}.{s.caller}")
 
@@ -898,7 +918,23 @@ class Checker:
                     f = field_of(fn)
                     if f is not None:
                         self.check_cond(where, f, fn, op, st)
-            for fn, op, arg in q.filters:
+            arg_filters = []  # 範囲の引数で絞る条件（引数を、渡した入力に置き換えたもの）。型は、下の絞り込みと同じ規則で確かめる
+            for s in mine:
+                given = q.scope_args.get(s.name, [])
+                if len(given) != len(s.params):
+                    self.d(ERROR, "範囲", where, f"範囲 {s.name} の引数は {len(s.params)} 個です（{', '.join(n for n, _ in s.params) or 'なし'}）。渡しているのは {len(given)} 個です", q.line)
+                    continue
+                for (pn, pt), a in zip(s.params, given):
+                    t = ins.get(a)
+                    if t is None:
+                        self.d(ERROR, "範囲", where, f"範囲 {s.name} に渡す「{a}」が、入力にありません（渡せるのは、問い合わせの入力です）", q.line)
+                    elif t.optional:
+                        self.d(ERROR, "範囲", where, f"範囲 {s.name} に渡す入力「{a}」は required にしてください（無いときに、範囲が絞られなくなるのを防ぎます）", q.line)
+                    elif t.kind != pt.kind:
+                        self.d(ERROR, "範囲", where, f"範囲 {s.name} の引数 {pn} は {pt.kind} ですが、渡している入力「{a}」は {t.kind} です", q.line)
+                by = dict(zip([n for n, _ in s.params], given))
+                arg_filters += [(f, op, by[a]) for f, op, a in s.filters if a in by and by[a] in ins]
+            for fn, op, arg in [*q.filters, *arg_filters]:
                 f = field_of(fn)
                 if f is None:
                     continue
@@ -959,7 +995,7 @@ class Checker:
             if (q.page is not None or q.page_n is not None) and not q.order:
                 self.d(ERROR, "並び", where, "page には order が要ります（並びが無いと、どの1ページかが決まらず、実行のたびに変わりえます）")
             for n, t in q.inputs:
-                if not t.optional and not any(n == a for _, _, a in q.filters) and n != q.page:
+                if not t.optional and not any(n == a for _, _, a in q.filters) and n != q.page and not any(n in xs for xs in q.scope_args.values()):
                     self.d(WARN, "宣言", where, f"入力「{n}」はどこにも使われていません")
             declared, actual = set(q.reads), used
             for x in sorted(actual - declared):

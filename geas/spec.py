@@ -59,6 +59,8 @@ def query_rows(ck: Checker, q) -> dict:
 
     for s in scopes_of(ck.p, q):  # 範囲の条件も、問い合わせの条件として出す（どの範囲から来たかつき）
         conds += [" または ".join(f"{f} {op} {st}" for f, op, st in g) + f"（範囲 {s.name}）" for g in s.conds]
+        given = dict(zip([n for n, _ in s.params], q.scope_args.get(s.name, [])))
+        conds += [f"{f} {op} {given.get(a, a)}（範囲 {s.name}）" for f, op, a in s.filters]
         if s.caller:
             conds.append(f"{s.caller} 一致 呼んだ本人のID（範囲 {s.name}）")
     conds += [f"{f} 直近 {fmt_secs(int(a))}" if op == "直近" else f"{f} {op} {a}{absent(a, '絞らない')}"
@@ -223,6 +225,8 @@ def scope_text(p, s) -> str:
     """範囲に入る行の説明（条件を「かつ」でつなぐ）"""
     show = p.show_names
     parts = [" または ".join(f"{show(f)} {op} {show(st)}" for f, op, st in g) for g in s.conds]
+    word = {"一致": "と同じ", "以上": "以上", "以下": "以下"}
+    parts += [f"{show(f)} が、引数 {show(a)} {word[op]}" for f, op, a in s.filters]
     if s.caller:
         parts.append(f"{show(s.caller)} が、呼んだ本人のID と同じ")
     return " かつ ".join(parts)
@@ -250,7 +254,7 @@ def build(ck: Checker) -> dict:
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["役割"] = actor_rows(ck.p, spec["ルート"])
     show = ck.p.show_names
-    spec["範囲"] = [(show(s.name), show(s.data), scope_text(ck.p, s), "、".join(show(q.name) for q in ck.p.queries if s.name in q.scopes) or "なし") for s in ck.p.scopes]
+    spec["範囲"] = [(show(s.name) + (f"（{'、'.join(show(n) for n, _ in s.params)}）" if s.params else ""), show(s.data), scope_text(ck.p, s), "、".join(show(q.name) for q in ck.p.queries if s.name in q.scopes) or "なし") for s in ck.p.scopes]
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
