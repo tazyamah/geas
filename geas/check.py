@@ -2003,6 +2003,7 @@ def iv_show(a):
 TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足し引きであふれないため境界で確かめる
 UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
 VERIFIED_STORES = ("sqlite",)  # サーバー実行部が持つ保存先の種類のうち、契約の試験（同時リクエストが直列と同じ結果になる）で確かめてあるもの
+TEXT_LIMIT = 1_048_576  # 長さを書いていない文字列の既定の上限（生成物の TEXT_LIMIT と同じ）
 NAMED = "#名"  # facts のキーの先頭がこれなら、束縛でなく入力や let の変数の範囲
 
 
@@ -2023,6 +2024,7 @@ class ProcChecker:
         self.env: dict[str, str] = {}
         self.where = f"処理 {proc.name}"
         self.exist_sets: dict[str, tuple[str, str]] = {}  # 集合の変数 → (データ, 回した元)
+        self.var_text: dict[str, tuple] = {}  # 文字列をつないで作った let の変数 → (最短, 最長, 使える文字)
         # 確認はデータ名でなく「どのキーで引いたものか」に効く。別のキーで引いたものには効かない
         self.guarded: set[tuple[str, str]] = set()  # 存在を確かめた (データ, キーの式) か (データ, "∈" + 回した元)
         self.scoped_ok: set[int] = set()  # 範囲を通す 1 件引きのうち、書ける形（let … else）のもの（id(式)）
@@ -2741,7 +2743,11 @@ class ProcChecker:
         return next(iter(kinds))
 
     def binop(self, e: Bin, env) -> str:
+        if isinstance(e.l, StrLit) or isinstance(e.r, StrLit):
+            return self.text_binop(e, env)
         a, b = self.ty(e.l, env), self.ty(e.r, env)
+        if e.op == "+" and a == b == "Str":  # 文字列をつなぐ。長さの上限は両側の足し算（入れ先で確かめる）
+            return "Str"
         if "?" in (a, b):
             return "?"
         num = ("Int", "Money")
@@ -2820,6 +2826,60 @@ class ProcChecker:
             self.d(ERROR, "型", f"「{show(e)}」: 掛けられない組み合わせです")
             return "?"
         raise ValueError(e.op)
+
+    def text_binop(self, e: Bin, env) -> str:
+        """片側か両側が "…" と直に書いた文字列の式。書けるのは、文字列との == ・!= と、文字列どうしの + だけ"""
+        def side(x):
+            if isinstance(x, StrLit):
+                self.info.types[id(x)] = "Str"
+                return "Str"
+            return self.ty(x, env)
+        a, b = side(e.l), side(e.r)
+        if "?" in (a, b):
+            return "?"
+        if e.op not in ("==", "!=", "+"):
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列は、文字列との == ・!= と、文字列をつなぐ + にだけ使えます（大小は比べられません）")
+            return "?"
+        if a != "Str" or b != "Str":
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列と{'比べ' if e.op != '+' else 'つなげ'}られるのは文字列だけです（{b if a == 'Str' else a}）。"
+                   "数を文字にするには convert を通します")
+            return "?"
+        if e.op == "+":
+            return "Str"
+        lit, other = (e.l, e.r) if isinstance(e.l, StrLit) else (e.r, e.l)
+        if isinstance(other, StrLit):
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列どうしの比較は、いつも同じ結果です")
+            return "Bool"
+        sh = self.text_shape(other, env)
+        if sh is not None:  # 型に合わない定数との比較は、決して成り立たない（書き間違い）
+            lo, hi, chars = sh
+            n = len(lit.s)
+            if not lo <= n <= hi:
+                self.d(ERROR, "範囲", f"「{show(e)}」: {show(other)} の長さは {lo}..{hi} なので、{n} 文字の {show(lit)} と同じになることはありません")
+            elif chars is not None:
+                bad = sorted({c for c in lit.s if not any(x <= ord(c) <= y for x, y in chars)})
+                if bad:
+                    self.d(ERROR, "文字種", f"「{show(e)}」: {show(other)} に使える文字は [{show_chars(chars)}] なので、"
+                           f"「{''.join(bad)}」を含む {show(lit)} と同じになることはありません")
+        return "Bool"
+
+    def text_shape(self, e, env=None):
+        """文字列の式の (最短の長さ, 最長の長さ, 使える文字)。使える文字は範囲の並びで、制限なしは None。形が分からなければ None"""
+        env = self.env if env is None else env
+        if isinstance(e, StrLit):
+            return len(e.s), len(e.s), tuple(sorted({(ord(c), ord(c)) for c in e.s}))
+        if isinstance(e, Bin) and e.op == "+":
+            a, b = self.text_shape(e.l, env), self.text_shape(e.r, env)
+            if a is None or b is None:
+                return None
+            return a[0] + b[0], a[1] + b[1], None if a[2] is None or b[2] is None else tuple(sorted(set(a[2]) | set(b[2])))
+        if isinstance(e, Name) and e.n in self.var_text:
+            return self.var_text[e.n]
+        t = self.ck.parts[e.n].ret if isinstance(e, Call) and e.n in self.ck.parts else self.decl_type(e, env)
+        if t is None or t.kind != "文字列":
+            return None
+        r = t.range or Range()
+        return r.lo or 0, TEXT_LIMIT if r.hi is None else r.hi, t.chars
 
     # ---- 文 ----
     def check_return(self, r: Return):
@@ -2900,15 +2960,28 @@ class ProcChecker:
 
     def block(self, stmts: list, pos: int, what: str = ""):
         """文の並び。what は if・else の中（書ける文が限られる）。return した後ろの文には届かない"""
+        before = set(self.env)
         for k, inner in enumerate(stmts):
             if k and always_returns(stmts[:k]):
                 self.d(ERROR, "結果", "この文には届きません（前の文が、どの道でも return しています）", getattr(inner, "line", 0))
                 return
-            if what and not isinstance(inner, (Return, If, SetField, Update, Request)):
-                self.d(ERROR, "型", f"{what} の中に書けるのは、return・項目の更新・update・request・if だけです（let は if の前に書いてください）",
+            if what and not isinstance(inner, (Return, If, SetField, Update, Request, Assign, Create, ForEach)):
+                self.d(ERROR, "型", f"{what} の中に書けるのは、return・let・create・項目の更新・update・request・if・for だけです",
                        getattr(inner, "line", 0))
                 continue
             self.stmt(inner, pos)
+        if what:  # if・else の中で let した名前は、その枝を抜けたら消える（重ならない別の枝でなら、同じ名前をまた使える）
+            self.forget_names(set(self.env) - before)
+
+    def forget_names(self, names: set):
+        """名前と、その名前について分かっていたこと（型・範囲・null でない・引いた 1 件）を消す。
+        残すと、あとで同じ名前を別の値に付けたときに、前の値について確かめたことが新しい値に効いてしまう"""
+        for n in names:
+            for d in (self.env, self.lookup_data, self.bindings, self.var_iv, self.var_unit, self.shortage_sets, self.exist_sets, self.cur_sets, self.var_text):
+                d.pop(n, None)
+            self.loop_deps.discard(n)
+            self.present.discard(("#入力", n))
+        self.facts = {k: v for k, v in self.facts.items() if not any(k[-2:] == (NAMED, n) for n in names)}
 
     def scoped_lookup(self, st, info):
         """let 名前 = データ.範囲1.範囲2[ID] else { return … }：範囲の外の行は「無い」として扱う。
@@ -3067,6 +3140,11 @@ class ProcChecker:
                 self._last_exist = None
                 t = self.ty(st.e)
                 self.env[st.name] = t
+                self.var_text.pop(st.name, None)
+                if t == "Str" and self.decl_type(st.e, self.env) is None:
+                    sh = self.text_shape(st.e)
+                    if sh is not None:
+                        self.var_text[st.name] = sh
                 self.lookup_data.pop(st.name, None)
                 self.bindings.pop(st.name, None)
                 self.var_iv[st.name] = self.interval(st.e)
@@ -3243,6 +3321,20 @@ class ProcChecker:
             src = self.ck.parts[e.n].ret
         else:
             src = self.decl_type(e, self.env)
+        if src is None:
+            sh = self.text_shape(e)
+            if sh is not None:  # つないだ文字列・直に書いた文字列：長さは足し算、文字は合わせたもので示す
+                lo, hi, chars = sh
+                d = dst.range or Range()
+                if (d.lo is not None and lo < d.lo) or (d.hi is not None and hi > d.hi):
+                    self.d(ERROR, "範囲", f"{where} に書く文字列「{show(e)}」の長さ（{lo}..{hi}）が、項目の長さの範囲{show_range(dst.range)}に収まると示せません"
+                           "（入れ先の上限を広げるか、つなぐ元の型の上限を狭めます。切り詰める書き方はありません）", line)
+                if dst.chars is not None and (chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in chars)):
+                    self.d(ERROR, "文字種", f"{where} に書く文字列「{show(e)}」の文字が、項目の使える文字に収まると示せません"
+                           f"（書く値{'の文字は制限なし' if chars is None else ' [' + show_chars(chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
+                if dst.read is not None or dst.check is not None:
+                    self.d(ERROR, "検査", f"{where} は変換か検査数字を通った値だけを書けるので、つないだ文字列「{show(e)}」は書けません", line)
+                return
         if src is None or src.kind != "文字列":
             if src is None:
                 self.d(ERROR, "範囲", f"{where} は長さか使える文字が決まっているので、宣言のある入力・項目・slot か部品の戻り値を、そのまま書いてください（「{show(e)}」では収まると示せません）", line)

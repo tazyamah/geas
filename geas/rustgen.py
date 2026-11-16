@@ -1010,6 +1010,8 @@ class ProcGen:
             return f"{e.v}i128"
         if isinstance(e, Dur):
             return f"{e.secs}i64"
+        if isinstance(e, StrLit):  # 処理の中に直に書いた文字列（比較と、つなぐ + にだけ書ける）
+            return f"{rust_str(e.s)}.to_string()"
         if isinstance(e, Name):
             if e.n in self.scope:
                 kind, tok = self.scope[e.n]
@@ -1089,6 +1091,8 @@ class ProcGen:
             if e.op == "in":
                 return f"{self.coll(e.r)}.{'contains' if rt == 'Set' else 'contains_key'}(&({self.rx(e.l)}))"
             l, r = self.rx(e.l), self.rx(e.r)
+            if e.op == "+" and lt == "Str":  # 文字列をつなぐ（長さは、入れ先に収まると検査で示してある）
+                return f'format!("{{}}{{}}", {l}, {r})'
             if e.op in ("/", "%") and isinstance(e.r, Num):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
             if e.op in ("/", "%"):  # 変数で割る：1 以上と示してある（Unproven）か、0 のときの値を使う。i64::MIN / -1 のあふれは Fault
