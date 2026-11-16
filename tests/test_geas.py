@@ -1345,6 +1345,7 @@ result 置いた結果 {
   置いた(品ID: id)
 }
 library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"
+example 税込(100) == 110
 deed 置く {
   input 税抜: 税抜の限り required
   writes 品
@@ -1421,6 +1422,7 @@ result PutResult {
   Done(tray_id: id)
 }
 library triple(x: Count) -> Count from rust "std" "" call "x * 3" guarantee result >= x trust check "3 倍するだけ"
+example triple(1) == 3
 deed put_tray {
   input n: Count required
   writes Tray
@@ -1481,7 +1483,7 @@ fn main() { println!("{:?}", call(r#"{"name":"置く","ctx":{"new_品_id":"A"},"
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     assert r.stdout.startswith("Ok(") and '\\"価格\\":1100' in r.stdout, r.stdout
-    two = src + 'library other(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\n'
+    two = src + 'library other(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\nexample other(100) == 100\n'
     with pytest.raises(ValueError, match="版が2つ"):
         from geas.rustgen import library_deps
         library_deps(chk(two))
@@ -1912,7 +1914,7 @@ def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(
     assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]
 
 
-CONVERT = PART.replace('library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"', "convert 税込(x: 非負金額) -> 非負金額 = x + x")
+CONVERT = PART.replace('library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"\nexample 税込(100) == 110', "convert 税込(x: 非負金額) -> 非負金額 = x + x")
 
 
 def test_convert_は式が定義で_外の部品も保証も要らない():

@@ -178,6 +178,7 @@ class Parser:
     def program(self) -> Program:
         p = Program()
         stores: list[tuple[str, str, int]] = []
+        examples: list[tuple] = []  # library の具体例（example の行）。部品の宣言より後ろでも前でもよいので、最後に結びつける
         self.skip_nl()
         while self.peek().kind != "EOF":
             line = self.peek().line
@@ -201,6 +202,8 @@ class Parser:
                                  'library を使います（例：library tax_included(x: Yen) -> Yen from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"）', line)
             elif kw == "library":
                 p.parts.append(self.library(line))
+            elif kw == "example":
+                examples.append(self.example(line))
             elif kw == "convert":
                 p.parts.append(self.convert(line))
             elif kw == "invariant":
@@ -285,6 +288,11 @@ class Parser:
         if "currency" in self.used_builtin:
             p.states.append(State("Currency", initial="JPY", middle=["USD", "EUR"], plain=True))
         self.apply_stores(p, stores)
+        libs = {pt.name: pt for pt in p.parts if pt.external}
+        for name, args, want, ln in examples:
+            if name not in libs:
+                raise ParseError(f"example の対象「{name}」という library がありません（具体例を書けるのは library だけです。convert は式そのものが定義です）", ln)
+            libs[name].examples.append((args, want, ln))
         self.add_sync_state(p)
         if p.data_folder is not None:
             name, ln = p.data_folder
@@ -869,6 +877,25 @@ class Parser:
         self.i += 1
         self.end_line()
         return Part(name, params, ret, g, line, lib=(strs[0], strs[1], expr, level, why.val))
+
+    def example(self, line) -> tuple:
+        """example 部品(値, …) == 値：library の具体例。引数も期待する値も、直に書いた値（数・文字列・true／false）だけ"""
+        usage = 'example tax_included(100) == 110'
+        name = self.name()
+        self.expect("(")
+        args = [] if self.peek().val == ")" else self.comma_list(self.example_value)
+        self.expect(")")
+        if not self.accept("=="):
+            raise self.err(f"具体例は、呼び出しと期待する値を == でつなぎます（{usage}）")
+        want = self.example_value()
+        self.end_line()
+        return name, args, want, line
+
+    def example_value(self):
+        e = self.expr()
+        if not isinstance(e, (Num, StrLit, BoolLit)):
+            raise self.err("具体例には、直に書いた値（数・\"文字列\"・true・false）だけを書けます")
+        return e
 
     def convert(self, line) -> Part:
         """convert 名前(引数: 型) -> 型 = 式：論理型どうしの一方通行の変換。定義が geas の式なので、外の実装も保証も要らない"""
@@ -1818,7 +1845,7 @@ class Parser:
 
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
-DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow",
+DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "example", "convert", "invariant", "deed", "nexus", "flow",
                  "trigger", "query", "event", "screen", "resource", "actor", "scope", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 

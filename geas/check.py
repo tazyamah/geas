@@ -378,6 +378,22 @@ class Checker:
         for n in dict.fromkeys(n for n in names if names.count(n) > 1):
             self.d(ERROR, "名前", where, f"{what}「{n}」が2つ以上あります")
 
+    def check_examples(self, pt, where):
+        """library の具体例：1 つは必須。引数の数と、値の種類・範囲が宣言に合うこと（合っているかを実際に呼んで比べるのは geas parts）"""
+        if not pt.examples:
+            self.d(ERROR, "保証", where, f"library には具体例が要ります（example {pt.name}(値, …) == 期待する値 を 1 行以上。"
+                   "geas parts が実際に呼んで比べ、仕様書の「人の保証」に出ます）")
+            return
+        for args, want, ln in pt.examples:
+            call = f"{pt.name}({', '.join(show(a) for a in args)})"
+            if len(args) != len(pt.params):
+                self.d(ERROR, "保証", where, f"具体例 {call} の引数は {len(args)} 個ですが、宣言は {len(pt.params)} 個です", ln)
+                continue
+            for (n, t), v in [*zip(pt.params, args), (("戻り値", pt.ret), want)]:
+                why = example_mismatch(t, v)
+                if why:
+                    self.d(ERROR, "保証", where, f"具体例 {call} の {n}（{show(v)}）が、型 {show_type(t)} に合いません（{why}）", ln)
+
     def check_part(self, pt: Part):
         """部品の宣言。保証の式は、引数と result だけを使う、真偽の式"""
         where = f"部品 {pt.name}"
@@ -439,6 +455,11 @@ class Checker:
             self.d(ERROR, "名前", where, f"クレート {crate} の版「{version}」が読めません（例：\"0.10\"。版は固定します）")
         if "unsafe" in re.findall(r"[A-Za-z_]+", expr):
             self.d(ERROR, "保証", where, "call の式に unsafe は書けません（生成物は unsafe を許していません）")
+        loops = sorted(set(re.findall(r"[A-Za-z_]+", expr)) & {"loop", "while", "for", "fn"})
+        if loops or re.search(r"(^|[(,=])\s*(move\s+)?\|", expr):
+            self.d(ERROR, "保証", where, f"call の式に{'・'.join(loops) or 'クロージャ'}は書けません（部品の包みの側では、引数を渡してライブラリを呼ぶだけにします。"
+                   "繰り返しは、geas の側で上限つきの集まりを回す for や sum で書きます）")
+        self.check_examples(pt, where)
         if pt.guarantee is None:
             if pt.ret.kind in ("整数", "金額") and pt.ret.range is None or pt.ret.kind == "文字列" and pt.ret.range is None and pt.ret.chars is None and not pt.ret.read:
                 self.d(ERROR, "保証", where, "戻り値の範囲（型の範囲・文字種）か guarantee のどちらかで、戻り値を確かめられるようにしてください")
@@ -3586,3 +3607,22 @@ def check(prog: Program, strict_names: bool = False):
     ck = Checker(prog, strict_names)
     ck.run()
     return ck
+
+
+def example_mismatch(t, v) -> str:
+    """具体例に直に書いた値 v が、型 t に合わない理由（合えば空）。数は範囲、文字列は長さと文字種を見る"""
+    if isinstance(v, BoolLit):
+        return "" if t.kind == "真偽" else "真偽の値ではない型です"
+    if isinstance(v, Num):
+        if t.kind not in ("整数", "金額", "日時"):
+            return "数ではない型です"
+        r = t.range
+        if r is not None and ((r.lo is not None and v.v < r.lo) or (r.hi is not None and v.v > r.hi)):
+            return f"範囲{show_range(r)}の外です"
+        return ""
+    if t.kind not in ("文字列", "ID", "生"):
+        return "文字列ではない型です"
+    r = t.range
+    if r is not None and ((r.lo is not None and len(v.s) < r.lo) or (r.hi is not None and len(v.s) > r.hi)):
+        return f"長さ{show_range(r)}の外です"
+    return ""

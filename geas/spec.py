@@ -399,7 +399,7 @@ def build_raw(ck: Checker) -> dict:
         if pt.external and pt.name in ck.used_libs:
             crate, version, expr, level, why = pt.lib
             where = crate if crate == "std" else f"{crate} {version}"
-            spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}", show_type(pt.ret),
+            spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}。具体例: " + "、".join(f"{pt.name}({', '.join(show(a) for a in args)}) == {show(want)}" for args, want, _ in pt.examples), show_type(pt.ret),
                                   {"check": "戻り値を毎回確かめる", "verify": "戻り値を検証ビルドだけ確かめる", "assume": "戻り値を確かめない"}[level]
                                   + "（panic は異常で止まる。無限ループ・メモリ枯渇は防げない）。" + status_text(pt, ledger), why))
     spec["保証の強さ"] = guarantee_levels(ck, spec)

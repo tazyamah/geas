@@ -124,6 +124,7 @@ class Part:
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
     defaults: dict = field(default_factory=dict)  # convert の引数のデフォルト値：引数名 → 式（呼ぶとき省ける）
     requires: list = field(default_factory=list)  # raw から変換する convert の拒否の条件：[(条件の式, 理由)]。成り立たなければ入力不正
+    examples: list = field(default_factory=list)  # library の具体例：[(引数の値の式の並び, 期待する値の式, 行)]。geas parts が実際に呼んで比べる
     lib: Optional[tuple] = None  # library のとき (クレート名, 版, 呼び出す Rust の式, 確認の段階 check|verify|assume, 人の保証の理由)。クレートが std なら依存は足さない
 
     @property

@@ -23,7 +23,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .ast import Bin, BoolLit, Call, Cond, Name, Not, Num, show
+from .ast import Bin, BoolLit, Call, Cond, Name, Not, Num, StrLit, show
 from .check import phys
 from .rustgen import dependencies, rust_type
 
@@ -31,7 +31,7 @@ from .rustgen import dependencies, rust_type
 @dataclass
 class Finding:
     part: str
-    kind: str  # 組めない｜panic｜範囲外｜保証違反｜結果が変わる｜手本と違う
+    kind: str  # 組めない｜panic｜範囲外｜保証違反｜結果が変わる｜手本と違う｜具体例と違う
     detail: str
 
 
@@ -41,6 +41,7 @@ class Report:
     calls: dict = field(default_factory=dict)  # 部品名 → 呼んだ回数
     skipped: dict = field(default_factory=dict)  # 部品名 → 確かめられなかった理由
     compared: set = field(default_factory=set)  # 手本と比べた部品
+    examples: dict = field(default_factory=dict)  # 部品名 → 一致した具体例の数
 
     @property
     def ok(self) -> bool:
@@ -82,6 +83,18 @@ def lit(v, t) -> str:
     return ("true" if v else "false") if t.kind == "真偽" else f"{v}{phys(t)}"
 
 
+def example_lit(v, t) -> str:
+    """具体例に直に書いた値の、Rust での書き方"""
+    if isinstance(v, StrLit):
+        return json.dumps(v.s, ensure_ascii=False) + ".to_string()"
+    return lit(v.v, t)
+
+
+def example_text(v) -> str:
+    """具体例の期待する値を、Rust の Display と同じ文字列にする"""
+    return v.s if isinstance(v, StrLit) else ("true" if v.v else "false") if isinstance(v, BoolLit) else str(v.v)
+
+
 def harness(parts: list, case_map: dict) -> tuple[str, dict]:
     """確かめる Rust のプログラムと、行番号 → 部品名（組めない部品を見分けるため、部品 1 つを 1 行に書く）"""
     lines = ["#![allow(warnings)]", "use std::panic::{catch_unwind, set_hook};", ""]
@@ -98,8 +111,12 @@ def harness(parts: list, case_map: dict) -> tuple[str, dict]:
     for pt in parts:  # 部品ごとに、引数ごとの端の値を入れ子の for で回す（呼び出しを 1 つずつ書くと、組むのに時間がかかりすぎる）
         names = [n for n, _ in pt.params]
         fmt = ",".join("{}" for _ in names)
-        heads = "".join(f"for {n} in [{', '.join(lit(v, t) for v in vals)}] {{ " for (n, t), vals in zip(pt.params, case_map[pt.name]))
-        lines.append(f'    {heads}run("{pt.name}", format!("{fmt}", {", ".join(names)}), || p_{pt.name}({", ".join(names)})); {"}" * len(names)}')
+        heads = "" if case_map[pt.name] is None else "".join(f"for {n} in [{', '.join(lit(v, t) for v in vals)}] {{ " for (n, t), vals in zip(pt.params, case_map[pt.name]))
+        if case_map[pt.name] is not None:
+            lines.append(f'    {heads}run("{pt.name}", format!("{fmt}", {", ".join(names)}), || p_{pt.name}({", ".join(names)})); {"}" * len(names)}')
+        for i, (args, _, _) in enumerate(pt.examples):  # 具体例：結果は 16 進にして出す（文字列にタブや改行があっても読めるように）
+            call = f'p_{pt.name}({", ".join(example_lit(a, t) for a, (_, t) in zip(args, pt.params))})'
+            lines.append(f'    run("{pt.name}", "#{i}".to_string(), || format!("{{}}", {call}).bytes().map(|b| format!("{{:02x}}", b)).collect::<String>());')
     lines.append("}")
     return "\n".join(lines) + "\n", where
 
@@ -153,8 +170,10 @@ def check_parts(parts: list, dest: Path, reference: dict | None = None) -> Repor
             continue
         cs = cases(pt)
         if cs is None or (pt.ret.kind != "真偽" and bounds(pt.ret) is None):
-            rep.skipped[pt.name] = "引数か戻り値が、整数・金額・真偽ではない"
-            continue
+            cs = None  # 端の値では呼べない型（文字列など）。具体例があれば、それだけを呼ぶ
+            rep.skipped[pt.name] = "引数か戻り値が、整数・金額・真偽ではない（端の値では確かめられない" + ("。具体例だけを確かめた）" if pt.examples else "）")
+            if not pt.examples:
+                continue
         todo.append(pt)
         case_map[pt.name] = cs
     deps = {}
@@ -183,6 +202,18 @@ def check_parts(parts: list, dest: Path, reference: dict | None = None) -> Repor
     for line in r.stdout.splitlines():
         name, shown, got, same = line.split("\t")
         pt = by_name[name]
+        if shown.startswith("#"):  # 具体例
+            args, want, _ = pt.examples[int(shown[1:])]
+            call = f"{name}({', '.join(show(a) for a in args)})"
+            if got == "PANIC":
+                rep.findings.append(Finding(name, "panic", call))
+            elif bytes.fromhex(got).decode("utf-8", "replace") != example_text(want):
+                rep.findings.append(Finding(name, "具体例と違う", f"{call} = {bytes.fromhex(got).decode('utf-8', 'replace')}（具体例は {show(want)}）"))
+            else:
+                rep.examples[name] = rep.examples.get(name, 0) + 1
+            if same != "true":
+                rep.findings.append(Finding(name, "結果が変わる", call))
+            continue
         rep.calls[name] = rep.calls.get(name, 0) + 1
         call = f"{name}({shown})"
         if got == "PANIC":
@@ -213,6 +244,8 @@ def check_parts(parts: list, dest: Path, reference: dict | None = None) -> Repor
 def render(rep: Report) -> str:
     L = [f"部品の境界値の検査：{len(rep.calls)} 個の部品を、合わせて {sum(rep.calls.values())} 回呼びました"
          + (f"（うち {len(rep.compared)} 個は手本とも比べました）" if rep.compared else "")]
+    if rep.examples:
+        L.append(f"具体例：{len(rep.examples)} 個の部品の、合わせて {sum(rep.examples.values())} 件が一致しました")
     for f in rep.findings:
         L.append(f"  ✕ {f.part}：{f.kind}　{f.detail}")
     for name, why in rep.skipped.items():
@@ -233,6 +266,12 @@ def fingerprint(pt) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def examples_fingerprint(pt) -> str:
+    """具体例の指紋。具体例を足す・変えると変わる（宣言の指紋とは別にして、標準部品の証明の記録を無効にしない）"""
+    text = json.dumps([[[show(a) for a in args], show(want)] for args, want, _ in pt.examples], ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def toolchain() -> str:
     try:
         return subprocess.run(["rustc", "--version"], capture_output=True, text=True, encoding="utf-8").stdout.strip()
@@ -246,8 +285,9 @@ def ledger_of(rep: Report, parts: list, proved: dict | None = None) -> dict:
     bad = {f.part for f in rep.findings}
     out = {}
     for pt in parts:
-        if pt.name in rep.calls and pt.name not in bad:
-            out[pt.name] = {"fingerprint": fingerprint(pt), "calls": rep.calls[pt.name], "reference": pt.name in rep.compared}
+        if (pt.name in rep.calls or pt.name in rep.examples) and pt.name not in bad:
+            out[pt.name] = {"fingerprint": fingerprint(pt), "calls": rep.calls.get(pt.name, 0), "reference": pt.name in rep.compared,
+                            "examples": rep.examples.get(pt.name, 0), "examples_fingerprint": examples_fingerprint(pt)}
             if proved and pt.name in proved:
                 out[pt.name]["proved"] = proved[pt.name]
     return {"toolchain": toolchain(), "parts": out}
@@ -275,6 +315,10 @@ def status_text(pt, ledger: dict) -> str:
         return "宣言は実際に呼んで確かめていない（geas parts --record）"
     if row.get("fingerprint") != fingerprint(pt):
         return "宣言を変えたあと、確かめ直していない（geas parts --record）"
+    ex = (f"。具体例 {row.get('examples', 0)} 件と一致" if row.get("examples_fingerprint") == examples_fingerprint(pt)
+          else "。具体例は確かめ直していない（geas parts --record）")
     if row.get("proved"):
-        return f"宣言は全部の入力で証明した（Kani：{row['proved']}）"
-    return f"宣言は端の値で {row.get('calls', 0)} 回呼んで確かめた" + ("（手本とも一致）" if row.get("reference") else "")
+        return f"宣言は全部の入力で証明した（Kani：{row['proved']}）" + ex
+    if not row.get("calls"):
+        return "宣言は端の値では確かめられない型" + ex
+    return f"宣言は端の値で {row.get('calls', 0)} 回呼んで確かめた" + ("（手本とも一致）" if row.get("reference") else "") + ex
