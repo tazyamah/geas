@@ -167,3 +167,80 @@ def test_つないだ文字が入れ先の文字種を出るならエラー():
 def test_数と文字列は_足し算でつなげない():
     msgs = text_errors('  let t = create Tray { n: n, label: w + n }\n  return Done(t.tray_id)\n')
     assert any("同じ種類の数どうし" in m or "文字列だけ" in m for m in msgs), msgs
+
+
+# ---- 集合：add／remove と、件数の上限 max N ----
+SET_SRC = """ltype Tags = set of id {max}
+ltype Digit = int 0..9
+
+entity Tray {{
+  tray_id: id unique
+  tags: Tags {req}
+  n: Digit required
+}}
+result TagResult {{
+  Done
+  NoTray
+  TooMany
+}}
+deed tag_tray {{
+  input tray_id: id required
+  input tag_id: id required
+  reads Tray.tags{reads}
+  writes Tray.tags{writes}
+  result TagResult
+  effects none
+
+  let t = Tray[tray_id] else {{ return NoTray }}
+{body}  return Done
+}}
+nexus Tagging {{
+  tag_tray: Done → reply, NoTray → reply, TooMany → reply
+}}
+"""
+
+
+def set_errors(body: str, max: str = "max 3", req: str = "required", reads: str = "", writes: str = "") -> list:
+    src = SET_SRC.format(max=max, req=req, body=body, reads=reads, writes=writes)
+    return [d.msg for d in check(parse(src)).diags if d.level == "エラー"]
+
+
+def test_集合に_上限を確かめてから足せる():
+    assert set_errors("  if len(t.tags) >= 3 { return TooMany }\n  add tag_id to t.tags\n") == []
+    assert set_errors("  if len(t.tags) > 2 { return TooMany }\n  add tag_id to t.tags\n") == []
+
+
+def test_集合から外すのに_確かめは要らない():
+    assert set_errors("  remove tag_id from t.tags\n") == []
+
+
+def test_上限の確かめが無い追加はエラー():
+    msgs = set_errors("  add tag_id to t.tags\n")
+    assert any("まだ上限（3 件）に届いていないと示せません" in m and "if len(t.tags) >= 3" in m for m in msgs), msgs
+    # 確かめが緩い（3 件のときも通る）のも、示せない
+    msgs = set_errors("  if len(t.tags) > 3 { return TooMany }\n  add tag_id to t.tags\n")
+    assert any("届いていないと示せません" in m for m in msgs), msgs
+
+
+def test_足す先の集合には_件数の上限が要る():
+    msgs = set_errors("  if len(t.tags) >= 3 { return TooMany }\n  add tag_id to t.tags\n", max="")
+    assert any("型に件数の上限が要ります（set of id max N）" in m for m in msgs), msgs
+
+
+def test_null_になりうる集合には足せない():
+    msgs = set_errors("  if len(t.tags) >= 3 { return TooMany }\n  add tag_id to t.tags\n", req="")
+    assert any("required を付けてください" in m for m in msgs), msgs
+
+
+def test_集合でない項目には足せない():
+    msgs = set_errors("  add tag_id to t.n\n", reads=", Tray.n", writes=", Tray.n")
+    assert any("集合ではありません" in m for m in msgs), msgs
+
+
+def test_集合に記号は使えず_直し方が出る():
+    msgs = set_errors("  t.tags += tag_id\n")
+    assert any("集合に += は使えません。add 要素 to t.tags と書きます" in m for m in msgs), msgs
+    with pytest.raises(Exception, match="add 要素 to t.tags と書きます"):
+        parse(SET_SRC.format(max="max 3", req="required", body="  t.tags << tag_id\n", reads="", writes=""))
+    with pytest.raises(Exception, match="add 要素 to 変数.項目"):
+        parse(SET_SRC.format(max="max 3", req="required", body="  add tag_id into t.tags\n", reads="", writes=""))

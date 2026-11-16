@@ -261,7 +261,7 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
     if t.kind == "割合":  # 範囲を書かなくても、分母と値の大きさの物理上限は確かめる
         r = t.range
         chk.append(f'check_ratio("{label}", {ref}, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?;')
-    if t.kind == "写像" and t.maxn is not None:  # 検査器は max N を前提に合計の範囲を示すので、外から来る写像は境界で要素数を止める
+    if t.kind in ("写像", "集合") and t.maxn is not None:  # 検査器は max N を前提に合計の範囲や件数を示すので、外から来る写像・集合は境界で要素数を止める
         chk.append(f'check_range("{label}の要素数", {x}.len() as i128, Some(0), Some({t.maxn}))?;')
     if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
         r = t.value.range
@@ -1265,7 +1265,10 @@ class ProcGen:
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
             ft = self.field_type(d, st.f)
-            if st.guard is not None and st.guard[0] == "saturating":  # 範囲の端で止める。端の内側に収めてから物理数へ
+            if st.op in ("add", "remove"):  # 集合に 1 つ足す・外す（足す前に、上限に届いていないと検査で示してある）
+                change = f"insert({self.rx(st.e)})" if st.op == "add" else f"remove(&({self.rx(st.e)}))"
+                v = f"{{ let mut set_ = {st.var}.{st.f}.clone(); set_.{change}; set_ }}"
+            elif st.guard is not None and st.guard[0] == "saturating":  # 範囲の端で止める。端の内側に収めてから物理数へ
                 lo, hi = iv_of(ft)
                 v = self.conv(ft, f"({self.rx(st.e)}).clamp({lo}i128, {hi}i128)", f"{d}.{st.f}", proven=True)
             elif st.guard is not None:  # 届かないと人が承知している。届いたら範囲の確認で異常にして止める

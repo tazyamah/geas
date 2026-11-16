@@ -2004,6 +2004,7 @@ TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足
 UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
 VERIFIED_STORES = ("sqlite",)  # サーバー実行部が持つ保存先の種類のうち、契約の試験（同時リクエストが直列と同じ結果になる）で確かめてあるもの
 TEXT_LIMIT = 1_048_576  # 長さを書いていない文字列の既定の上限（生成物の TEXT_LIMIT と同じ）
+LEN = "#件数:"  # facts の項目名の先頭がこれなら、集合の項目の件数（len(x.項目)）の範囲
 NAMED = "#名"  # facts のキーの先頭がこれなら、束縛でなく入力や let の変数の範囲
 
 
@@ -3203,6 +3204,13 @@ class ProcChecker:
             if fld is None:
                 self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません" + near(st.f, [f.name for f in self.ck.data[data].fields]), st.line)
                 return
+            if st.op in ("add", "remove"):
+                self.set_change(st, data, fld)
+                return
+            if fld.type.kind == "集合" and st.op in ("+=", "-="):
+                word = "add" if st.op == "+=" else "remove"
+                self.d(ERROR, "型", f"集合に {st.op} は使えません。{word} 要素 {'to' if word == 'add' else 'from'} {st.var}.{st.f} と書きます", st.line)
+                return
             passing = self.pass_null(st.e, fld.type)
             self.writing, saved = passing, self.writing
             vt = self.ty(st.e)
@@ -3225,6 +3233,8 @@ class ProcChecker:
                   and not (isinstance(st.e, Num) and tok_of(fld.type) in ("Int", "Money"))):
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
+            if fld.type.kind == "集合":
+                self.forget(data, LEN + st.f)  # 集合を丸ごと書き換えた。件数について分かっていたことは消える
             self.fit_unit(st.e, fld.type, f"{data}.{st.f}", st.line, base=Name(st.var))
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             self.check_text_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
@@ -3280,6 +3290,42 @@ class ProcChecker:
                     self.d(ERROR, "型", "for … { } の中に書けるのは、データを引く文と、要求だけです", st.line)
             self.env = saved
             self.loop_deps = set()
+
+    def set_change(self, st, data, fld):
+        """add 要素 to 変数.項目 ／ remove 要素 from 変数.項目。足す先は件数の上限（max N）が要り、
+        足す前に、まだ上限に届いていないと示せること（if len(x.f) >= N { return … } の先）。外すほうは確かめが要らない"""
+        info, where = self.info, f"{data}.{st.f}"
+        word = "to" if st.op == "add" else "from"
+        if fld.type.kind != "集合":
+            self.d(ERROR, "型", f"{st.op} … {word} の相手は集合の項目です（{where} は集合ではありません）", st.line)
+            return
+        if fld.type.optional:
+            self.d(ERROR, "null", f"{where} は null になりうるので、{st.op} できません（集合の項目に required を付けてください）", st.line)
+            return
+        if self.ty(st.e) not in ("ID", "?"):
+            self.d(ERROR, "型", f"集合 {where} に{'足せる' if st.op == 'add' else 'から外せる'}のは id です（{show(st.e)}）", st.line)
+        b = self.bindings.get(st.var, st.var)
+        key = LEN + st.f
+        info.field_reads.add(where)
+        if st.op == "add":
+            n = fld.type.maxn
+            if n is None:
+                self.d(ERROR, "範囲", f"{where} に要素を足すには、型に件数の上限が要ります（set of id max N）", st.line)
+            else:
+                hi = self.facts.get((UP, b, key))
+                if hi is None or hi >= n:
+                    self.d(ERROR, "範囲", f"{where} に足す前に、まだ上限（{n} 件）に届いていないと示せません"
+                           f"（先に if len({st.var}.{st.f}) >= {n} {{ return … }} で確かめてください）", st.line)
+                else:
+                    self.forget(data, key)  # 同じデータの別の束縛（同じ 1 件かもしれない）について分かっていた件数は消える
+                    self.facts[(UP, b, key)] = hi + 1
+        else:
+            hi = self.facts.get((UP, b, key))
+            self.forget(data, key)
+            if hi is not None:  # 外しても件数は増えない。この 1 件について分かっていた上限はそのまま
+                self.facts[(UP, b, key)] = hi
+        self.note_write(where)
+        info.write_ops.setdefault(where, set()).add(st.op)
 
     def check_transition(self, data, fname, dst, line, var):
         sname = next(f.type.target for f in self.ck.data[data].fields if f.name == fname)
@@ -3467,7 +3513,13 @@ class ProcChecker:
             return self.add_facts(self.cond_facts(c.l, holds), self.cond_facts(c.r, holds))
         if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==", "!=") and isinstance(c.r, Num)):
             return {}
-        if isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
+        if (isinstance(c.l, Call) and c.l.n == "len" and len(c.l.args) == 1 and isinstance(c.l.args[0], Attr)
+                and isinstance(c.l.args[0].e, Name) and c.l.args[0].e.n in self.bindings):
+            t = self.decl_type(c.l.args[0], self.env)
+            if t is None or t.kind != "集合":
+                return {}
+            b, f = self.bindings[c.l.args[0].e.n], LEN + c.l.args[0].n  # 集合の項目の件数
+        elif isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
             t = self.decl_type(c.l, self.env)
             if t is None or t.kind not in ("整数", "金額"):
                 return {}

@@ -172,7 +172,9 @@ def step_lines(body, depth: int = 0) -> list[str]:
                     out.append(pad + "そうでなければ：")
                     out += step_lines(st.els, depth + 1)
         elif isinstance(st, SetField):
-            if st.op in ("+=", "-=") and isinstance(st.e, Bin):
+            if st.op in ("add", "remove"):
+                text = f"{st.var}.{st.f} {'に 1 つ足す' if st.op == 'add' else 'から 1 つ外す'}： {tell(st.e)}"
+            elif st.op in ("+=", "-=") and isinstance(st.e, Bin):
                 text = f"{st.var}.{st.f} {'に足す' if st.op == '+=' else 'から引く'}： {tell(st.e.r)}"
             else:
                 text = f"{st.var}.{st.f} = {tell(st.e)}"

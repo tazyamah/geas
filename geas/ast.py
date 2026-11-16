@@ -637,7 +637,7 @@ class SetField:
     f: str
     e: object
     line: int = 0
-    op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印
+    op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印。"add" "remove" は集合に 1 つ足す・外す（e は要素）
     guard: Optional[tuple] = None  # 範囲の確認を人が引き受ける印。("saturating"|"assume", 理由)。+= と -= だけ
 
 
@@ -702,7 +702,7 @@ def show_type(t: Type) -> str:
     if k == "写像":
         return f"{t.key} → {show_type(t.value)}" + (f"（最大 {t.maxn} 件）" if t.maxn is not None else "")
     if k == "集合":
-        return f"{show_type(t.value)} の集合"
+        return f"{show_type(t.value)} の集合" + (f"（最大 {t.maxn} 件）" if t.maxn is not None else "")
     raise ValueError(k)
 
 

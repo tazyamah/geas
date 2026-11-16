@@ -584,7 +584,7 @@ class Parser:
         if tok == "set":  # set of id
             self.expect("of")
             self.expect("id")
-            return Type("集合", value=Type("ID"))
+            return Type("集合", value=Type("ID"), maxn=self.max_opt())
         if tok == "text":  # 範囲は長さ（文字数）。of "a-z0-9_" は使える文字
             rng, chars = self.range_opt(), self.chars_opt()
             return Type("文字列", range=rng, chars=chars, check=self.check_opt(rng, chars))
@@ -1130,6 +1130,16 @@ class Parser:
         elif self.is_("delete") and self.peek(1).kind == "NAME" and not self.is_(".", 1):
             self.next()
             s = Delete(self.name(), line)
+        elif (self.is_("add") or self.is_("remove")) and not self.is_(".", 1):
+            # add 要素 to 変数.項目 ／ remove 要素 from 変数.項目：集合に 1 つ足す・外す
+            op = self.next().val
+            word = "to" if op == "add" else "from"
+            e = self.expr()
+            if not self.accept(word):
+                raise self.err(f"{op} は「{op} 要素 {word} 変数.項目」と書きます（例：{op} tag_id {word} product.tags）")
+            n = self.name()
+            self.expect(".")
+            s = SetField(n, self.name(), e, line, op)
         elif self.accept("let"):
             if self.is_("mut") and self.peek(1).kind == "NAME":
                 raise self.err("let に mut は付けません", "let の変数は作り直さず、項目の更新は 名前.項目 = 値 と書きます")
@@ -1170,6 +1180,8 @@ class Parser:
                     guard = (mode, why.val)
                 s = SetField(n, f, Bin(op[0], Attr(Name(n), f), e), line, op, guard)
             else:
+                if self.is_("<") and self.is_("<", 1):
+                    raise self.err(f"集合に足す記号 << はありません。add 要素 to {n}.{f} と書きます（外すのは remove 要素 from {n}.{f}）")
                 self.expect("=")
                 s = SetField(n, f, self.expr(), line)
         self.end_stmt()
