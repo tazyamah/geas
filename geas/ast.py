@@ -491,8 +491,10 @@ class Attr:
 
 @dataclass
 class Index:
+    """データ[ID]：ID で 1 件を引く。scopes があれば `データ.範囲1.範囲2[ID]`：すべての範囲に入る行だけを「ある」とする（外の行は「無い」）"""
     d: str
     e: object
+    scopes: list = field(default_factory=list)
 
 
 @dataclass

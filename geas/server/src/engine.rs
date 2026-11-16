@@ -219,6 +219,12 @@ impl Engine {
                 inp.insert(k, v.clone());
             }
         }
+        // 本人で絞る範囲を通す処理：呼んだ本人の ID（http の層が、プロキシのヘッダから入れたもの）を渡す
+        if def["caller"] == true {
+            if let Some(v) = input.get("caller") {
+                inp.insert("caller".to_string(), v.clone());
+            }
+        }
         let inp = Value::Object(inp);
         let resp = self.call(deed, &ctx, &inp)?;
         let result = s(&resp, "result");

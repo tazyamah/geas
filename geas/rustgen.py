@@ -5,7 +5,7 @@ from dataclasses import is_dataclass, replace
 
 from .ast import *  # noqa: F401,F403
 from .parser import parse_chars
-from .check import Checker, ProcInfo, column_type, phys, tok_of, iv_of
+from .check import Checker, ProcInfo, column_type, deed_inputs, phys, tok_of, iv_of
 from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -894,6 +894,27 @@ class ProcGen:
             return False
         return next(f for f in self.ck.data[bt[4:]].fields if f.name == e.n).type.optional
 
+    def scope_filter(self, ix) -> str:
+        """範囲を通す 1 件引き：範囲の外の行は「無い」にする（Option の filter）。範囲が無ければ空"""
+        if not ix.scopes:
+            return ""
+        fields = {f.name: f for f in self.ck.data[ix.d].fields}
+        by = {s.name: s for s in reversed(self.ck.p.scopes)}
+
+        def atom(f, op, st):  # 問い合わせの where と同じ比べ方（null はどの比較も満たさない）
+            if not st.isdigit():
+                return f"r.{f} {op} {fields[f].type.target}::{st}"
+            if fields[f].type.optional:
+                return f"r.{f}.map_or(false, |v| (v as i128) {op} {st})"
+            return f"(r.{f} as i128) {op} {st}"
+        conds = []
+        for n in ix.scopes:
+            s = by[n]
+            conds += ["(" + " || ".join(atom(f, op, st) for f, op, st in g) + ")" for g in s.conds]
+            if s.caller:
+                conds.append(f"r.{s.caller}.as_deref() == Some(Input.caller.as_str())" if fields[s.caller].type.optional else f"r.{s.caller} == Input.caller")
+        return f".filter(|r| {' && '.join(conds)})" if conds else ""
+
     def place(self, e) -> str:
         if isinstance(e, Name):
             kind, _ = self.scope[e.n]
@@ -1171,7 +1192,7 @@ class ProcGen:
             if isinstance(st.e, Index):
                 d = st.e.d
                 mut = st.name in self.copied
-                self.L(f"let {'mut ' if mut else ''}{st.name} = match Store.{d}.get(&({self.rx(st.e.e)})) {{")
+                self.L(f"let {'mut ' if mut else ''}{st.name} = match Store.{d}.get(&({self.rx(st.e.e)})){self.scope_filter(st.e)} {{")
                 self.L("    Some(r) => r.clone()," if mut else "    Some(r) => r,")
                 if mut:
                     self.owned.add(st.name)
@@ -1282,7 +1303,7 @@ class ProcGen:
         n = proc.name
         g.w(f"// ---- 処理 {n} ----")
         g.w(f"pub struct {n}Input {{")
-        for name, t in proc.inputs:
+        for name, t in deed_inputs(g.ck, proc):
             g.w(f"    pub {name}: {field_rust(t)},")  # 無いかもしれない入力は Option
         g.w("}")
         g.w(f"impl {n}Input {{\n    /// 外部から取り込むときの、範囲の宣言の検査\n    pub fn validate(&self) -> Result<(), String> {{")

@@ -346,6 +346,11 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
         if matches!(r["kind"].as_str(), Some("index") | Some("show")) && en.defs["queries"][&target]["caller"] == true && caller_id.is_none() {
             return Some(json_resp(401, json!({ "error": "呼んだ本人が分かりません（この URL は、本人の分だけを返します）" })));
         }
+        // 本人で絞る範囲を通して行を引く処理：呼んだ本人の ID が無ければ、処理を始めずに断る
+        let deed_caller = !matches!(r["kind"].as_str(), Some("index") | Some("show")) && en.defs["deeds"][&target]["caller"] == true;
+        if deed_caller && caller_id.is_none() {
+            return Some(json_resp(401, json!({ "error": "呼んだ本人が分かりません（この URL は、本人の分だけを扱います）" })));
+        }
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(body).unwrap_or(Value::Null) };
         if parsed.is_null() {
             return Some(json_resp(400, json!({ "error": "本文が JSON ではありません" })));
@@ -434,6 +439,12 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                 if let (Some(c), Some(k)) = (caps.last(), r["id_input"].as_str().filter(|k| !k.is_empty())) {  // /…/:id の ID は、処理の ID の入力になる
                     if let Some(m) = input.as_object_mut() {
                         m.insert(k.to_string(), Value::String(c.clone()));
+                    }
+                }
+                // 呼んだ本人の ID（プロキシが載せたヘッダ）を、入力 caller に入れる。本文に caller があっても、ヘッダの値で置き換える
+                if deed_caller {
+                    if let Some(m) = input.as_object_mut() {
+                        m.insert("caller".to_string(), Value::String(caller_id.clone().unwrap_or_default()));
                     }
                 }
                 let slots = input.as_object_mut().and_then(|m| m.remove("slots")).unwrap_or(json!({}));

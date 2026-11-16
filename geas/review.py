@@ -957,7 +957,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         add("routes", "URL（ルート）", lead("外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。パスは、どのリソースかを表します。絞り込みの条件があるときだけ、クエリ文字列の q[名前]=値 で渡します（名前の後ろの ? は、省ける条件）。")
             + lead("「外から」が「内部（流れの途中）」の URL は、返事・期限・前の処理の結果から進む処理を呼ぶものです。外から直接呼ぶと、決済の返事などの確かめを飛ばせてしまうので、サーバーは答えません（テストのために --test で起こしたときだけ答えます）。")
             + route_table(spec)
-            + ("<h3>範囲（名前を付けた行の集合）</h3>" + lead(SCOPE_NOTE + "。") + table(["範囲", "データ", "入る行", "使う問い合わせ"], spec["範囲"]) if spec.get("範囲") else "")
+            + ("<h3>範囲（名前を付けた行の集合）</h3>" + lead(SCOPE_NOTE + "。") + table(["範囲", "データ", "入る行", "使う問い合わせ・処理"], spec["範囲"]) if spec.get("範囲") else "")
             + ("<h3>役割（呼べる人の区別）</h3>" + lead(ACTOR_NOTE + "。「呼べる人」の列に無い役割は、その URL を呼べません。") + table(["役割", "ヘッダに載せる名前", "呼べる URL"], spec["役割"]) if spec.get("役割") else ""))
 
     if records:
