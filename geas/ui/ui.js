@@ -54,24 +54,42 @@ const urlOf = (name, args) => {
 // 問い合わせの答えは、URL ごとに版（ETag）と行を覚えておき、引き直すときに版を送る。保存が変わっていなければ、
 // サーバーは 304 で本文を送らず、覚えている行を使う（2 秒ごとの引き直しで、変わっていない一覧を毎回送り直して描き直さない）
 const known = {};
-async function fetchRows(name, args) {
+// url を渡すと、その URL（答えの next）を読む。答えには、続きがあるときの next（次のページの URL）か after（POST のときの印）が付く
+async function fetchRows(name, args, url0) {
   const rt = ROUTE[name];
   if (rt && rt.post) {  // 事情があって POST で受ける問い合わせ：条件は本文の {"q": {…}}。版（ETag）は無いので、毎回読み直す
     const a = args || {}, q = Object.fromEntries((rt.q_inputs || []).filter((x) => a[x.name] != null && a[x.name] !== "").map((x) => [x.name, x.int ? Number(a[x.name]) : a[x.name]]));
     const j = await api("POST", urlOf(name, Object.fromEntries((rt.path_inputs || []).map((x) => [x.name, a[x.name]]))), { q });
     const rows = j.rows || (j.ids || []).map((id) => ({ id }));
-    return (rowsOf[name] = rows, { tag: null, rows, key: null });
+    return (rowsOf[name] = rows, { tag: null, rows, key: null, after: j.after });
   }
-  const url = urlOf(name, args), had = known[url];
+  const url = url0 || urlOf(name, args), had = known[url];
   const r = await xfetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
   if (r.status === 304 && had) return (rowsOf[name] = had.rows, had);
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
   if (!r.ok) throw new Error(j.error || r.statusText);
-  const tag = r.headers.get("ETag"), got = { tag, rows: j.rows || (j.ids || []).map((id) => ({ id })), key: tag && url + " " + tag };
+  const tag = r.headers.get("ETag"), got = { tag, rows: j.rows || (j.ids || []).map((id) => ({ id })), key: tag && url + " " + tag, next: j.next };
   if (tag) known[url] = got; else delete known[url];
   return (rowsOf[name] = got.rows, got);
 }
 const query = async (name, args) => (await fetchRows(name, args)).rows;
+// 一覧ごとの読み方：選んだ並び（order）と、「続きを読む」で読み足したページの数（pages）
+const view = {};
+const loadTurn = {};  // 問い合わせ名 → 一覧の読み込みを始めた回数（古い読み込みの結果を描かないため）
+const viewOf = (name) => view[name] || (view[name] = { order: "", pages: 0 });
+// 一覧を、読み足したページの分まで読む。引き直すとき（2 秒ごと・書き込みのあと）も、同じページ数を読み直す
+async function fetchShown(name, args) {
+  const v = viewOf(name), a = { ...args, ...(v.order ? { order: v.order } : {}) };
+  let got = await fetchRows(name, a), rows = got.rows;
+  const keys = [got.key];
+  for (let i = 0; i < v.pages && (got.next || got.after); i++) {
+    got = got.next ? await fetchRows(name, a, got.next) : await fetchRows(name, { ...a, after: got.after });
+    rows = rows.concat(got.rows);
+    keys.push(got.key);
+  }
+  rowsOf[name] = rows;
+  return { rows, key: keys.every(Boolean) ? keys.join("|") : null, more: !!(got.next || got.after) };
+}
 
 function notice(msg, kind) {
   const n = $("#notice");
@@ -153,7 +171,12 @@ async function loadShow(sc, qname) {
   if (!box) return;
   const args = showArgs(sc, qname);
   if (!args) { drawRows(box, [], `<p class="hint">入力すると表示します。</p>`); box.dataset.drawn = ""; return; }
-  const got = await fetchRows(qname, args), rows = got.rows, qd = Q[qname];
+  // 同じ一覧の読み込みが重なったら（引き直しの途中で「続きを読む」を押した、など）、後から始めたものだけを描く
+  const turn = (loadTurn[qname] = (loadTurn[qname] || 0) + 1);
+  const got = await fetchShown(qname, args), rows = got.rows, qd = Q[qname];
+  if (loadTurn[qname] !== turn) return;
+  const more = $(`[data-more="${qname}"]`);
+  if (more) more.hidden = !got.more;  // 続きがあるときだけ「続きを読む」を出す
   if (got.key && box.dataset.drawn === got.key) return;  // 前に描いた答えと同じ（URL と版が同じ）。描き直さない
   box.dataset.drawn = got.key || "";
   drawRows(box, rows.map((r) => rowHtml(qd, r, { opens: sc.opens, slot: sc.slots[0] })), `<p class="hint">ありません。</p>`);
@@ -181,6 +204,14 @@ function drawRows(box, htmls, empty) {
     box.insertBefore(t.content, box.children[head] || null);
   }
   drawnRows.set(box, htmls);
+}
+
+// 並びを選べる問い合わせ（order を 2 行以上書いたもの）の、選ぶ欄。選べなければ空
+function orderSelect(q) {
+  const os = Q[q].orders || [];
+  if (!os.length) return "";
+  const cur = viewOf(q).order || os[0].value;
+  return `<label class="order">並び <select data-order="${esc(q)}">${os.map((o) => `<option value="${esc(o.value)}"${o.value === cur ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></label>`;
 }
 
 // ---- 画面 ----
@@ -213,7 +244,7 @@ async function render() {
   main.innerHTML = [
     ...sc.slots.map((s) => `<div class="pills" role="group" aria-label="${esc(s.label)}" data-slot="${esc(s.name)}">${s.values.map((v) => `<button type="button" data-slotval="${esc(v.value)}" class="${v.value === slotVal[s.name] ? "on" : ""}">${esc(v.label)}</button>`).join("")}</div>`),
     ...sc.fields.map((f) => fieldHtml(sc, f)),
-    ...sc.shows.map((q) => `<section data-show="${esc(q)}"><h2>${esc(Q[q].label)}</h2><div class="rows ${esc(sc.design.layout)}"></div></section>`),
+    ...sc.shows.map((q) => `<section data-show="${esc(q)}"><h2>${esc(Q[q].label)}</h2>${orderSelect(q)}<div class="rows ${esc(sc.design.layout)}"></div><button type="button" class="more" data-more="${esc(q)}" hidden>続きを読む</button></section>`),
     sc.actions.length ? `<div class="actions">${sc.actions.map((a) => `<button type="button" class="primary" data-action="${esc(a.deed)}">${esc(a.label)}</button>`).join("")}</div>` : "",
   ].join("");
   for (const f of sc.fields) { await fillField(sc, f); if (my !== gen) return; }
@@ -327,7 +358,8 @@ async function route() {
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button"); if (!t) return;
   const sc = cur && S[cur.name];
-  if (t.dataset.screen) go(t.dataset.screen, {});
+  if (t.dataset.more && sc) { viewOf(t.dataset.more).pages++; loadShow(sc, t.dataset.more).catch((x) => notice("読み込めません: " + x.message, "warn")); }
+  else if (t.dataset.screen) go(t.dataset.screen, {});
   else if (t.dataset.open) {
     const target = S[t.dataset.open], p = target.params[0];
     qty = {}; go(t.dataset.open, p ? { [p.name]: t.dataset.id } : {});
@@ -347,6 +379,13 @@ async function fire(name) {
   if (cur) await Promise.all(S[cur.name].shows.map((q) => loadShow(S[cur.name], q).catch(() => {})));
 }
 const eventsOn = (when) => Object.entries(D.screens.events_on).filter(([, on]) => on === when).map(([n]) => n);
+document.addEventListener("change", (e) => {
+  const t = e.target.closest("select[data-order]"), sc = cur && S[cur.name];
+  if (!t || !sc) return;
+  const v = viewOf(t.dataset.order);
+  v.order = t.value; v.pages = 0;  // 並びを変えたら、最初のページから読み直す
+  loadShow(sc, t.dataset.order).catch((x) => notice("読み込めません: " + x.message, "warn"));
+});
 window.addEventListener("online", () => { $("#offline").hidden = true; eventsOn("online").forEach(fire); });
 window.addEventListener("offline", () => ($("#offline").hidden = false));
 document.addEventListener("visibilitychange", () => { if (!document.hidden) eventsOn("opened").forEach(fire); });
