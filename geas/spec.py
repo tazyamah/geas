@@ -118,7 +118,7 @@ def tell(e) -> str:
     if isinstance(e, Attr):
         return f"{t(e.e)}.{e.n}"
     if isinstance(e, Index):
-        return f"{e.d}[{t(e.e)}]"
+        return f"{e.d}{'（範囲 ' + '、'.join(e.scopes) + '）' if e.scopes else ''}[{t(e.e)}]"
     if isinstance(e, Make):
         return f"{e.n} {{ {', '.join(f'{n}: {t(x)}' for n, x in e.fields)} }}"
     if isinstance(e, Bin):
@@ -218,7 +218,8 @@ ACTOR_NOTE = ("役割は、前に置くプロキシが本人を確かめ、ヘ�
 
 SCOPE_NOTE = ("データ.範囲1.範囲2 と並べると、すべての範囲に入る行だけになります。"
               "「呼んだ本人のID」は、前に置くプロキシが本人を確かめ、ヘッダ X-Geas-Actor-Id に載せて渡します。"
-              "呼ぶ側は渡せません。ヘッダの無い呼び出しは 401 で断ります")
+              "呼ぶ側は渡せません。ヘッダの無い呼び出しは 401 で断ります。"
+              "処理が データ.範囲[ID] で 1 件を引くときは、範囲の外の行を「無い」として扱います")
 
 
 def scope_text(p, s) -> str:
@@ -250,11 +251,11 @@ def build(ck: Checker) -> dict:
     names = spec["名前"]
     spec = show_all(ck.p, spec)
     inner = internal_targets(ck.p)
-    spec["ルート"] = [(m, shown_path(ck.p, path, kind, tgt), kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner))
+    spec["ルート"] = [(m, shown_path(ck.p, path, kind, tgt), kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner) + ("（本人の分だけ）" if tgt in ck.infos and ck.infos[tgt].caller and tgt not in inner else ""))
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["役割"] = actor_rows(ck.p, spec["ルート"])
     show = ck.p.show_names
-    spec["範囲"] = [(show(s.name) + (f"（{'、'.join(show(n) for n, _ in s.params)}）" if s.params else ""), show(s.data), scope_text(ck.p, s), "、".join(show(q.name) for q in ck.p.queries if s.name in q.scopes) or "なし") for s in ck.p.scopes]
+    spec["範囲"] = [(show(s.name) + (f"（{'、'.join(show(n) for n, _ in s.params)}）" if s.params else ""), show(s.data), scope_text(ck.p, s), "、".join([show(q.name) for q in ck.p.queries if s.name in q.scopes] + [show(x.name) for x in ck.p.processes if s.name in ck.infos[x.name].scopes]) or "なし") for s in ck.p.scopes]
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
     spec["名前"] = names
     return spec
@@ -563,7 +564,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
                 "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
         out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
     if spec.get("範囲"):
-        out += ["", f"## 範囲（名前を付けた行の集合。{SCOPE_NOTE}）", "", "| 範囲 | データ | 入る行 | 使う問い合わせ |", "|---|---|---|---|"]
+        out += ["", f"## 範囲（名前を付けた行の集合。{SCOPE_NOTE}）", "", "| 範囲 | データ | 入る行 | 使う問い合わせ・処理 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["範囲"]]
     if spec.get("役割"):
         out += ["", f"## 役割（呼べる人の区別。{ACTOR_NOTE}）", "", "| 役割 | ヘッダに載せる名前 | 呼べる URL |", "|---|---|---|"]

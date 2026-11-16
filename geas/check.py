@@ -146,12 +146,20 @@ class ProcInfo:
     types: dict = field(default_factory=dict)  # id(式) → 型トークン
     lookup_vars: dict = field(default_factory=dict)  # 変数 → データ名
     deletes: set = field(default_factory=set)  # delete したデータ名
+    scopes: list = field(default_factory=list)  # 1 件引きで通した範囲の名前（書いた順、重なりなし）
+    caller: bool = False  # 本人で絞る範囲を通す（サーバーが、呼んだ本人の ID を入力 caller に入れる）
     guards: list = field(default_factory=list)  # 足し引きの範囲を人が引き受けた文：("データ.項目", 書き方, "saturating"|"assume", 理由)
 
     @property
     def reads(self) -> set:
         data_with_fields = {r.split(".")[0] for r in self.field_reads}
         return set(self.field_reads) | {d for d in self.exist_reads if d not in data_with_fields}
+
+
+def deed_inputs(ck, proc) -> list:
+    """生成物での処理の入力：書いた入力に、本人で絞る範囲の「呼んだ本人の ID」（caller）を足したもの。
+    caller は、呼ぶ側が渡す値ではなく、サーバーが、プロキシの載せたヘッダから入れる"""
+    return [*proc.inputs, (CALLER, Type("ID"))] if proc.name in ck.infos and ck.infos[proc.name].caller else list(proc.inputs)  # 問い合わせを渡されたら、そのまま
 
 
 SELECT_KINDS = ("ID", "整数", "金額", "日時", "文字列", "名前", "参照")
@@ -307,6 +315,7 @@ class Checker:
         self.check_events()
         self.check_screens()
         self.check_resources()
+        self.check_deed_callers()
         self.check_deletes()
         self.check_isolations()
         self.check_needs()
@@ -1643,6 +1652,25 @@ class Checker:
             if e.name not in used:
                 self.d(WARN, "リソース", f"出来事 {e.name}", "どのリソースの create にも割り当てていません（外から起こせません）")
 
+    def check_deed_callers(self):
+        """本人で絞る範囲を通して行を引く処理は、役割のある人が外から呼ぶ口だけで動くこと（呼んだ本人がいない道では動かせない）"""
+        from .rest import ANYONE, internal_targets
+        p = self.p
+        need = [x for x in p.processes if self.infos[x.name].caller]
+        if not need:
+            return
+        inner = internal_targets(p)
+        by_event = {pn for ev in p.events for _, _, pn in ev.steps}
+        acts = {a.target: a for res in p.resources for a in res.actions}
+        for x in need:
+            w = f"処理 {x.name}"
+            if x.name in inner:
+                self.d(ERROR, "範囲", w, "本人で絞る範囲を通して引くので、流れの途中の処理にはできません（流れの途中には、呼んだ本人がいません）", x.line)
+            elif x.name in by_event:
+                self.d(ERROR, "範囲", w, "本人で絞る範囲を通して引くので、出来事からは呼べません（出来事には、呼んだ本人がいません）", x.line)
+            elif x.name not in acts or acts[x.name].actors is None or ANYONE in acts[x.name].actors:
+                self.d(ERROR, "範囲", w, "本人で絞る範囲を通して引くので、呼べるのは役割のある人だけです（resource の動作に `for 役割` を書きます。for anyone にはできません）", x.line)
+
     def check_actors(self):
         """役割（actor）の検査。役割を 1 つでも宣言したら、外から呼べる動作すべてに `for 役割, …` か `for anyone` が要る
         （書き忘れで、誰でも呼べる口を作らないため）。流れの途中の処理は外から呼べないので、for は書けない。"""
@@ -1966,6 +1994,7 @@ class ProcChecker:
         self.exist_sets: dict[str, tuple[str, str]] = {}  # 集合の変数 → (データ, 回した元)
         # 確認はデータ名でなく「どのキーで引いたものか」に効く。別のキーで引いたものには効かない
         self.guarded: set[tuple[str, str]] = set()  # 存在を確かめた (データ, キーの式) か (データ, "∈" + 回した元)
+        self.scoped_ok: set[int] = set()  # 範囲を通す 1 件引きのうち、書ける形（let … else）のもの（id(式)）
         self.state_guards: set[tuple[str, str, str]] = set()  # (束縛, 項目, 元の状態)
         self.bindings: dict[str, str] = {}  # 変数 → 束縛（同じ名前で引き直すと別の束縛になる）
         self.binding_data: dict[str, str] = {}  # 束縛 → データ名（同じデータの別の束縛は、同じ1件かもしれない）
@@ -2026,6 +2055,8 @@ class ProcChecker:
             if e.d not in ck.data:
                 self.d(ERROR, "名前", f"データ「{e.d}」が未定義です" + near(e.d, ck.data))
                 return "?"
+            if e.scopes and id(e) not in self.scoped_ok:
+                self.d(ERROR, "範囲", f"範囲を通して引けるのは「let 名前 = {e.d}.{'.'.join(e.scopes)}[ID] else {{ return … }}」の形だけです")
             if self.ty(e.e, env) != "ID":
                 self.d(ERROR, "型", f"{e.d}[ ] の中は ID である必要があります")
             return f"Rec:{e.d}"
@@ -2848,6 +2879,33 @@ class ProcChecker:
                 continue
             self.stmt(inner, pos)
 
+    def scoped_lookup(self, st, info):
+        """let 名前 = データ.範囲1.範囲2[ID] else { return … }：範囲の外の行は「無い」として扱う。
+        範囲が比べる項目は、処理が読む項目に数える。本人で絞る範囲を通す処理は、サーバーが呼んだ本人の ID を渡す"""
+        ix, p = st.e, self.ck.p
+        if st.absent is None:
+            self.d(ERROR, "範囲", f"範囲を通して引くときは、無いとき（範囲の外のときも含む）の扱い else {{ return … }} が要ります", st.line)
+            return
+        self.scoped_ok.add(id(ix))
+        by = {s.name: s for s in reversed(p.scopes)}
+        for n in ix.scopes:
+            s = by.get(n)
+            if s is None:
+                self.d(ERROR, "範囲", f"範囲「{n}」が未定義です" + near(n, by), st.line)
+            elif s.data != ix.d:
+                self.d(ERROR, "範囲", f"範囲 {n} は {s.data} の範囲なので、{ix.d} には使えません", st.line)
+            elif ix.scopes.count(n) > 1:
+                self.d(ERROR, "範囲", f"範囲 {n} を重ねて書いています", st.line)
+            elif s.params:
+                self.d(ERROR, "範囲", f"引数つきの範囲 {n} は、処理の 1 件引きにはまだ使えません", st.line)
+            else:
+                if n not in info.scopes:
+                    info.scopes.append(n)
+                info.caller = info.caller or bool(s.caller)
+                info.field_reads |= {f"{ix.d}.{f}" for g in s.conds for f, _, _ in g} | ({f"{ix.d}.{s.caller}"} if s.caller else set())
+        if info.caller and any(n == CALLER for n, _ in self.proc.inputs):
+            self.d(ERROR, "範囲", f"入力の名前に {CALLER} は使えません（範囲の中で、呼んだ本人の ID を表す語です）", st.line)
+
     def if_stmt(self, st: If, pos: int):
         if self.ty(st.cond) not in ("Bool", "?"):
             self.d(ERROR, "型", f"if の条件「{show(st.cond)}」は、成り立つか成り立たないかの条件である必要があります", st.line)
@@ -2931,6 +2989,8 @@ class ProcChecker:
             else:
                 self.var_unit.pop(st.name, None)
             if isinstance(st.e, Index):
+                if st.e.scopes:
+                    self.scoped_lookup(st, info)
                 t = self.ty(st.e)
                 self.env[st.name] = t
                 self.lookup_data[st.name] = st.e.d

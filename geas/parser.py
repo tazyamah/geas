@@ -1221,12 +1221,16 @@ class Parser:
             if self.accept("."):
                 e = Attr(e, self.name())
             elif self.is_("["):
+                scopes = []  # データ.範囲1.範囲2[ID]：範囲を通して 1 件を引く
+                while isinstance(e, Attr):
+                    scopes.insert(0, e.n)
+                    e = e.e
                 if not isinstance(e, Name):
-                    raise self.err("[ ] の前にはデータの名前が必要です")
+                    raise self.err("[ ] の前にはデータの名前が必要です（範囲を通すなら「データ.範囲[ID]」）")
                 self.next()
                 k = self.expr()
                 self.expect("]")
-                e = Index(e.n, k)
+                e = Index(e.n, k, scopes)
             else:
                 return e
 

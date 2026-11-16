@@ -176,6 +176,32 @@ resource Claims {
     NoParcel → 404
   }
 }
+
+result RelabelResult { Relabeled, NotMine }
+
+/// 自分の小包の種類を書き換える
+deed relabel_mine {
+  input parcel_id: id required, kind: Kind required
+  reads Parcel.refund_ref, Parcel.status
+  writes Parcel.kind
+  result RelabelResult
+  effects none
+
+  let p = Parcel.own_parcels.live[parcel_id] else { return NotMine }
+  p.kind = kind
+  return Relabeled
+}
+
+nexus Relabeling {
+  relabel_mine: Relabeled → reply, NotMine → reply
+}
+
+resource MyParcelLabels {
+  update relabel_mine for Customer {
+    Relabeled → 200
+    NotMine → 404
+  }
+}
 """
 
 
@@ -386,7 +412,7 @@ def test_範囲の検査と仕様書():
     assert "## 範囲" in md and "X-Geas-Actor-Id" in md and "すべての範囲に入る行だけ" in md
     rows = {x[0]: x for x in spec["範囲"]}
     assert rows["own_parcels"][2].endswith("が、呼んだ本人のID と同じ") and "!=" in rows["live"][2]
-    assert rows["live"][3] == "自分の、取り消していない小包、取り消していない小包"
+    assert rows["live"][3] == "自分の、取り消していない小包、取り消していない小包、自分の小包の種類を書き換える"
     conds = {x["問い合わせ"]: x["条件"] for x in spec["問い合わせ"]}
     assert len(conds["自分の、取り消していない小包"]) == 2 and any("（範囲 own_parcels）" in c for c in conds["自分の、取り消していない小包"]) and any("（範囲 live）" in c for c in conds["自分の、取り消していない小包"])
     defs = definitions(ck)["queries"]
@@ -430,6 +456,22 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/light")[:2] == (200, [a])
     assert get("Customer", "c-2", path="/my_parcels_of_kinds/light")[:2] == (200, [b])
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/heavy")[:2] == (200, [])
+    # 処理の 1 件引きも範囲を通す：自分の小包は書き換えられ、他人の小包は「無い」（404）。本人の ID が無ければ 401
+    def relabel(pid, who, kind="mine"):
+        req = urllib.request.Request(served + "/my_parcel_labels/" + pid, data=json.dumps({"kind": kind, "caller": "c-1"}).encode(), method="PUT",
+                                     headers={"Content-Type": "application/json", "X-Geas-Actor": "Customer", **({"X-Geas-Actor-Id": who} if who else {})})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read()).get("result")
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read()).get("result")
+    assert relabel(a, "c-1") == (200, "Relabeled")
+    assert relabel(b, "c-1") == (404, "NotMine")  # 本文に caller を書いても、ヘッダの本人で決まる
+    assert relabel(a, "c-2") == (404, "NotMine") and relabel("nope", "c-1") == (404, "NotMine")
+    assert relabel(a, None)[0] == 401
+    kinds = {x["parcel_id"]: x["kind"] for x in call(served, "GET", "/parcels")[1]["rows"]}
+    assert (kinds[a], kinds[b]) == ("mine", "light")
+    assert relabel(a, "c-1", "light") == (200, "Relabeled")
     # 絞り込みの条件は q[名前]=値：種類はパス、料金の下限（必ず）と上限（省ける）はクエリ文字列
     two = "/parcels_by_kind_and_fees/light"
     assert {a, b} <= set(get(path=two + "?q[min_fee]=300")[1]) and get(path=two + "?q[min_fee]=301")[:2] == (200, [])
@@ -470,3 +512,23 @@ def test_絞り込みの条件は_q名前で渡る():
             parse(text.replace("key kind {\n  show parcels_by_kind_and_fee", two + " {\n  show parcels_by_kind_and_fee"), "x")
     assert has(text.replace("key kind {\n  show parcels_by_kind_and_fee", "key nope {\n  show parcels_by_kind_and_fee"), "key「nope」が")
     assert has(text.replace("input max_fee: Fee\n", "input max_fee: bool\n").replace("  filter fee at_most max_fee\n", ""), "URL に載せられない型です")
+
+
+def test_処理の1件引きは_範囲を通せる():
+    text = scoped()
+    ck = ck_of(text)
+    assert errors(text) == []
+    from geas.hostgen import definitions
+    from geas.spec import build, render
+    assert ck.infos["relabel_mine"].caller and ck.infos["relabel_mine"].scopes == ["own_parcels", "live"]
+    assert definitions(ck)["deeds"]["relabel_mine"]["caller"] is True and "caller" not in definitions(ck)["deeds"]["claim"]
+    spec = build(ck)
+    assert any("（本人の分だけ）" in row[6] and row[1] == "/my_parcel_labels/:id" for row in spec["ルート"])
+    assert "（範囲 own_parcels、live）[" in render(ck, spec, "")
+    one = "let p = Parcel.own_parcels.live[parcel_id] else { return NotMine }"
+    assert has(text.replace(one, "let p = Parcel.own_parcel[parcel_id] else { return NotMine }"), "範囲「own_parcel」が未定義です")
+    assert has(text.replace(one, "let p = Parcel.of_kind[parcel_id] else { return NotMine }"), "引数つきの範囲")
+    assert has(text.replace(one, "let p = Parcel.live.live[parcel_id] else { return NotMine }"), "重ねて書いています")
+    assert has(text.replace("reads Parcel.refund_ref, Parcel.status\n  writes Parcel.kind", "reads Parcel.refund_ref\n  writes Parcel.kind"), "宣言")  # 範囲が比べる項目も、読む項目に数える
+    assert has(text.replace("update relabel_mine for Customer", "update relabel_mine for anyone"), "呼べるのは役割のある人だけです")
+    assert has(text.replace(one, "let p = Parcel[parcel_id] else { return NotMine }\n  let k = Parcel.live[parcel_id].kind"), "の形だけです")

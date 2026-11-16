@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .check import Checker, phys
+from .check import Checker, deed_inputs, phys
 from .rustgen import column_type, opt, rust_str, value_checks
 from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, q_inputs, route_actors, routes as rest_routes
 from .screengen import screens_def
@@ -320,7 +320,9 @@ def definitions(ck: Checker) -> dict:
     inner = internal_targets(p)  # 流れの途中の処理を呼ぶ URL：サーバーは --test のときだけ答える（仕様書の URL の表で「内部」）
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
-                  "touches": touched_data(ck.infos[x.name])} for x in p.processes},
+                  "touches": touched_data(ck.infos[x.name]),
+                  # caller：本人で絞る範囲を通して行を引く処理。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
+                  **({"caller": True} if ck.infos[x.name].caller else {})} for x in p.processes},
         # caller：本人で絞る範囲を使う問い合わせ。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
         "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if uses_caller(p, q) else {})} for q in p.queries},
         "flows": flows,
@@ -448,7 +450,7 @@ def host_source(ck: Checker) -> str:
         info = ck.infos[proc.name]
         n = proc.name
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in proc.refs] + [f'new_{d}_id: ctx.get("new_{d}_id")?.as_str()?.to_string()' for d in sorted(set(info.new_ids))]
-        inf = [f"{x}: {input_j(x, t)}" for x, t in proc.inputs]
+        inf = [f"{x}: {input_j(x, t)}" for x, t in deed_inputs(ck, proc)]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
         w(f"            let o = {n}(&c, Store, &i).map_err(|f| f.to_string())?;\n            Store.apply_tracked(o.Write, changed).map_err(|f| f.to_string())?;")
         w(f"            Ok(write_result(o.result.name(), o.result.args(), {proc.result}_body(&o.result), o.effects.iter().map(write_effects).collect()))\n        }}")

@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .ast import Type
-from .check import Checker, phys
+from .check import Checker, deed_inputs, phys
 from .plan import EXAMPLE, UNSPEC, Finding, n, split_top
 from .rustgen import cargo_toml, library_deps, rust_str, rust_type
 
@@ -131,9 +131,10 @@ def example_code(ck: Checker, row: dict) -> str:
         fields.append(f'new_{d}_id: {rust_str(ctx[key])}.to_string()')
     L.append(f"        let ctx = {proc.name}Ctx {{ {', '.join(fields)} }};")
     given = kv(row.get("入力", "")) if row.get("入力", "").strip() else {}
-    given = {ck.p.resolve(k, [n for n, _ in proc.inputs]): v for k, v in given.items()}
+    inputs = deed_inputs(ck, proc)  # 本人で絞る範囲を通す処理は、具体例の入力に caller（呼んだ本人の ID）を書く
+    given = {ck.p.resolve(k, [n for n, _ in inputs]): v for k, v in given.items()}
     ins = []
-    for name, t in proc.inputs:
+    for name, t in inputs:
         if name not in given:
             if getattr(t, "optional", False):
                 ins.append(f"{name}: None")
