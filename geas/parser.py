@@ -1372,7 +1372,11 @@ class Parser:
             elif kw == "from":  # from データ[.範囲1.範囲2 …]：範囲を並べると、すべてに入る行だけ（積集合）
                 q.target = self.name()
                 while self.accept("."):
-                    q.scopes.append(self.name())
+                    sn = self.name()
+                    q.scopes.append(sn)
+                    if self.accept("("):  # 範囲の引数に渡す、問い合わせの入力
+                        q.scope_args[sn] = self.comma_list(self.name)
+                        self.expect(")")
                 if self.is_("in"):
                     raise self.err("範囲は in ではなく、データのあとに . で続けます", "from データ.範囲（複数は from データ.範囲1.範囲2。すべてに入る行だけになります）")
             elif kw == "where":
@@ -1554,13 +1558,28 @@ class Parser:
         return rs
 
     def where_group(self) -> list:
-        """where の 1 行：「項目 == 状態」「項目 != 状態」「項目 >= 数」を or でつないだ組。行どうしは and"""
+        """where の 1 行：「項目 == 状態」「項目 != 状態」「項目 >= 数」「項目 in [状態, …]」を or でつないだ組。行どうしは and。
+        in は、候補ごとの == を or でつないだものに直して持つ（仕様書・生成物は、今の or と同じ道を通る）"""
         group = []
         while True:
             f = self.name()
+            if self.accept("in"):  # 項目 in [値, 値, …]：どれかと同じ（項目 == 値 or 項目 == 値 … と同じ意味）
+                if not self.accept("["):
+                    raise self.err("in のあとには、候補を [ ] で並べます", "where 項目 in [状態, 状態]（候補は、ここに直に書きます。入力は書けません）")
+                vals = self.comma_list(lambda: str(self.num()) if self.peek().kind == "NUM" else self.name())
+                self.expect("]")
+                for v in vals:
+                    if vals.count(v) > 1:
+                        raise self.err(f"in の候補「{v}」を重ねて書いています")
+                group += [(f, "==", v) for v in vals]
+                if not self.accept("or"):
+                    break
+                continue
             op = self.next().val
+            if op == "=" or (op == "==" and self.is_("[")):
+                raise self.err("候補のどれかと同じ、は in で書きます", "where 項目 in [状態, 状態]（= や == [ … ] は書けません）")
             if op not in CMP:
-                raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」の形です（or でつなげます）")
+                raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」「項目 in [状態, 状態]」の形です（or でつなげます）")
             if self.peek().kind == "NUM":
                 group.append((f, op, str(self.num())))
             elif op in ("==", "!="):
@@ -1577,26 +1596,40 @@ class Parser:
     def scope_decl(self, line) -> Scope:
         """scope 名前 on データ { where 条件 ／ filter 項目 equals caller }：データの行の集合に名前を付ける。
         `from データ.名前` のように使う。where は問い合わせと同じ形。filter 項目 equals caller は、項目が呼んだ本人の ID と同じ行"""
-        usage = "scope は `scope 名前 on データ { where 項目 == 状態 ／ filter 項目 equals caller }` と書きます（caller は、呼んだ本人の ID）"
+        usage = "scope は `scope 名前 on データ { where 項目 == 状態 ／ filter 項目 equals caller }` と書きます（caller は、呼んだ本人の ID）。引数で絞るなら `scope 名前(引数: 型) on データ { filter 項目 equals 引数 }`"
         name = self.name()
+        params = []
+        if self.accept("("):  # 引数（名前: 型, …）。使う側が、問い合わせの入力を渡す
+            params = self.comma_list(lambda: (self.name(), (self.expect(":"), self.type())[1]))
+            self.expect(")")
         if not self.accept("on"):
             raise self.err("scope の名前のあとには on データ が要ります", usage)
-        sc = Scope(name, self.name(), line=line)
+        sc = Scope(name, self.name(), line=line, params=params)
         self.block_open()
         while not self.accept("}"):
             kw = self.name()
             if kw == "where":
                 sc.conds.append(self.where_group())
             elif kw == "filter":
-                if sc.caller:
-                    raise self.err("scope に書ける filter 項目 equals caller は 1 つです", usage)
-                sc.caller = self.name()
-                if not (self.accept("equals") and self.accept("caller")):
-                    raise self.err("scope の filter は 項目 equals caller の形です（入力で絞る範囲は書けません）", usage)
+                f = self.name()
+                if self.peek().kind == "OP" and self.peek().val in CMP:
+                    raise self.err(f"filter に「{self.peek().val}」は書けません", "filter は 項目 equals|at_least|at_most 引数 の形です（== は equals、>= は at_least、<= は at_most）")
+                op = self.name()
+                if op not in self.FILTER_OPS:
+                    raise self.err(f"scope の filter の種類「{op}」は使えません（equals・at_least・at_most）", usage)
+                arg = self.name()
+                if arg == "caller":
+                    if op != "equals":
+                        raise self.err("caller（呼んだ本人の ID）と比べられるのは equals だけです", usage)
+                    if sc.caller:
+                        raise self.err("scope に書ける filter 項目 equals caller は 1 つです", usage)
+                    sc.caller = f
+                else:
+                    sc.filters.append((f, self.FILTER_OPS[op], arg))
             else:
                 raise self.err(f"scope の中に「{kw}」は書けません", usage)
             self.end_line()
-        if not sc.conds and not sc.caller:
+        if not sc.conds and not sc.caller and not sc.filters:
             raise ParseError("scope の中身がありません。" + usage, line)
         return sc
 
