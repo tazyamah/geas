@@ -58,6 +58,22 @@ scope canceled on Parcel {
   where status == Canceled
 }
 
+scope in_hand on Parcel {
+  where status in [Received, Waiting]
+}
+
+/// 手元にある小包
+query parcels_in_hand {
+  from Parcel.in_hand
+  where fee in [0, 300, 500]
+  select parcel_id
+  reads Parcel.status, Parcel.fee, Parcel.parcel_id
+}
+
+resource ParcelsInHand {
+  index parcels_in_hand for anyone
+}
+
 /// 自分の小包
 query my_parcels {
   from Parcel.own_parcels
@@ -323,6 +339,15 @@ def test_範囲の検査と仕様書():
             parse(scoped(SCOPE.replace("filter refund_ref equals caller", bad)), str(SRC))
     with pytest.raises(ParseError, match="範囲は in ではなく"):
         parse(scoped(SCOPE.replace(mine, "from Parcel in own_parcels\n")), str(SRC))
+    # in [候補, …] は、候補ごとの == を or でつないだものと同じ（範囲の中でも、問い合わせの中でも書ける）
+    p_in = parse(scoped(), str(SRC))
+    assert next(x for x in p_in.scopes if x.name == "in_hand").conds == [[("status", "==", "Received"), ("status", "==", "Waiting")]]
+    assert next(q for q in p_in.queries if q.name == "parcels_in_hand").conds == [[("fee", "==", "0"), ("fee", "==", "300"), ("fee", "==", "500")]]
+    assert has(scoped(SCOPE.replace("in [Received, Waiting]", "in [Received, Gone]")), "「Gone」は項目 status の状態ではありません")
+    for bad, why in (("status in Received", "候補を \\[ \\] で並べます"), ("status in [Received, Received]", "重ねて書いています"),
+                     ("status == [Received, Waiting]", "in で書きます"), ("status = [Received, Waiting]", "in で書きます")):
+        with pytest.raises(ParseError, match=why):
+            parse(scoped(SCOPE.replace("status in [Received, Waiting]", bad)), str(SRC))
     # 引数つきの範囲：渡すのは問い合わせの必ずある入力で、数と型が合うこと
     use = "from Parcel.of_kind(kind).own_parcels"
     assert has(scoped(SCOPE.replace(use, "from Parcel.of_kind.own_parcels")), "範囲 of_kind の引数は 1 個です")
@@ -389,3 +414,6 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/light")[:2] == (200, [a])
     assert get("Customer", "c-2", path="/my_parcels_of_kinds/light")[:2] == (200, [b])
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/heavy")[:2] == (200, [])
+    # in [候補, …]：状態がどれかで、料金もどれかの小包（作ったばかりの 2 件は、どちらも当てはまる）
+    hand = get(path="/parcels_in_hand")
+    assert hand[0] == 200 and {a, b} <= set(hand[1])

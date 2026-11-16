@@ -1558,13 +1558,28 @@ class Parser:
         return rs
 
     def where_group(self) -> list:
-        """where の 1 行：「項目 == 状態」「項目 != 状態」「項目 >= 数」を or でつないだ組。行どうしは and"""
+        """where の 1 行：「項目 == 状態」「項目 != 状態」「項目 >= 数」「項目 in [状態, …]」を or でつないだ組。行どうしは and。
+        in は、候補ごとの == を or でつないだものに直して持つ（仕様書・生成物は、今の or と同じ道を通る）"""
         group = []
         while True:
             f = self.name()
+            if self.accept("in"):  # 項目 in [値, 値, …]：どれかと同じ（項目 == 値 or 項目 == 値 … と同じ意味）
+                if not self.accept("["):
+                    raise self.err("in のあとには、候補を [ ] で並べます", "where 項目 in [状態, 状態]（候補は、ここに直に書きます。入力は書けません）")
+                vals = self.comma_list(lambda: str(self.num()) if self.peek().kind == "NUM" else self.name())
+                self.expect("]")
+                for v in vals:
+                    if vals.count(v) > 1:
+                        raise self.err(f"in の候補「{v}」を重ねて書いています")
+                group += [(f, "==", v) for v in vals]
+                if not self.accept("or"):
+                    break
+                continue
             op = self.next().val
+            if op == "=" or (op == "==" and self.is_("[")):
+                raise self.err("候補のどれかと同じ、は in で書きます", "where 項目 in [状態, 状態]（= や == [ … ] は書けません）")
             if op not in CMP:
-                raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」の形です（or でつなげます）")
+                raise self.err("where は「項目 == 状態」「項目 != 状態」「項目 >= 数」「項目 in [状態, 状態]」の形です（or でつなげます）")
             if self.peek().kind == "NUM":
                 group.append((f, op, str(self.num())))
             elif op in ("==", "!="):
