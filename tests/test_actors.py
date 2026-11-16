@@ -153,6 +153,7 @@ resource ParcelPages {
 query parcel_ids_paged {
   from Parcel
   order fee asc
+  order fee desc
   page 1
   reads Parcel.fee
 }
@@ -517,6 +518,12 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert seen == want and pages == (len(want) + 1) // 2
     ids, id_pages = walk("/parcel_id_pages")
     assert ids == [x["parcel_id"] for x in sorted(every, key=lambda x: (x["fee"], x["parcel_id"]))] and id_pages == len(ids)
+    # 並びを選ぶ：書いた候補から q[order] で選ぶ。選ばなければ 1 行目。次のページの URL にも残る。候補に無い並びは 400
+    down, down_pages = walk("/parcel_id_pages?q[order]=fee.desc")
+    assert down == ids[::-1] and down_pages == len(ids) and walk("/parcel_id_pages?q[order]=fee.asc")[0] == ids
+    assert "q[order]=fee.desc" in call(served, "GET", "/parcel_id_pages?q[order]=fee.desc")[1]["next"]
+    assert [call(served, "GET", "/parcel_id_pages?q[order]=" + x)[0] for x in ("fee", "kind.desc", "fee.DESC", "")] == [400] * 4
+    assert call(served, "GET", "/parcel_pages?q[order]=fee.desc")[0] == 400  # 並びが 1 行の問い合わせでは選べない
     # 条件は、次のページの URL にも残る
     lights = [x["parcel_id"] for x in every if x["kind"] == "light"]
     first = call(served, "GET", "/parcel_pages?q[kind]=light")[1]
@@ -597,3 +604,20 @@ def test_ページのある問い合わせは_続きの印を受ける():
     assert route["q_inputs"] == [{"name": "kind", "optional": True}, {"name": "after", "optional": True}]
     assert any(row[1] == "/parcel_pages?q[kind?]=…&q[after?]=…" for row in build(ck)["ルート"])
     assert has(text.replace("query parcels_paged {\n  input kind: Kind", "query parcels_paged {\n  input kind: Kind, after: Kind"), "入力の名前に after は使えません")
+
+
+def test_並びを2行以上書くと_呼ぶ側が選べる():
+    text = scoped()
+    ck = ck_of(text)
+    assert errors(text) == []
+    from geas.hostgen import definitions
+    from geas.spec import build
+    route = next(r for r in definitions(ck)["routes"] if r["target"] == "parcel_ids_paged")
+    assert route["q_inputs"] == [{"name": "order", "optional": True}, {"name": "after", "optional": True}]
+    spec = build(ck)
+    assert any(row[1] == "/parcel_id_pages?q[order?]=…&q[after?]=…" for row in spec["ルート"])
+    row = next(x for x in spec["問い合わせ"] if x["問い合わせ"] == "小包の ID を 1 件ずつ")
+    assert row["並び"] == "fee 小さい順（q[order]=fee.asc。選ばないとき）、fee 大きい順（q[order]=fee.desc）"
+    assert next(x for x in spec["問い合わせ"] if x["問い合わせ"].startswith("小包を 2 件ずつ"))["並び"] == "fee 大きい順"
+    assert has(text.replace("  order fee asc\n  order fee desc\n", "  order fee asc\n  order fee asc\n"), "を 2 回書いています")
+    assert has(text.replace("query parcel_ids_paged {\n", "query parcel_ids_paged {\n  input order: Kind\n  filter kind equals order\n"), "入力の名前に order は使えません")

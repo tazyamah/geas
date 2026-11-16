@@ -1412,7 +1412,8 @@ class Parser:
                 if d not in self.ORDERS:
                     how = ("by は書きません。" if f == "by" else "向きは小文字です。" if d.lower() in self.ORDERS else "") + self.ORDER_HOW
                     raise self.err(f"order の向きは desc か asc です（「{d}」は使えません）", how)
-                q.order = (f, self.ORDERS[d])
+                q.orders.append((f, self.ORDERS[d]))  # 2 行以上書くと、呼ぶ側が q[order] で選べる。1 行目が既定
+                q.order = q.orders[0]
             elif kw == "page":  # 1ページ分（最大 N 件）。N は数か、整数の入力の名前
                 if self.peek().kind == "NUM":
                     q.page_n = self.num()

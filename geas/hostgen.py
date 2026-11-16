@@ -461,6 +461,9 @@ def host_source(ck: Checker) -> str:
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in gen_inputs(p, q)]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
+        if order_choices(q):  # 並びは、書いた候補のどれか
+            names = [name for name, _, _ in order_choices(q)]
+            w(f'            if let Some(o) = &i.{ORDER} {{ if ![{", ".join(rust_str(x) for x in names)}].contains(&o.as_str()) {{ return Err("並び（q[{ORDER}]）は、{"・".join(names)} のどれかです".to_string()); }} }}')
         pg = paged(q)
         if pg:  # 続きの印の行が無ければ、空のページを返さずに断る（消えた行の印で、黙って終わらせない）
             w(f'            if let Some(k) = &i.{AFTER} {{ if !Store.{q.target}.contains_key(k) {{ return Err("続きの位置（q[{AFTER}]）の行がありません。最初のページから読み直してください".to_string()); }} }}')

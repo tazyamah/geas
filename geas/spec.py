@@ -42,11 +42,17 @@ def order_text(ck: Checker, q) -> str:
     """並び：日時は新しい順／古い順、数は大きい順／小さい順（コードの desc／asc）"""
     if not q.order:
         return ""
-    f, d = q.order
     dt = ck.data.get(q.target)
-    kind = next((x.type.kind for x in dt.fields if x.name == f), None) if dt else None
-    words = ("新しい順", "古い順") if kind == "日時" else ("大きい順", "小さい順")
-    return f"{f} {words[0] if d == '降順' else words[1]}"
+
+    def one(f, d):
+        kind = next((x.type.kind for x in dt.fields if x.name == f), None) if dt else None
+        words = ("新しい順", "古い順") if kind == "日時" else ("大きい順", "小さい順")
+        return f"{f} {words[0] if d == '降順' else words[1]}"
+    choices = order_choices(q)
+    if not choices:
+        return one(*q.order)
+    # 呼ぶ側が選べる並び：1 行目が、選ばないときの並び
+    return "、".join(f"{one(f, d)}（q[order]={name}{'。選ばないとき' if k == 0 else ''}）" for k, (name, f, d) in enumerate(choices))
 
 
 def query_rows(ck: Checker, q) -> dict:

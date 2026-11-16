@@ -4,7 +4,7 @@
 入れ子は /親/:親_id/子。パスは「どのリソースか」を決め、絞り込みの条件はクエリ文字列の q[名前]=値 で渡す（ほかの形のクエリ文字列は受けない）。"""
 import re
 
-from .ast import AFTER, Type, paged, uses_caller
+from .ast import AFTER, ORDER, Type, order_choices, paged, uses_caller
 
 METHOD = {"index": "GET", "show": "GET", "create": "POST", "update": "PUT", "destroy": "DELETE"}
 
@@ -87,12 +87,12 @@ def path_inputs(p, res, action, q) -> list[str]:
 def q_inputs(p, res, action, q) -> list[str]:
     """問い合わせの動作（index・show）で、クエリ文字列の q[名前]=値 で渡る入力。パスに載らない入力のすべて（宣言の順）"""
     on_path = path_inputs(p, res, action, q)
-    return [n for n, _ in q.inputs if n not in on_path] + ([AFTER] if paged(q) else [])
+    return [n for n, _ in q.inputs if n not in on_path] + ([ORDER] if order_choices(q) else []) + ([AFTER] if paged(q) else [])
 
 
 def q_types(q) -> dict:
     """q[名前] で渡る値の型（名前 → 型）。問い合わせの入力と、ページのある問い合わせが言語から受ける q[after]（続きの印。省ける）"""
-    return {**dict(q.inputs), **({AFTER: Type("ID", optional=True)} if paged(q) else {})}
+    return {**dict(q.inputs), **({ORDER: Type("文字列", optional=True)} if order_choices(q) else {}), **({AFTER: Type("ID", optional=True)} if paged(q) else {})}
 
 
 def shown_path(p, path, kind, target) -> str:
