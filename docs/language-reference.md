@@ -393,10 +393,12 @@ resource Products {                      // 名前から /products が決まる
 }
 resource CustomerOrders under Customers { index orders_of }           // /customers/:customer_id/orders
 resource ProductPrices key jan { show price_by_jan }                  // /product_prices/:jan
+resource OrderSearches { index order_search }                         // /order_searches?q[from_time]=…&q[to_time?]=…
 resource Reconnections { create Reconnected }                         // 出来事を呼ぶ create は、結果を持たない
 ```
 
-- 使えるのは `index` `show` `create` `update` `destroy` だけ（`new` と `edit` は画面の URL に出る）。PATCH なし、クエリ文字列なし。状態を進める命令も、名詞のリソースにして `create` で表します（`OrderSettlements` など）。
+- **パス**に載るのは、どのリソースかを決める値だけです（ID、親の ID、`key 名前` のキー 1 つ。キーは `show` の問い合わせの必須の入力）。問い合わせの入力のうちパスに載らないものは、**絞り込みの条件**として、クエリ文字列の `q[名前]=値` で渡ります（新しい書き方は要りません。`required` でない入力は省けます）。宣言に無い名前、`q[名前]` でない形、同じ名前の重複、条件を取らない URL へのクエリ文字列は 400 です。URL に載せられる型は、ID・文字列・状態の名前・整数・金額・日時で、数は 10 進の数字で書きます（日時は、JSON の本文と同じ数）。考え方は [rest.md](rest.md)。
+- 使えるのは `index` `show` `create` `update` `destroy` だけ（`new` と `edit` は画面の URL に出る）。PATCH なし。状態を進める命令も、名詞のリソースにして `create` で表します（`OrderSettlements` など）。
 - `create`／`update`／`destroy` には、**結果の種類ごとの HTTP の状態**を必ず書きます（`Received → 201`）。漏れはエラーです。
 - すべての処理と問い合わせは、どこかの resource に割り当てます（無いと警告）。
 - **流れの途中の処理**（nexus の行き先・par の枝、trigger の返事と期限の行き先）を呼ぶ URL は「内部」です。外から直接呼ぶと、決済の返事などの確かめを飛ばして先へ進められるので、生成したサーバーは答えません（`--test` で起こしたときだけ答える）。仕様書の URL の表の「外から」の列に「内部（流れの途中）」と出て、MCP のツールにもなりません。書き方は変わらず、どれが内部かは流れから決まります。出来事（`event`）が起こす処理と、流れの最初の処理は「呼べる」です。

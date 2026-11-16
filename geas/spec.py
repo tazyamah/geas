@@ -235,22 +235,22 @@ def scope_text(p, s) -> str:
 def actor_rows(p, route_rows) -> list[tuple]:
     """仕様書の「役割」の表：(役割, ヘッダに載せる名前, 呼べる URL)。ヘッダに載せる名前は、コードの名前そのまま（プロキシの設定に書く値）。
     誰でも呼べる口は、最後の「誰でも」の行にまとめる"""
-    from .rest import ANYONE, internal_targets, route_actors, routes
+    from .rest import ANYONE, internal_targets, route_actors, routes, shown_path
     if not p.actors:
         return []
     who, inner = route_actors(p), internal_targets(p)
-    urls = [(f"{m} {path}", who.get(tgt)) for m, path, _, tgt, _, _ in routes(p) if tgt not in inner]
+    urls = [(f"{m} {shown_path(p, path, kind, tgt)}", who.get(tgt)) for m, path, kind, tgt, _, _ in routes(p) if tgt not in inner]
     out = [(p.show_names(n), n, "、".join(u for u, w in urls if w and n in w) or "なし") for n, _ in p.actors]
     return out + [("誰でも", "（要らない）", "、".join(u for u, w in urls if w == [ANYONE]) or "なし")]
 
 
 def build(ck: Checker) -> dict:
-    from .rest import INTERNAL, OPEN, actors_text, internal_targets, routes
+    from .rest import INTERNAL, OPEN, actors_text, internal_targets, routes, shown_path
     spec = build_raw(ck)
     names = spec["名前"]
     spec = show_all(ck.p, spec)
     inner = internal_targets(ck.p)
-    spec["ルート"] = [(m, path, kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner))
+    spec["ルート"] = [(m, shown_path(ck.p, path, kind, tgt), kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner))
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["役割"] = actor_rows(ck.p, spec["ルート"])
     show = ck.p.show_names

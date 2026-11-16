@@ -8,7 +8,7 @@
 //!   そのときの /api/defs は、画面と外から呼べる URL だけを返す（定義の全部は --test のときだけ）。
 //! RESTful な URL（生成物の resource 宣言＝defs の routes）：GET /products、POST /orders、GET /customers/:customer_id/orders など。
 //!   流れの途中の処理を呼ぶ URL（routes の internal。仕様書の URL の表で「内部」）は、--test のときだけ答える。
-//!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は使わない。
+//!   create の本文は処理の入力（slot は "slots" に）。結果の種類ごとの HTTP の状態は宣言どおり。クエリ文字列は、問い合わせの絞り込みの条件（q[名前]=値）だけ。ほかの形は 400。
 //! 画面の URL（screen 宣言から導いた resource の URL）は、Accept: text/html の GET なら画面（殻）を、それ以外は JSON を返す（形式の違い）。
 //! 画面のファイルは --pwa のフォルダ（生成した汎用の画面 generated/ui）から配り、manifest は生成物の screens（design）から作る。
 //! --dev のフォルダ（開発用の模擬操作）は、--test のときだけ、pwa に無いファイルだけを配る。
@@ -218,7 +218,7 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
     let wants_html = req.header("Accept").map_or(false, |v| v.contains("text/html"));
     if method == "GET" && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, method, path, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor"), req.header("X-Geas-Actor-Id")) {
+    } else if let Some(r) = rest_route(engine, method, path, query, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor"), req.header("X-Geas-Actor-Id")) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -242,6 +242,11 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
 }
 
 /// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
+/// URL に書いた数：10 進の数字だけ（先頭の - は可）。+・小数・空・桁あふれは数としない
+fn int_text(c: &str) -> Option<i64> {
+    c.parse::<i64>().ok().filter(|_| c.len() <= 20 && c.bytes().enumerate().all(|(i, b)| b.is_ascii_digit() || (i == 0 && b == b'-' && c.len() > 1)))
+}
+
 fn etag_of(version: &str, path: &str, caller: &str) -> String {
     // 本人で絞る範囲を使う問い合わせの答えは、呼んだ本人で変わるので、本人の ID も混ぜる（0 は URL にも ID にも現れない区切り）
     let h = path.bytes().chain(std::iter::once(0u8)).chain(caller.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
@@ -294,7 +299,7 @@ fn routes() -> &'static [Value] {
 /// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
 /// 役割（定義の for）のある URL は、前に置くプロキシが載せたヘッダ X-Geas-Actor（actor。複数はカンマ区切り）と比べる。
 /// ヘッダが無ければ 401、どの役割も合わなければ 403。本人の確かめはプロキシの仕事で、ここではしない（仕様書の「動かす前提」）
-fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>, actor_id: Option<&str>) -> Option<Resp> {
+fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>, actor_id: Option<&str>) -> Option<Resp> {
     let started = std::time::Instant::now();
     let verb = match method {
         "GET" | "POST" | "PUT" | "DELETE" => method,
@@ -351,14 +356,63 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
         let out: Result<(u16, Value), (u16, String)> = match r["kind"].as_str().unwrap_or("") {
             "index" | "show" => {
                 let mut args = Map::new();
-                if let (Some(c), Some(name)) = (caps.first(), en.defs["queries"][&target]["inputs"][0].as_str()) {
-                    args.insert(name.to_string(), Value::String(c.clone()));
+                // パスの「:名前」の部分を、左から順に入力へ入れる。数の入力は、10 進の数字だけを受け付けて数に直す
+                let mut bad: Option<String> = None;
+                for (c, pi) in caps.iter().zip(r["path_inputs"].as_array().map(|a| a.as_slice()).unwrap_or(&[])) {
+                    let name = pi["name"].as_str().unwrap_or("").to_string();
+                    if pi["int"] == true {
+                        match int_text(c) {
+                            Some(n) => { args.insert(name, json!(n)); }
+                            None => { bad = Some(format!("パスの「{name}」")); }
+                        }
+                    } else {
+                        args.insert(name, Value::String(c.clone()));
+                    }
                 }
+                // クエリ文字列は、絞り込みの条件 q[名前]=値 だけ。宣言に無い名前・ほかの形・同じ名前の重複は断る。省ける条件は、書かなければ「指定なし」
+                let empty: Vec<Value> = Vec::new();
+                let qs = r["q_inputs"].as_array().unwrap_or(&empty);
+                let mut wrong: Option<String> = None;
+                for kv in query.split('&').filter(|x| !x.is_empty()) {
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    let k = percent_decode(k, true);
+                    let name = k.strip_prefix("q[").and_then(|x| x.strip_suffix(']')).unwrap_or("");
+                    let Some(qi) = qs.iter().find(|qi| !name.is_empty() && qi["name"] == name) else {
+                        wrong = Some(format!("クエリ文字列の「{k}」は受け付けません（書けるのは、宣言した条件の q[名前]=値 だけ）"));
+                        break;
+                    };
+                    if args.contains_key(name) {
+                        wrong = Some(format!("q[{name}] が 2 回あります"));
+                        break;
+                    }
+                    let v = percent_decode(v, true);
+                    if qi["int"] == true {
+                        match int_text(&v) {
+                            Some(n) => { args.insert(name.to_string(), json!(n)); }
+                            None => { bad = Some(format!("q[{name}]")); }
+                        }
+                    } else {
+                        args.insert(name.to_string(), Value::String(v));
+                    }
+                }
+                for qi in qs {
+                    let name = qi["name"].as_str().unwrap_or("");
+                    if !args.contains_key(name) {
+                        if qi["optional"] == true { args.insert(name.to_string(), Value::Null); } else if wrong.is_none() { wrong = Some(format!("q[{name}] が要ります")); }
+                    }
+                }
+                let url = if query.is_empty() { path.to_string() } else { format!("{path}?{query}") };
+                let path = url.as_str();
                 // 本人で絞る範囲を使う問い合わせ：呼んだ本人の ID（プロキシが載せたヘッダ）を、入力 caller に入れる。呼ぶ側は渡せない
                 let who = if en.defs["queries"][&target]["caller"] == true { caller_id.clone().unwrap_or_default() } else { String::new() };
                 if !who.is_empty() {
                     args.insert("caller".to_string(), Value::String(who.clone()));
                 }
+                if let Some(m) = wrong {
+                    Err((400, m))
+                } else if let Some(name) = bad {
+                    Err((400, format!("{name} は、数字で書きます")))
+                } else {
                 match if_none_match.map(|seen| en.query_version().map(|v| etag_of(&v, path, &who)).map(|now| (seen == now, now))) {
                     Some(Ok((true, now))) => {
                         etag = Some(now);
@@ -371,11 +425,13 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, body: &str, test
                         (200, Value::Null)
                     }).map_err(failure),
                 }
+                }
             }
+            _ if !query.is_empty() => Err((400, "この URL は、クエリ文字列を受け付けません".to_string())),
             "create" if en.defs["events"].get(&target).is_some() => en.event(&target, &parsed).map(|v| (201, v)).map_err(failure),
             "create" | "update" | "destroy" => {
                 let mut input = parsed.clone();
-                if let (Some(c), Some(k)) = (caps.first(), r["id_input"].as_str().filter(|k| !k.is_empty())) {  // /…/:id の ID は、処理の ID の入力になる
+                if let (Some(c), Some(k)) = (caps.last(), r["id_input"].as_str().filter(|k| !k.is_empty())) {  // /…/:id の ID は、処理の ID の入力になる
                     if let Some(m) = input.as_object_mut() {
                         m.insert(k.to_string(), Value::String(c.clone()));
                     }

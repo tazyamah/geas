@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .rest import internal_targets, routes as rest_routes
+from .rest import first_by_name, internal_targets, path_inputs, q_inputs, routes as rest_routes
 
 
 def class_of(chars: tuple) -> str:
@@ -68,6 +68,7 @@ def tool_name(kind: str, path: str) -> str:
 def tool_defs(ck) -> list[dict]:
     p, show = ck.p, ck.p.show_names
     server_slots = {f.slot for f in p.rules}  # サーバーが決める slot（客は渡さない）
+    by_res = first_by_name(p)
     inner = internal_targets(p)  # 流れの途中の処理の URL は、サーバーが外に出さないので、ツールにもしない
     out = []
     for method, path, kind, target, res, statuses in rest_routes(p):
@@ -75,6 +76,7 @@ def tool_defs(ck) -> list[dict]:
             continue
         props: dict = {}
         required: list[str] = []
+        q_names: list[str] = []
         caps = [s[1:] for s in path.split("/") if s.startswith(":")]
         proc = ck.procs.get(target)
         query = next((q for q in p.queries if q.name == target), None)
@@ -95,9 +97,17 @@ def tool_defs(ck) -> list[dict]:
                 props["slots"] = {"type": "object", "description": "外から決めて渡す値（サーバーが決めない slot）", "properties": slots, "required": list(slots)}
                 required.append("slots")
         else:  # 問い合わせ・出来事：パスの値と、入力
-            for c, (n, t) in zip(caps, inputs):
-                props[c] = {**type_schema(ck, t), "description": show(n)}
+            on_path = path_inputs(p, by_res[res], next(a for a in by_res[res].actions if a.target == target), query) if query and kind in ("index", "show") else [n for n, _ in inputs]
+            for c, n in zip(caps, on_path):
+                props[c] = {**type_schema(ck, dict(inputs)[n]), "description": show(n)}
                 required.append(c)
+            if query and kind in ("index", "show"):  # 絞り込みの条件（URL では q[名前]=値）
+                for n in q_inputs(p, by_res[res], next(a for a in by_res[res].actions if a.target == target), query):
+                    t = dict(inputs)[n]
+                    q_names.append(n)
+                    props[n] = {**type_schema(ck, replace_opt(t)), "description": show(n)}
+                    if not t.optional:
+                        required.append(n)
             if kind == "create":
                 for n, t in inputs:
                     props[n] = {**type_schema(ck, replace_opt(t)), "description": show(n)}
@@ -112,7 +122,7 @@ def tool_defs(ck) -> list[dict]:
             "description": desc,
             "inputSchema": {"type": "object", "properties": props, "required": required},
             "annotations": {"readOnlyHint": method == "GET", "destructiveHint": method == "DELETE", "idempotentHint": method in ("GET", "PUT", "DELETE")},
-            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps] if method != "GET" else []},
+            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps] if method != "GET" else [], **({"q": q_names} if q_names else {})},
         })
     names = [t["name"] for t in out]
     if len(set(names)) != len(names):

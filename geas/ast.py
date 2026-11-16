@@ -347,10 +347,11 @@ class ResAction:
 
 @dataclass
 class Resource:
-    """RESTful なリソース。URL は名前から決まる（Orders → /orders）。under で親の入れ子（/customers/:customer_id/orders）、key でパスのキー（/…/:jan）"""
+    """RESTful なリソース。URL は名前から決まる（Orders → /orders）。under で親の入れ子（/customers/:customer_id/orders）、
+    key でパスのキー（/…/:jan）。キーは 1 つ（keys は 0 個か 1 個）。問い合わせの入力のうち、パスに載らないものは q[名前]=値 で渡る"""
     name: str
     under: str = ""
-    key: str = ""
+    keys: list[str] = field(default_factory=list)
     actions: list[ResAction] = field(default_factory=list)
     line: int = 0
 
