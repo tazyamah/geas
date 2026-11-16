@@ -118,6 +118,22 @@ resource MyParcelsOfKinds key kind {
   show my_parcels_of_kind for Customer
 }
 
+/// 種類と、料金の幅で絞った小包（種類はパスのキー。料金の下限は必ず、上限は指定したときだけ）
+query parcels_by_kind_and_fee {
+  input kind: Kind required
+  input min_fee: Fee required
+  input max_fee: Fee
+  from Parcel.of_kind(kind)
+  filter fee at_least min_fee
+  filter fee at_most max_fee
+  select parcel_id
+  reads Parcel.kind, Parcel.fee, Parcel.parcel_id
+}
+
+resource ParcelsByKindAndFees key kind {
+  show parcels_by_kind_and_fee for anyone
+}
+
 resource MyParcels {
   index my_parcels for Customer
 }
@@ -414,6 +430,43 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/light")[:2] == (200, [a])
     assert get("Customer", "c-2", path="/my_parcels_of_kinds/light")[:2] == (200, [b])
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/heavy")[:2] == (200, [])
+    # 絞り込みの条件は q[名前]=値：種類はパス、料金の下限（必ず）と上限（省ける）はクエリ文字列
+    two = "/parcels_by_kind_and_fees/light"
+    assert {a, b} <= set(get(path=two + "?q[min_fee]=300")[1]) and get(path=two + "?q[min_fee]=301")[:2] == (200, [])
+    assert {a, b} <= set(get(path=two + "?q[max_fee]=300&q[min_fee]=0")[1]) and get(path=two + "?q[min_fee]=0&q[max_fee]=299")[:2] == (200, [])
+    assert {a, b} <= set(get(path=two + "?q%5Bmin_fee%5D=300")[1])  # 角括弧は %5B %5D でも同じ
+    assert get(path="/parcels_by_kind_and_fees/heavy?q[min_fee]=0")[:2] == (200, [])
+    # 要る条件が無い・数字でない・宣言に無い名前・q[…] でない形・同じ名前の重複は 400
+    bad = ("", "?q[min_fee]=abc", "?q[min_fee]=3.5", "?q[min_fee]=300&q[other]=1", "?min_fee=300", "?q[min_fee]=300&q[min_fee]=300", "?q=300", "?q[min_fee]=300&x")
+    assert [get(path=two + x)[0] for x in bad] == [400] * len(bad)
+    # 条件を取らない URL にクエリ文字列を付けても 400（問い合わせでも、処理でも）
+    assert get(path="/live_parcels?q[x]=1")[0] == 400 and get(path="/live_parcels?page=2")[0] == 400
+    assert call(served, "POST", "/claims?x=1", "Staff", {"parcel_id": a, "owner": "c-1"})[0] == 400
+    # 条件が違えば、答えの版（ETag）も別
+    t300, t301 = get(path=two + "?q[min_fee]=300")[2], get(path=two + "?q[min_fee]=301")[2]
+    assert t300 and t300 != t301 and get(path=two + "?q[min_fee]=301", tag=t300)[0] == 200 and get(path=two + "?q[min_fee]=300", tag=t300)[0] == 304
     # in [候補, …]：状態がどれかで、料金もどれかの小包（作ったばかりの 2 件は、どちらも当てはまる）
     hand = get(path="/parcels_in_hand")
     assert hand[0] == 200 and {a, b} <= set(hand[1])
+
+
+def test_絞り込みの条件は_q名前で渡る():
+    text = scoped()
+    ck = ck_of(text)
+    assert errors(text) == []
+    from geas.hostgen import definitions
+    from geas.mcp import tool_defs
+    from geas.spec import build
+    route = next(r for r in definitions(ck)["routes"] if r["target"] == "parcels_by_kind_and_fee")
+    assert route["path"] == "/parcels_by_kind_and_fees/:kind" and route["path_inputs"] == [{"name": "kind"}]
+    assert route["q_inputs"] == [{"name": "min_fee", "int": True}, {"name": "max_fee", "int": True, "optional": True}]
+    # 仕様書の URL の表には、条件の名前まで出る（省ける条件は ?）
+    assert any(row[1] == "/parcels_by_kind_and_fees/:kind?q[min_fee]=…&q[max_fee?]=…" for row in build(ck)["ルート"])
+    tool = next(t for t in tool_defs(ck) if t["geas"]["path"] == "/parcels_by_kind_and_fees/:kind")
+    assert tool["geas"]["q"] == ["min_fee", "max_fee"] and tool["inputSchema"]["required"] == ["kind", "min_fee"]
+    # パスのキーは 1 つ。キーが入力に無い・URL に載せられない型は、検査で止まる
+    for two in ("key kind, min_fee", "key kind key min_fee"):
+        with pytest.raises(ParseError, match="パスのキーは 1 つです"):
+            parse(text.replace("key kind {\n  show parcels_by_kind_and_fee", two + " {\n  show parcels_by_kind_and_fee"), "x")
+    assert has(text.replace("key kind {\n  show parcels_by_kind_and_fee", "key nope {\n  show parcels_by_kind_and_fee"), "key「nope」が")
+    assert has(text.replace("input max_fee: Fee\n", "input max_fee: bool\n").replace("  filter fee at_most max_fee\n", ""), "URL に載せられない型です")

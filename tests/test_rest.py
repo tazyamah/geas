@@ -120,9 +120,12 @@ def test_存在しない結果や範囲外の状態はエラー():
     assert any("200〜599" in m for m in msgs(chk(mutate(CODE, "Received → 201", "Received → 99"))))
 
 
-def test_クエリ文字列になる入力はエラー():
-    # 入れ子にしないと、問い合わせ orders_of の入力 customer はパスで渡せない
-    assert any("クエリ文字列にしない" in m for m in msgs(chk(mutate(CODE, "resource CustomerOrders under Customers", "resource CustomerOrders"))))
+def test_パスに載らない入力は_絞り込みの条件になる():
+    # 入れ子にしないと、問い合わせ orders_of の入力 customer は、絞り込みの条件 q[customer] で渡る
+    from geas.spec import build
+    ck = chk(mutate(CODE, "resource CustomerOrders under Customers", "resource CustomerOrders"))
+    assert not [m for m in msgs(ck) if "CustomerOrders" in m]
+    assert any(row[1] == "/customer_orders?q[customer]=…" for row in build(ck)["ルート"])
     # show にキーが無い
     assert any("key" in m for m in msgs(chk(mutate(CODE, "resource ProductPrices key jan", "resource ProductPrices"))))
 

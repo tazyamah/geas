@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """リソース（resource）の URL とルーティング。名前から URL を決める（Rails の resources に合わせる）。
 動作と URL： index＝GET /複数形、show＝GET /複数形/:キー、create＝POST /複数形、update＝PUT /複数形/:id、destroy＝DELETE /複数形/:id。
-入れ子は /親/:親_id/子。クエリ文字列は使わない（条件はパスか、検索リソースの本文で渡す）。"""
+入れ子は /親/:親_id/子。パスは「どのリソースか」を決め、絞り込みの条件はクエリ文字列の q[名前]=値 で渡す（ほかの形のクエリ文字列は受けない）。"""
 import re
 
 from .ast import uses_caller
@@ -74,6 +74,40 @@ def actors_text(p, target, inner) -> str:
     return "誰でも" if who == [ANYONE] else "、".join(p.show_names(x) for x in who) + own
 
 
+def path_inputs(p, res, action, q) -> list[str]:
+    """問い合わせの動作（index・show）で、パスの「:名前」の部分が、左から順にどの入力になるか。
+    親の ID の部分は、キーでない必須の入力に、宣言の順で当たる。show は、そのあとにキーが続く"""
+    keys = list(res.keys) if action.kind == "show" else []
+    parents = base_path(p, res).count("/:")
+    rest = [n for n, t in q.inputs if not t.optional and n not in keys]
+    have = {n for n, _ in q.inputs}  # 検査で止まる形（キーが入力に無い）でも、ある入力だけを返す
+    return rest[:parents] + [k for k in keys if k in have]
+
+
+def q_inputs(p, res, action, q) -> list[str]:
+    """問い合わせの動作（index・show）で、クエリ文字列の q[名前]=値 で渡る入力。パスに載らない入力のすべて（宣言の順）"""
+    on_path = path_inputs(p, res, action, q)
+    return [n for n, _ in q.inputs if n not in on_path]
+
+
+def shown_path(p, path, kind, target) -> str:
+    """仕様書に出す URL。絞り込みの条件があれば、パスの後ろに ?q[名前]=…&q[名前]=… を付ける（省ける条件は、名前の後ろに ?）"""
+    if kind not in ("index", "show"):
+        return path
+    q = next((x for x in p.queries if x.name == target), None)
+    res = next((r for r in p.resources if any(a.target == target and a.kind == kind for a in r.actions)), None)
+    if q is None or res is None:
+        return path
+    act = next(a for a in res.actions if a.target == target and a.kind == kind)
+    opt = {n: t.optional for n, t in q.inputs}
+    names = q_inputs(p, res, act, q)
+    return path + ("?" + "&".join(f"q[{n}{'?' if opt[n] else ''}]=…" for n in names) if names else "")
+
+
+# パスと q[名前] に載せられる入力の型。数（整数・金額・日時）は 10 進の数字で書き、サーバーが数に直す。ほかは文字のまま渡す
+PATH_TEXT, PATH_INT = ("ID", "参照", "文字列", "名前"), ("整数", "金額", "日時")
+
+
 def _table(p) -> tuple[list, dict]:
     """(ルートの一覧, 対象 → (経路, 動作) の表)。画面ごと・生成物ごとに何度も引くので、Program ごとに 1 回だけ作る
     （リソースの宣言は構文解析の後に変わらない。差し替えられたら作り直す）"""
@@ -86,7 +120,7 @@ def _table(p) -> tuple[list, dict]:
             for a in res.actions:
                 path = base
                 if a.kind in ("show", "update", "destroy"):
-                    path += "/:" + (res.key or "id")
+                    path += "/:" + (res.keys[0] if res.keys else "id")
                 out.append((METHOD[a.kind], path, a.kind, a.target, res.name, tuple(a.statuses)))
         c = (p.resources, len(p.resources), out, {tgt: (path, kind) for _, path, kind, tgt, _, _ in out})
         p.__dict__["_rest_table"] = c

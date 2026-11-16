@@ -15,6 +15,8 @@ MAX_REPLY = 16 * 1024 * 1024
 def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
     g = tool["geas"]
     path = "/".join(urllib.parse.quote(str(args[s[1:]]), safe="") if s.startswith(":") else s for s in g["path"].split("/"))
+    q = [(f"q[{n}]", str(args[n])) for n in g.get("q", []) if args.get(n) is not None]  # 絞り込みの条件（指定しないものは書かない）
+    path += "?" + urllib.parse.urlencode(q) if q else ""
     body = json.dumps({k: args[k] for k in g["body"] if k in args}).encode() if g["method"] != "GET" else None
     req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers={"Content-Type": "application/json"})
     try:

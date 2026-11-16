@@ -8,7 +8,7 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, phys
 from .rustgen import column_type, opt, rust_str, value_checks
-from .rest import ANYONE, internal_targets, route_actors, routes as rest_routes
+from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, q_inputs, route_actors, routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
 from .mcp import tool_defs
@@ -316,6 +316,7 @@ def definitions(ck: Checker) -> dict:
         for proc, routes in fl.entries:  # 行き先が1つなら文字列、複数なら書いた順の配列
             flows.setdefault(proc, {}).update({v: ds[0] if len(ds) == 1 else ds for v, ds in route_map(routes).items()})
     who = route_actors(p)
+    by_res = first_by_name(p)
     inner = internal_targets(p)  # 流れの途中の処理を呼ぶ URL：サーバーは --test のときだけ答える（仕様書の URL の表で「内部」）
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
@@ -334,6 +335,12 @@ def definitions(ck: Checker) -> dict:
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
                     **({"internal": True} if tgt in inner else {}),
+                    # パスの「:名前」の部分が、左から順にどの入力になるか（int：10 進の数字を数に直して渡す入力）
+                    # q_inputs：クエリ文字列の q[名前]=値 で受ける入力（パスに載らない入力のすべて。optional：書かなければ「指定なし」）
+                    **({part: [{"name": n, **({"int": True} if ty[n].kind in PATH_INT else {}), **({"optional": True} if ty[n].optional else {})}
+                               for n in pick(p, by_res[rn], next(a for a in by_res[rn].actions if a.target == tgt), ck.queries[tgt])]
+                        for part, pick in (("path_inputs", path_inputs), ("q_inputs", q_inputs)) for ty in [dict(ck.queries[tgt].inputs)]}
+                       if kind in ("index", "show") and tgt in ck.queries else {}),
                     # 呼べる役割（前に置くプロキシが載せるヘッダの値と比べる）。誰でも呼べる口と、役割の無いアプリには付けない
                     **({"for": who[tgt]} if who.get(tgt) not in (None, [ANYONE]) else {})}
                    for m, path, kind, tgt, rn, st in rest_routes(ck.p)],

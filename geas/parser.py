@@ -1531,7 +1531,11 @@ class Parser:
             if kw == "under":
                 rs.under = self.name()
             elif kw == "key":
-                rs.key = self.name()
+                if rs.keys or self.peek().val == ",":
+                    raise self.err("パスのキーは 1 つです（どのリソースかを決める値だけ。絞り込みの条件は、問い合わせの入力に書けば q[名前]=値 で渡ります）")
+                rs.keys.append(self.name())
+                if self.peek().val == ",":
+                    raise self.err("パスのキーは 1 つです（どのリソースかを決める値だけ。絞り込みの条件は、問い合わせの入力に書けば q[名前]=値 で渡ります）")
             else:
                 raise self.err("resource の見出しは「under 親」「key 名前」です")
         self.block_open()

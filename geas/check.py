@@ -1556,7 +1556,7 @@ class Checker:
     def check_resources(self):
         """リソースの検査。親と対象が実在し、動作の種類と対象（処理か問い合わせ）が合い、URL にクエリ文字列を使わず（問い合わせの入力はパスのキーか親のIDで埋まる）、
         処理の結果の種類ごとに HTTP の状態が決まっていること。同じ URL・同じ処理や問い合わせを2度書けない。リソースがあるのに行き先の無い処理・問い合わせは警告。"""
-        from .rest import METHOD, routes
+        from .rest import METHOD, PATH_INT, PATH_TEXT, routes
         p = self.p
         if not p.resources:
             return
@@ -1585,16 +1585,19 @@ class Checker:
                 required = [n for n, t in tgt.inputs if not t.optional]
                 optional = [n for n, t in tgt.inputs if t.optional]
                 if is_q:
-                    path_inputs = ([res.key] if a.kind == "show" else []) + (["(親のID)"] if res.under in names else [])
-                    if a.kind == "show" and not res.key:
+                    keys = list(res.keys) if a.kind == "show" else []
+                    if a.kind == "show" and not keys:
                         self.d(ERROR, "リソース", w, "show にはパスのキー（key 名前）が要ります")
-                    if len(required) > len(path_inputs):
-                        self.d(ERROR, "リソース", w, f"問い合わせの入力 {', '.join(required)} は、クエリ文字列にしないので、パスで渡せる形にしてください（入れ子の親のID、または key）")
-                    elif a.kind == "show" and res.key and res.key not in required:
-                        self.d(ERROR, "リソース", w, f"key「{res.key}」が、問い合わせ {a.target} の入力にありません")
-                    if optional:
-                        self.d(ERROR, "リソース", w, f"問い合わせの任意の入力 {', '.join(optional)} は、クエリ文字列にしないので、検索リソース（POST で条件を渡す）にしてください")
+                    missing = [k for k in keys if k not in required]
+                    for k in missing:
+                        self.d(ERROR, "リソース", w, f"key「{k}」が、問い合わせ {a.target} の必須の入力にありません")
+                    # パスに載らない入力は、クエリ文字列の q[名前]=値 で渡る（省ける入力は、書かなければ指定なし）
+                    for n, ty in ([] if missing else tgt.inputs):
+                        if ty.kind not in PATH_TEXT + PATH_INT:
+                            self.d(ERROR, "リソース", w, f"入力「{n}」（{show_type(ty)}）は、URL に載せられない型です（載せられるのは、ID・文字列・状態の名前・整数・金額・日時）")
                 else:
+                    if a.kind in ("update", "destroy") and len(res.keys) > 1:
+                        self.d(ERROR, "リソース", w, f"{a.kind} は 1 つの ID で対象を決めるので、キーが複数のリソース（key {', '.join(res.keys)}）には書けません（別のリソースに分けます）")
                     if a.kind in ("update", "destroy") and not any(t.kind == "ID" for _, t in tgt.inputs):
                         self.d(ERROR, "リソース", w, f"{a.kind} は /…/:id の ID で対象を決めるので、処理に ID の入力が要ります")
                     rdef = self.results.get(tgt.result)

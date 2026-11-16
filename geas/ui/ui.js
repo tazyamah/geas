@@ -43,7 +43,14 @@ async function api(method, path, body, keep) {
   if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
   return j;
 }
-const urlOf = (name, args) => ROUTE[name].path.replace(/:[a-z_]+/, encodeURIComponent(Object.values(args || {})[0] ?? ""));  // 条件はパスで渡す（クエリ文字列は使わない）
+// 問い合わせの URL：パスの :名前 に入力を入れ、残りの入力は絞り込みの条件 q[名前]=値 で渡す（指定しない条件は書かない）
+const urlOf = (name, args) => {
+  const r = ROUTE[name], a = args || {}, vals = Object.values(a);
+  let i = 0;
+  const path = r.path.replace(/:[a-z_0-9]+/g, () => { const p = (r.path_inputs || [])[i]; const v = p && p.name in a ? a[p.name] : vals[i]; i++; return encodeURIComponent(v ?? ""); });
+  const q = (r.q_inputs || []).filter((x) => a[x.name] != null && a[x.name] !== "").map((x) => `q[${x.name}]=${encodeURIComponent(a[x.name])}`);
+  return path + (q.length ? "?" + q.join("&") : "");
+};
 // 問い合わせの答えは、URL ごとに版（ETag）と行を覚えておき、引き直すときに版を送る。保存が変わっていなければ、
 // サーバーは 304 で本文を送らず、覚えている行を使う（2 秒ごとの引き直しで、変わっていない一覧を毎回送り直して描き直さない）
 const known = {};
