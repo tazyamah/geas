@@ -2,6 +2,7 @@
 """画面（screen）から、実行時の画面が使う定義と、Rust の定数を作る。
 画面のファイル（HTML・JS）は shop を知らない汎用のもの（geas/ui）で、ここで作る定義だけで動く。
 手で書く画面は無い。見た目（design）は、定義と Rust の定数 SCREENS に載り、サーバーの manifest（テーマ色）にも使われる。"""
+from .ast import order_choices
 from .check import column_type
 from .rest import screen_url
 
@@ -46,7 +47,13 @@ def query_def(ck, q, show) -> dict:
         cols.append({"name": c.name, "label": show(c.name), **type_def(ck, column_type(ck, q, c), show)})
     if not cols:  # 列の指定が無い問い合わせは、IDの列だけ
         cols = [{"name": "id", "label": "ID", "kind": "id"}]
-    return {"inputs": [{"name": n, **type_def(ck, t, show)} for n, t in q.inputs], "columns": cols}
+    out = {"inputs": [{"name": n, **type_def(ck, t, show)} for n, t in q.inputs], "columns": cols}
+    choices = order_choices(q)
+    if choices:  # 呼ぶ側が選べる並び（画面では、一覧の上の選ぶ欄になる。1 つ目が、選ばないときの並び）
+        kinds = {f.name: f.type.kind for f in ck.data[q.target].fields} if q.target in ck.data else {}
+        words = lambda f, d: ("新しい順", "古い順")[d != "降順"] if kinds.get(f) == "日時" else ("大きい順", "小さい順")[d != "降順"]
+        out["orders"] = [{"value": name, "label": f"{show(f)} {words(f, d)}"} for name, f, d in choices]
+    return out
 
 
 def field_type(ck, sc, f, show) -> dict:

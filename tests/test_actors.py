@@ -3,6 +3,7 @@
 本人の確かめは前に置くプロキシの仕事で、サーバーは、プロキシが載せたヘッダ X-Geas-Actor の値と、動作の for を比べる。
 cargo が無い環境では、組んで動かす試験を飛ばす。"""
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -160,6 +161,16 @@ query parcel_ids_paged {
 
 resource ParcelIdPages {
   index parcel_ids_paged for anyone
+}
+
+/// 小包の ID の一覧
+screen ParcelIdList entry {
+  show parcel_ids_paged
+  design {
+    layout list
+    accent "#0b5cad"
+    mode light
+  }
 }
 
 /// 種類と料金で小包を探す（条件を URL に載せない）
@@ -672,3 +683,47 @@ def test_事情のあるPOSTで受ける問い合わせ():
     assert errors(text.replace(one, 'index parcels_quietly post "理由" for Staff')) == []  # for は、post の後ろでもよい
     assert has(text.replace(one, one + "\n  create claim for Staff {\n    Claimed → 201\n    NoParcel → 404\n  }").replace("resource Claims {\n  create claim for Staff {\n    Claimed → 201\n    NoParcel → 404\n  }\n}", ""), "create は書けません")
     assert has(text.replace("show my_parcels_of_kind for Customer", 'show my_parcels_of_kind for Customer post "理由"'), "index だけです")
+
+
+def test_画面の一覧は_続きを読めて_並びを選べる(served):
+    node = shutil.which("node")
+    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True).stdout.strip() if shutil.which("npm") else ""
+    env = dict(os.environ, NODE_PATH=root)
+    if node is None or subprocess.run([node, "-e", "require('playwright')"], env=env, capture_output=True).returncode != 0:
+        pytest.skip("node と Playwright が無い")
+    for _ in range(3):
+        assert call(served, "POST", "/parcels", "Customer", {"kind": "light"})[0] == 201
+    assert call(served, "POST", "/parcels", "Customer", {"kind": "heavy"})[0] == 201
+    every = call(served, "GET", "/parcels")[1]["rows"]
+    up = [x["parcel_id"] for x in sorted(every, key=lambda x: (x["fee"], x["parcel_id"]))]
+    script = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage();
+  await p.goto(process.argv[1] + '/parcel_id_pages', { waitUntil: 'networkidle' });
+  const box = '[data-show="parcel_ids_paged"]';
+  const ids = async () => (await p.locator(box + ' .rows').innerText()).split(/\s+/).filter((x) => x);
+  const out = { labels: await p.locator(box + ' select[data-order] option').allInnerTexts(), first: await ids() };
+  const more = p.locator(box + ' button.more');
+  out.moreShown = await more.isVisible();
+  await more.click(); await p.waitForFunction((n) => document.querySelector('[data-show="parcel_ids_paged"] .rows').children.length === n, 2);
+  out.second = await ids();
+  for (let n = 3; await more.isVisible() && n < 40; n++) { await more.click(); await p.waitForFunction((k) => document.querySelector('[data-show="parcel_ids_paged"] .rows').children.length === k, n); }
+  out.all = await ids(); out.moreAtEnd = await more.isVisible();
+  await p.locator(box + ' select[data-order]').selectOption('fee.desc');
+  await p.waitForFunction((want) => document.querySelector('[data-show="parcel_ids_paged"] .rows').innerText.includes(want), process.argv[2]);
+  out.down = await ids(); out.moreAfterOrder = await more.isVisible();
+  console.log(JSON.stringify(out));
+  await b.close();
+})().catch(async (e) => { console.error(e); process.exit(1); });
+"""
+    r = subprocess.run([node, "-e", script, served, up[-1]], env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out["labels"] == ["fee 小さい順", "fee 大きい順"]
+    # 最初は 1 件（page 1）。「続きを読む」を押すたびに 1 件ずつ増え、最後まで読むとボタンが消える
+    assert out["first"] == up[:1] and out["moreShown"] and out["second"] == up[:2]
+    assert out["all"] == up and not out["moreAtEnd"]
+    # 並びを変えると、最初のページから読み直す
+    assert out["down"] == up[-1:] and out["moreAfterOrder"]
