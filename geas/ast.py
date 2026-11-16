@@ -230,6 +230,7 @@ class Query:
     conds: list[list[tuple[str, str, str]]] = field(default_factory=list)  # where 1行 = または でつないだ組。行どうしは かつ。要素は (項目, 比較, 状態名か数)
     filters: list[tuple[str, str, str]] = field(default_factory=list)  # (項目, 以上／以下／含む／直近, 入力名／秒数)
     order: Optional[tuple[str, str]] = None  # (項目, 降順／昇順)。仕様書では、日時なら新しい順／古い順、数なら大きい順／小さい順
+    orders: list = field(default_factory=list)  # 書いた並びのすべて（1 行目が order）。2 行以上なら、呼ぶ側が q[order]=項目.向き で選べる
     page: Optional[str] = None  # 1ページの件数 N を持つ入力名（数を直接書いたときは page_n）
     page_n: Optional[int] = None  # 1ページの件数（数を直接書いたとき）
     select: list[Column] = field(default_factory=list)  # 空なら、対象のIDの列を返す
@@ -242,6 +243,14 @@ class Query:
 CALLER = "caller"  # 範囲（scope）の中で、呼んだ本人の ID を表す語。問い合わせの入力の名前には使えない
 # ページのある問い合わせが、言語から受ける入力：前のページの最後の行の印（サーバーが応答の next に入れて返す）
 AFTER = "after"
+# 並びを 2 行以上書いた問い合わせが、言語から受ける入力：選んだ並び（項目.desc／項目.asc。無ければ 1 行目）
+ORDER = "order"
+ORDER_WORD = {"降順": "desc", "昇順": "asc"}
+
+
+def order_choices(q) -> list:
+    """呼ぶ側が選べる並び：(q[order] に書く値, 項目, 降順／昇順)。並びが 1 行以下なら空（選べない）"""
+    return [(f"{f}.{ORDER_WORD[d]}", f, d) for f, d in q.orders] if len(q.orders) > 1 else []
 
 
 @dataclass
@@ -274,6 +283,7 @@ def gen_inputs(p, q) -> list:
     """生成物での問い合わせの入力：書いた入力に、範囲の「呼んだ本人の ID」（caller）を足したもの。
     caller は、呼ぶ側が渡す値ではなく、サーバーが、プロキシの載せたヘッダから入れる"""
     out = [*q.inputs, (CALLER, Type("ID"))] if uses_caller(p, q) else list(q.inputs)
+    out = [*out, (ORDER, Type("文字列", optional=True))] if order_choices(q) else out
     return [*out, (AFTER, Type("ID", optional=True))] if paged(q) else out
 
 

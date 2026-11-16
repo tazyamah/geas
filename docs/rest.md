@@ -89,6 +89,24 @@ GET /order_searches?q[status]=Paid
 - 何ページ目かを数で渡す形（`page=3`）は採りません。読んでいる途中で行が増減すると、同じ行を 2 回読んだり、飛ばしたりするからです。印は「この行の次から」なので、ずれません。
 - 印の行が消えていたら 400 です（最初のページから読み直します）。
 
+### 並びを選ぶ：`q[order]`
+
+並びは `.geas` の `order` で決まります。呼ぶ側に選ばせたいときは、選べる並びを並べて書きます。
+
+```
+query order_search {
+  …
+  order created_at desc     // 1 行目が、選ばないときの並び
+  order total desc
+  order total asc
+}
+// GET /order_searches?q[order]=total.desc
+```
+
+- 値は `項目.向き`（`total.desc`）です。書いた候補のほかは 400 です。
+- `order` が 1 行だけの問い合わせでは、選べません（`q[order]` を書くと 400）。
+- 仕様書の問い合わせの表に、選べる並びがすべて出ます。次のページの URL（`next`）にも、選んだ並びが残ります。
+
 ### 結果の種類ごとに、HTTP の状態を決める
 
 `create`／`update`／`destroy` には、処理の結果の種類ごとの状態を必ず書きます（`Received → 201`、`NoSuchProduct → 404`）。漏れは検査で止まります。
@@ -99,7 +117,6 @@ GET /order_searches?q[status]=Paid
 
 ## 3. 決めたが、まだ作っていないこと
 
-- **並び順を呼ぶ側が選ぶ口**（`q[order]`。選べる並びを `.geas` に並べて書く、と決めた。未実装）。
 - **事情のある POST**（下の表の 2026-11-16。未実装）。
 
 ## 4. 決めた日

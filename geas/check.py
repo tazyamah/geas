@@ -995,10 +995,14 @@ class Checker:
                     self.d(ERROR, "型", where, f"「{c.field}」は集計できません（sum と count は、キーつきの集まり 〈データ → 値〉 の項目にだけ使えます）")
                 if c.kind == "合計" and f.type.kind == "写像" and f.type.value.kind not in ("整数", "金額"):
                     self.d(ERROR, "型", where, f"sum({c.field}) は、値が整数か金額の集まりにだけ使えます")
-            if q.order:
-                f = field_of(q.order[0])
+            for of, od in q.orders:
+                f = field_of(of)
                 if f is not None and f.type.kind not in ("日時", "整数", "金額"):
-                    self.d(ERROR, "型", where, f"並びの項目「{q.order[0]}」は数か日時である必要があります")
+                    self.d(ERROR, "型", where, f"並びの項目「{of}」は数か日時である必要があります")
+            for dup in sorted({x for x in q.orders if q.orders.count(x) > 1}):
+                self.d(ERROR, "並び", where, f"同じ並び「order {dup[0]} {ORDER_WORD[dup[1]]}」を 2 回書いています", q.line)
+            if order_choices(q) and ORDER in ins:
+                self.d(ERROR, "並び", where, f"並びを 2 行以上書いた問い合わせでは、入力の名前に {ORDER} は使えません（並びを選ぶ q[{ORDER}] に使う語です）", q.line)
             if q.page is not None:
                 t = ins.get(q.page)
                 if t is None or t.kind != "整数":

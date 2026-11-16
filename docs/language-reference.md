@@ -255,7 +255,7 @@ query orders_of {
   from Order
   where status != Canceled or status == Received      // 行が or、行どうしが and
   filter customer equals customer                     // equals／at_least／at_most／contains（ignore_case 等）／within 1 hour（slot current_time: time が要る）
-  order created_at desc                               // desc（大きい順。日時なら新しい順）｜asc（小さい順・古い順）
+  order created_at desc                               // desc（大きい順。日時なら新しい順）｜asc（小さい順・古い順）。2 行以上書くと、呼ぶ側が q[order]=項目.向き で選べる（1 行目が既定）
   page 20                                             // order が必須。続きは、答えの next（次のページの URL。q[after]=印）を辿る
   select order_id, customer.customer_id as customer, sum(items) as item_count
   reads Order.customer, Order.order_id, Order.items

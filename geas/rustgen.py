@@ -494,11 +494,18 @@ class Gen:
             else:
                 self.w(f"        {{ let x = &Input.{a}; if !({cond}) {{ return false; }} }}")
         self.w("        true\n    }).collect();")
-        if q.order:
-            f, d = q.order
+        def cmp_of(f, d):  # 並びの比べ方（同じ値の行は、キーで同じ向きに並べる）
             a, b = ("b", "a") if d == "降順" else ("a", "b")
             nulls = f"a.{f}.is_none().cmp(&b.{f}.is_none()).then(" if fields[f].type.optional else "("  # null は最後
-            self.w(f"    let cmp = |a: &&{q.target}, b: &&{q.target}| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key}));")
+            return f"|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key}))"
+        choices = order_choices(q)
+        if choices:  # 呼ぶ側が選んだ並び（境界で、候補のどれかと確かめてある）。無ければ 1 行目
+            self.w(f"    let cmp: fn(&&{q.target}, &&{q.target}) -> std::cmp::Ordering = match Input.{ORDER}.as_deref() {{")
+            for name, f, d in choices[1:]:
+                self.w(f"        Some({rust_str(name)}) => {cmp_of(f, d)},")
+            self.w(f"        _ => {cmp_of(*q.order)},\n    }};")
+        elif q.order:
+            self.w(f"    let cmp = |a: &&{q.target}, b: &&{q.target}| {cmp_of(*q.order)[7:]};")
         else:
             self.w(f"    let cmp = |a: &&{q.target}, b: &&{q.target}| a.{key}.cmp(&b.{key});")
         self.w("    rows.sort_by(cmp);")
