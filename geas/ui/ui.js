@@ -55,6 +55,13 @@ const urlOf = (name, args) => {
 // サーバーは 304 で本文を送らず、覚えている行を使う（2 秒ごとの引き直しで、変わっていない一覧を毎回送り直して描き直さない）
 const known = {};
 async function fetchRows(name, args) {
+  const rt = ROUTE[name];
+  if (rt && rt.post) {  // 事情があって POST で受ける問い合わせ：条件は本文の {"q": {…}}。版（ETag）は無いので、毎回読み直す
+    const a = args || {}, q = Object.fromEntries((rt.q_inputs || []).filter((x) => a[x.name] != null && a[x.name] !== "").map((x) => [x.name, x.int ? Number(a[x.name]) : a[x.name]]));
+    const j = await api("POST", urlOf(name, Object.fromEntries((rt.path_inputs || []).map((x) => [x.name, a[x.name]]))), { q });
+    const rows = j.rows || (j.ids || []).map((id) => ({ id }));
+    return (rowsOf[name] = rows, { tag: null, rows, key: null });
+  }
   const url = urlOf(name, args), had = known[url];
   const r = await xfetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
   if (r.status === 304 && had) return (rowsOf[name] = had.rows, had);

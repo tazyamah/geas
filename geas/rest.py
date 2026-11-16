@@ -106,11 +106,18 @@ def shown_path(p, path, kind, target) -> str:
     act = next(a for a in res.actions if a.target == target and a.kind == kind)
     opt = {n: t.optional for n, t in q_types(q).items()}
     names = q_inputs(p, res, act, q)
+    if act.post:  # POST で受ける問い合わせ：条件は、本文の 1 つのオブジェクト q に入れる
+        return path + "（本文 {\"q\": {" + ", ".join(f"{n}{'?' if opt[n] else ''}" for n in names) + "}}）"
     return path + ("?" + "&".join(f"q[{n}{'?' if opt[n] else ''}]=…" for n in names) if names else "")
 
 
 # パスと q[名前] に載せられる入力の型。数（整数・金額・日時）は 10 進の数字で書き、サーバーが数に直す。ほかは文字のまま渡す
 PATH_TEXT, PATH_INT = ("ID", "参照", "文字列", "名前"), ("整数", "金額", "日時")
+
+
+def post_queries(p) -> dict:
+    """事情があって POST で受ける問い合わせ：問い合わせの名前 → 理由（index 問い合わせ post "理由"）"""
+    return {a.target: a.post for res in p.resources for a in res.actions if a.post}
 
 
 def _table(p) -> tuple[list, dict]:
@@ -126,7 +133,7 @@ def _table(p) -> tuple[list, dict]:
                 path = base
                 if a.kind in ("show", "update", "destroy"):
                     path += "/:" + (res.keys[0] if res.keys else "id")
-                out.append((METHOD[a.kind], path, a.kind, a.target, res.name, tuple(a.statuses)))
+                out.append(("POST" if a.post else METHOD[a.kind], path, a.kind, a.target, res.name, tuple(a.statuses)))
         c = (p.resources, len(p.resources), out, {tgt: (path, kind) for _, path, kind, tgt, _, _ in out})
         p.__dict__["_rest_table"] = c
     return c[2], c[3]

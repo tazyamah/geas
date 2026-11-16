@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .rest import first_by_name, internal_targets, path_inputs, q_inputs, q_types, routes as rest_routes
+from .rest import first_by_name, internal_targets, path_inputs, post_queries, q_inputs, q_types, routes as rest_routes
 
 
 def class_of(chars: tuple) -> str:
@@ -69,6 +69,7 @@ def tool_defs(ck) -> list[dict]:
     p, show = ck.p, ck.p.show_names
     server_slots = {f.slot for f in p.rules}  # サーバーが決める slot（客は渡さない）
     by_res = first_by_name(p)
+    posts = post_queries(p)
     inner = internal_targets(p)  # 流れの途中の処理の URL は、サーバーが外に出さないので、ツールにもしない
     out = []
     for method, path, kind, target, res, statuses in rest_routes(p):
@@ -121,8 +122,8 @@ def tool_defs(ck) -> list[dict]:
             "title": show(target),
             "description": desc,
             "inputSchema": {"type": "object", "properties": props, "required": required},
-            "annotations": {"readOnlyHint": method == "GET", "destructiveHint": method == "DELETE", "idempotentHint": method in ("GET", "PUT", "DELETE")},
-            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps] if method != "GET" else [], **({"q": q_names} if q_names else {})},
+            "annotations": {"readOnlyHint": method == "GET" or (kind == "index" and target in posts), "destructiveHint": method == "DELETE", "idempotentHint": method in ("GET", "PUT", "DELETE")},
+            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps] if method != "GET" else [], **({"q": q_names} if q_names else {}), **({"post_q": True} if kind == "index" and target in posts else {})},
         })
     names = [t["name"] for t in out]
     if len(set(names)) != len(names):

@@ -394,10 +394,12 @@ resource Products {                      // 名前から /products が決まる
 resource CustomerOrders under Customers { index orders_of }           // /customers/:customer_id/orders
 resource ProductPrices key jan { show price_by_jan }                  // /product_prices/:jan
 resource OrderSearches { index order_search }                         // /order_searches?q[from_time]=…&q[to_time?]=…
+resource CustomerSearches { index customer_search post "氏名で探すので、URL とログに残さない" }   // POST /customer_searches（本文 {"q": {…}}）
 resource Reconnections { create Reconnected }                         // 出来事を呼ぶ create は、結果を持たない
 ```
 
 - **パス**に載るのは、どのリソースかを決める値だけです（ID、親の ID、`key 名前` のキー 1 つ。キーは `show` の問い合わせの必須の入力）。問い合わせの入力のうちパスに載らないものは、**絞り込みの条件**として、クエリ文字列の `q[名前]=値` で渡ります（新しい書き方は要りません。`required` でない入力は省けます）。宣言に無い名前、`q[名前]` でない形、同じ名前の重複、条件を取らない URL へのクエリ文字列は 400 です。URL に載せられる型は、ID・文字列・状態の名前・整数・金額・日時で、数は 10 進の数字で書きます（日時は、JSON の本文と同じ数）。考え方は [rest.md](rest.md)。
+- **事情のある POST**：`index 問い合わせ post "理由"` と書くと、本来は GET の問い合わせを POST で受けます（条件を URL に載せられないとき）。条件は本文の `{"q": {…}}`、答えは 200 と結果で、条件は保存しません。理由は必須で、仕様書の「POST で受ける問い合わせ」の表に出ます。書けるのは `index` だけで、同じリソースに `create` は書けません。304 と `next` は付かず、続きは答えの `after` を `q.after` に入れて読みます。
 - 使えるのは `index` `show` `create` `update` `destroy` だけ（`new` と `edit` は画面の URL に出る）。PATCH なし。状態を進める命令も、名詞のリソースにして `create` で表します（`OrderSettlements` など）。
 - `create`／`update`／`destroy` には、**結果の種類ごとの HTTP の状態**を必ず書きます（`Received → 201`）。漏れはエラーです。
 - すべての処理と問い合わせは、どこかの resource に割り当てます（無いと警告）。
