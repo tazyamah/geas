@@ -453,7 +453,12 @@ class Gen:
             vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
             self.w(f'impl {n}Row {{\n    pub fn show(&self) -> String {{ format!("{fmt}", {vals}) }}\n}}')
         out_ty = f"{n}Row" if q.select else "String"
-        self.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> Vec<{out_ty}> {{")
+        pg = paged(q)
+        if pg:  # ページのある問い合わせ：1 ページ分の行と、続きがあるときの印（このページの最後の行のキー）を返す
+            self.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> Vec<{out_ty}> {{\n    {n}_paged(ctx, Store, Input).0\n}}")
+            self.w(f"pub fn {n}_paged(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> (Vec<{out_ty}>, Option<String>) {{")
+        else:
+            self.w(f"pub fn {n}(ctx: &{n}Ctx, Store: &Store, Input: &{n}Input) -> Vec<{out_ty}> {{")
         self.w(f"    let mut rows: Vec<&{q.target}> = Store.{q.target}.values().filter(|r| {{")
         def atom(f, op, st):
             if not st.isdigit():
@@ -493,20 +498,25 @@ class Gen:
             f, d = q.order
             a, b = ("b", "a") if d == "降順" else ("a", "b")
             nulls = f"a.{f}.is_none().cmp(&b.{f}.is_none()).then(" if fields[f].type.optional else "("  # null は最後
-            self.w(f"    rows.sort_by(|a, b| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key})));")
+            self.w(f"    let cmp = |a: &&{q.target}, b: &&{q.target}| {nulls}{a}.{f}.cmp(&{b}.{f})).then({a}.{key}.cmp(&{b}.{key}));")
         else:
-            self.w(f"    rows.sort_by(|a, b| a.{key}.cmp(&b.{key}));")
+            self.w(f"    let cmp = |a: &&{q.target}, b: &&{q.target}| a.{key}.cmp(&b.{key});")
+        self.w("    rows.sort_by(cmp);")
         if q.page or q.page_n:
             if q.page_n:
                 n_expr = str(q.page_n)
             else:
                 t = ins[q.page]
                 n_expr = f"Input.{q.page}.map_or(rows.len(), |x| x as usize)" if t.optional else f"Input.{q.page} as usize"
-            self.w(f"    rows.truncate({n_expr});  // 1ページ分（並びは上で決めてある）")
+            # 続きのページ：印の行より後ろ（並びの順で）だけを残す。印の行が無ければ空（境界で先に断ってある）
+            self.w(f"    if let Some(k) = &Input.{AFTER} {{\n        match Store.{q.target}.get(k) {{\n            Some(c) => rows.retain(|r| cmp(r, &c) == std::cmp::Ordering::Greater),\n            None => rows.clear(),\n        }}\n    }}")
+            self.w(f"    let n: usize = {n_expr};")
+            self.w(f"    let next: Option<String> = if rows.len() > n {{ n.checked_sub(1).and_then(|i| rows.get(i)).map(|r| r.{key}.clone()) }} else {{ None }};")
+            self.w("    rows.truncate(n);  // 1ページ分（並びは上で決めてある）")
         if not q.select:
-            self.w(f"    rows.into_iter().map(|r| r.{key}.clone()).collect()\n}}\n")
+            self.w(f"    {'(' if pg else ''}rows.into_iter().map(|r| r.{key}.clone()).collect(){', next)' if pg else ''}\n}}\n")
             return
-        self.w("    rows.into_iter().filter_map(|r| {")
+        self.w(f"    {'(' if pg else ''}rows.into_iter().filter_map(|r| {{")
         for via in dict.fromkeys(c.via for c in q.select if c.kind == "参照先"):
             tgt = fields[via].type.target
             if fields[via].type.optional:  # 参照が null なら、その先の列は null
@@ -531,7 +541,7 @@ class Gen:
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
         self.w(f"        Some({n}Row {{ {', '.join(parts)} }})")
-        self.w("    }).collect()\n}\n")
+        self.w(f"    }}).collect(){', next)' if pg else ''}\n}}\n")
 
     def states(self):
         for s in self.p.states:

@@ -342,7 +342,7 @@ fn main() {
         s.Memo.insert(m.memo_id.clone(), m);
     }
     let show = |rows: Vec<heavy_titlesRow>| rows.iter().map(|r| r.memo_id.clone()).collect::<Vec<_>>().join(",");
-    let q = |min, max, word: &str, kind: Option<&str>| show(heavy_titles(&heavy_titlesCtx {}, &s, &heavy_titlesInput { min_weight: min, max_weight: max, word: word.into(), kind: kind.map(|k| k.to_string()) }));
+    let q = |min, max, word: &str, kind: Option<&str>| show(heavy_titles(&heavy_titlesCtx {}, &s, &heavy_titlesInput { min_weight: min, max_weight: max, word: word.into(), kind: kind.map(|k| k.to_string()), after: None }));
     println!("{}", q(0, 100, "RED", None));      // 大小文字を無視して含む。新しい順に 2 件（m4, m2 の次の m5 は 3 件目）
     println!("{}", q(5, 6, "red", None));        // 下限と上限は両端を含む
     println!("{}", q(0, 100, "red", Some("b")));  // equals で完全一致

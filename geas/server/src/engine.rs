@@ -192,7 +192,15 @@ impl Engine {
         }
         // 行の無い問い合わせ（ID の並び）
         let mut resp: Value = serde_json::from_str(&out).map_err(|x| format!("host の応答が読めません: {}", x))?;
-        Ok(json!({ "ids": resp["args"].take() }).to_string())
+        // 続きのあるページ（本文に after が付く）は、上の近道に当たらないので、ここで本文を取り出す
+        if resp["body"].get("rows").is_some() {
+            return Ok(resp["body"].take().to_string());
+        }
+        let mut o = json!({ "ids": resp["args"].take() });
+        if let Some(a) = resp["body"].get("after") {
+            o["after"] = a.clone();
+        }
+        Ok(o.to_string())
     }
 
     // ---- 処理とフロー ----

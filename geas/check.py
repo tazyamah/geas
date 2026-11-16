@@ -159,7 +159,7 @@ class ProcInfo:
 def deed_inputs(ck, proc) -> list:
     """生成物での処理の入力：書いた入力に、本人で絞る範囲の「呼んだ本人の ID」（caller）を足したもの。
     caller は、呼ぶ側が渡す値ではなく、サーバーが、プロキシの載せたヘッダから入れる"""
-    return [*proc.inputs, (CALLER, Type("ID"))] if proc.name in ck.infos and ck.infos[proc.name].caller else list(proc.inputs)  # 問い合わせを渡されたら、そのまま
+    return [*proc.inputs, (CALLER, Type("ID"))] if proc.name in ck.infos and ck.infos[proc.name].caller else gen_inputs(ck.p, proc) if isinstance(proc, Query) else list(proc.inputs)
 
 
 SELECT_KINDS = ("ID", "整数", "金額", "日時", "文字列", "名前", "参照")
@@ -899,6 +899,8 @@ class Checker:
             used, ins = set(), dict(q.inputs)
             if CALLER in ins:
                 self.d(ERROR, "範囲", where, f"入力の名前に {CALLER} は使えません（範囲の中で、呼んだ本人の ID を表す語です）", q.line)
+            if AFTER in ins and paged(q):
+                self.d(ERROR, "並び", where, f"page のある問い合わせでは、入力の名前に {AFTER} は使えません（続きのページを読む印 q[{AFTER}] に使う語です）", q.line)
             known = {s.name: s for s in self.p.scopes}
             for sn in q.scopes:
                 sc = known.get(sn)

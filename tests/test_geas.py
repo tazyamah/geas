@@ -1620,8 +1620,8 @@ def test_page_は並びのうえで先頭の1ページを返す(tmp_path):
 fn main() {
     let mut s = Store::default();
     for (id, w) in [("A", 1i64), ("B", 5), ("C", 3)] { s.メモ.insert(id.into(), メモ { メモID: id.into(), 重さ: Some(w as _) }); }
-    println!("{:?}", 先頭(&先頭Ctx {}, &s, &先頭Input {}));
-    println!("{:?}", 一覧(&一覧Ctx {}, &s, &一覧Input { 件数: Some(2) }));
+    println!("{:?}", 先頭(&先頭Ctx {}, &s, &先頭Input { after: None }));
+    println!("{:?}", 一覧(&一覧Ctx {}, &s, &一覧Input { 件数: Some(2), after: None }));
 }
 """
     write_crate(ck, generate(ck), main, tmp_path)

@@ -134,6 +134,33 @@ resource ParcelsByKindAndFees key kind {
   show parcels_by_kind_and_fee for anyone
 }
 
+/// 小包を 2 件ずつ（料金の大きい順。同じ料金の中は ID の大きい順）
+query parcels_paged {
+  input kind: Kind
+  from Parcel
+  filter kind equals kind
+  order fee desc
+  page 2
+  select parcel_id, kind
+  reads Parcel.parcel_id, Parcel.kind, Parcel.fee
+}
+
+resource ParcelPages {
+  index parcels_paged for anyone
+}
+
+/// 小包の ID を 1 件ずつ
+query parcel_ids_paged {
+  from Parcel
+  order fee asc
+  page 1
+  reads Parcel.fee
+}
+
+resource ParcelIdPages {
+  index parcel_ids_paged for anyone
+}
+
 resource MyParcels {
   index my_parcels for Customer
 }
@@ -472,6 +499,31 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     kinds = {x["parcel_id"]: x["kind"] for x in call(served, "GET", "/parcels")[1]["rows"]}
     assert (kinds[a], kinds[b]) == ("mine", "light")
     assert relabel(a, "c-1", "light") == (200, "Relabeled")
+    # 続きを読む：答えの next を辿ると、全部の行を 1 回ずつ、並びの順で読める。最後のページに next は無い
+    def walk(path):
+        seen, pages = [], 0
+        while path:
+            code, body = call(served, "GET", path)
+            assert code == 200, (path, body)
+            got = [x["parcel_id"] for x in body["rows"]] if "rows" in body else body["ids"]
+            seen += got
+            pages += 1
+            path = body.get("next")
+            assert pages < 50
+        return seen, pages
+    every = call(served, "GET", "/parcels")[1]["rows"]
+    seen, pages = walk("/parcel_pages")
+    want = [x["parcel_id"] for x in sorted(every, key=lambda x: (x["fee"], x["parcel_id"]), reverse=True)]
+    assert seen == want and pages == (len(want) + 1) // 2
+    ids, id_pages = walk("/parcel_id_pages")
+    assert ids == [x["parcel_id"] for x in sorted(every, key=lambda x: (x["fee"], x["parcel_id"]))] and id_pages == len(ids)
+    # 条件は、次のページの URL にも残る
+    lights = [x["parcel_id"] for x in every if x["kind"] == "light"]
+    first = call(served, "GET", "/parcel_pages?q[kind]=light")[1]
+    assert ("q[kind]=light" in first["next"] and "q[after]=" in first["next"]) if len(lights) > 2 else "next" not in first
+    assert sorted(walk("/parcel_pages?q[kind]=light")[0]) == sorted(lights)
+    # 無い行の印は 400。ページの無い問い合わせに q[after] は書けない
+    assert call(served, "GET", "/parcel_pages?q[after]=nope")[0] == 400 and call(served, "GET", "/live_parcels?q[after]=" + a)[0] == 400
     # 絞り込みの条件は q[名前]=値：種類はパス、料金の下限（必ず）と上限（省ける）はクエリ文字列
     two = "/parcels_by_kind_and_fees/light"
     assert {a, b} <= set(get(path=two + "?q[min_fee]=300")[1]) and get(path=two + "?q[min_fee]=301")[:2] == (200, [])
@@ -532,3 +584,16 @@ def test_処理の1件引きは_範囲を通せる():
     assert has(text.replace("reads Parcel.refund_ref, Parcel.status\n  writes Parcel.kind", "reads Parcel.refund_ref\n  writes Parcel.kind"), "宣言")  # 範囲が比べる項目も、読む項目に数える
     assert has(text.replace("update relabel_mine for Customer", "update relabel_mine for anyone"), "呼べるのは役割のある人だけです")
     assert has(text.replace(one, "let p = Parcel[parcel_id] else { return NotMine }\n  let k = Parcel.live[parcel_id].kind"), "の形だけです")
+
+
+def test_ページのある問い合わせは_続きの印を受ける():
+    text = scoped()
+    ck = ck_of(text)
+    from geas.hostgen import definitions
+    from geas.spec import build
+    d = definitions(ck)
+    assert d["queries"]["parcels_paged"]["paged"] is True and "paged" not in d["queries"]["live_parcels"]
+    route = next(r for r in d["routes"] if r["target"] == "parcels_paged")
+    assert route["q_inputs"] == [{"name": "kind", "optional": True}, {"name": "after", "optional": True}]
+    assert any(row[1] == "/parcel_pages?q[kind?]=…&q[after?]=…" for row in build(ck)["ルート"])
+    assert has(text.replace("query parcels_paged {\n  input kind: Kind", "query parcels_paged {\n  input kind: Kind, after: Kind"), "入力の名前に after は使えません")

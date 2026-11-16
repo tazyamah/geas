@@ -616,7 +616,8 @@ pub fn order_list(ctx: &order_listCtx, Store: &Store, Input: &order_listInput) -
         if !(r.status != OrderStatus::Canceled) { return false; }
         true
     }).collect();
-    rows.sort_by(|a, b| a.order_id.cmp(&b.order_id));
+    let cmp = |a: &&Order, b: &&Order| a.order_id.cmp(&b.order_id);
+    rows.sort_by(cmp);
     rows.into_iter().filter_map(|r| {
         let j_customer = Store.Customer.get(&r.customer)?;  // 参照先が無い行は出さない
         Some(order_listRow { order_id: r.order_id.clone(), customer: j_customer.customer_id.clone(), item_count: r.items.values().map(|v| *v as i128).sum::<i128>() })
