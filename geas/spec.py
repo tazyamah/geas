@@ -222,6 +222,9 @@ ACTOR_NOTE = ("役割は、前に置くプロキシが本人を確かめ、ヘ�
               "ヘッダの無い呼び出しは 401、役割が合わない呼び出しは 403 で断ります")
 
 
+POST_NOTE = ("読むだけの問い合わせは GET で受けるのが決まりです。ここにあるものは、条件を URL に載せられない事情があり、POST で受けます。"
+             "条件は本文の {\"q\": {…}} に書き、保存しません。答えはその場で返します")
+
 SCOPE_NOTE = ("データ.範囲1.範囲2 と並べると、すべての範囲に入る行だけになります。"
               "「呼んだ本人のID」は、前に置くプロキシが本人を確かめ、ヘッダ X-Geas-Actor-Id に載せて渡します。"
               "呼ぶ側は渡せません。ヘッダの無い呼び出しは 401 で断ります。"
@@ -252,7 +255,7 @@ def actor_rows(p, route_rows) -> list[tuple]:
 
 
 def build(ck: Checker) -> dict:
-    from .rest import INTERNAL, OPEN, actors_text, internal_targets, routes, shown_path
+    from .rest import INTERNAL, OPEN, actors_text, internal_targets, post_queries, routes, shown_path
     spec = build_raw(ck)
     names = spec["名前"]
     spec = show_all(ck.p, spec)
@@ -260,6 +263,9 @@ def build(ck: Checker) -> dict:
     spec["ルート"] = [(m, shown_path(ck.p, path, kind, tgt), kind, ck.p.show_names(tgt), ", ".join(f"{ck.p.show_names(v)}→{c}" for v, c in st), INTERNAL if tgt in inner else OPEN, actors_text(ck.p, tgt, inner) + ("（本人の分だけ）" if tgt in ck.infos and ck.infos[tgt].caller and tgt not in inner else ""))
                      for m, path, kind, tgt, _, st in routes(ck.p)]  # 経路は名前のまま
     spec["役割"] = actor_rows(ck.p, spec["ルート"])
+    # 事情があって POST で受ける問い合わせ：(URL, 問い合わせ, 理由)。本来は GET、という例外を人の目に見せる
+    posts = post_queries(ck.p)
+    spec["POSTの問い合わせ"] = [(path, ck.p.show_names(tgt), posts[tgt]) for m, path, kind, tgt, _, _ in routes(ck.p) if kind == "index" and tgt in posts]
     show = ck.p.show_names
     spec["範囲"] = [(show(s.name) + (f"（{'、'.join(show(n) for n, _ in s.params)}）" if s.params else ""), show(s.data), scope_text(ck.p, s), "、".join([show(q.name) for q in ck.p.queries if s.name in q.scopes] + [show(x.name) for x in ck.p.processes if s.name in ck.infos[x.name].scopes]) or "なし") for s in ck.p.scopes]
     spec["画面"] = [x[:-1] + (screen_url(ck.p, sc),) for x, sc in zip(spec["画面"], ck.p.screens)]  # 画面の URL も名前のまま
@@ -569,6 +575,9 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
                 "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
         out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
+    if spec.get("POSTの問い合わせ"):
+        out += ["", f"## POST で受ける問い合わせ（{POST_NOTE}）", "", "| URL | 問い合わせ | POST で受ける理由 |", "|---|---|---|"]
+        out += [f"| POST {a} | {b} | {c} |" for a, b, c in spec["POSTの問い合わせ"]]
     if spec.get("範囲"):
         out += ["", f"## 範囲（名前を付けた行の集合。{SCOPE_NOTE}）", "", "| 範囲 | データ | 入る行 | 使う問い合わせ・処理 |", "|---|---|---|---|"]
         out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in spec["範囲"]]

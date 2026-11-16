@@ -162,6 +162,22 @@ resource ParcelIdPages {
   index parcel_ids_paged for anyone
 }
 
+/// 種類と料金で小包を探す（条件を URL に載せない）
+query parcels_quietly {
+  input kind: Kind required
+  input min_fee: Fee
+  from Parcel.of_kind(kind)
+  filter fee at_least min_fee
+  order fee asc
+  page 1
+  select parcel_id
+  reads Parcel.kind, Parcel.fee, Parcel.parcel_id
+}
+
+resource QuietParcelSearches {
+  index parcels_quietly for Staff post "探している種類を、URL とログに残さない"
+}
+
 resource MyParcels {
   index my_parcels for Customer
 }
@@ -531,6 +547,18 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert sorted(walk("/parcel_pages?q[kind]=light")[0]) == sorted(lights)
     # 無い行の印は 400。ページの無い問い合わせに q[after] は書けない
     assert call(served, "GET", "/parcel_pages?q[after]=nope")[0] == 400 and call(served, "GET", "/live_parcels?q[after]=" + a)[0] == 400
+    # 事情のある POST：条件は本文の {"q": {…}}。その場で結果を返し（200）、続きは答えの after を q.after に入れて読む
+    quiet = lambda body, actor="Staff", path="/quiet_parcel_searches": call(served, "POST", path, actor, body)
+    code, page1 = quiet({"q": {"kind": "light", "min_fee": 300}})
+    assert code == 200 and len(page1["rows"]) == 1 and "next" not in page1 and page1.get("after")
+    code, page2 = quiet({"q": {"kind": "light", "after": page1["after"]}})
+    assert code == 200 and page2["rows"] and page2["rows"] != page1["rows"]
+    assert quiet({"q": {"kind": "heavy"}})[1]["rows"] == [] and quiet({"q": {"kind": "light", "min_fee": 301}})[1]["rows"] == []
+    # 要る条件が無い・宣言に無い名前・q のほかのキー・q がオブジェクトでない・クエリ文字列・型違いは 400。役割も確かめる
+    for wrong in ({}, {"q": {}}, {"q": {"kind": "light", "other": 1}}, {"kind": "light"}, {"q": "light"}, {"q": {"kind": "light", "min_fee": "300"}}, {"q": {"kind": "light"}, "x": 1}):
+        assert quiet(wrong)[0] == 400, wrong
+    assert quiet({"q": {"kind": "light"}}, path="/quiet_parcel_searches?q[kind]=light")[0] == 400
+    assert quiet({"q": {"kind": "light"}}, actor="Customer")[0] == 403 and call(served, "GET", "/quiet_parcel_searches?q[kind]=light", "Staff")[0] != 200
     # 絞り込みの条件は q[名前]=値：種類はパス、料金の下限（必ず）と上限（省ける）はクエリ文字列
     two = "/parcels_by_kind_and_fees/light"
     assert {a, b} <= set(get(path=two + "?q[min_fee]=300")[1]) and get(path=two + "?q[min_fee]=301")[:2] == (200, [])
@@ -621,3 +649,26 @@ def test_並びを2行以上書くと_呼ぶ側が選べる():
     assert next(x for x in spec["問い合わせ"] if x["問い合わせ"].startswith("小包を 2 件ずつ"))["並び"] == "fee 大きい順"
     assert has(text.replace("  order fee asc\n  order fee desc\n", "  order fee asc\n  order fee asc\n"), "を 2 回書いています")
     assert has(text.replace("query parcel_ids_paged {\n", "query parcel_ids_paged {\n  input order: Kind\n  filter kind equals order\n"), "入力の名前に order は使えません")
+
+
+def test_事情のあるPOSTで受ける問い合わせ():
+    text = scoped()
+    ck = ck_of(text)
+    assert errors(text) == []
+    from geas.hostgen import definitions
+    from geas.mcp import tool_defs
+    from geas.spec import build, render
+    route = next(r for r in definitions(ck)["routes"] if r["target"] == "parcels_quietly")
+    assert (route["method"], route["path"], route["kind"], route["post"], route["for"]) == ("POST", "/quiet_parcel_searches", "index", True, ["Staff"])
+    spec = build(ck)
+    assert spec["POSTの問い合わせ"] == [("/quiet_parcel_searches", "種類と料金で小包を探す（条件を URL に載せない）", "探している種類を、URL とログに残さない")]
+    assert any(row[0] == "POST" and row[1] == '/quiet_parcel_searches（本文 {"q": {kind, min_fee?, after?}}）' for row in spec["ルート"])
+    assert "## POST で受ける問い合わせ" in render(ck, spec, "") and "探している種類を、URL とログに残さない" in render(ck, spec, "")
+    tool = next(t for t in tool_defs(ck) if t["geas"]["path"] == "/quiet_parcel_searches")
+    assert tool["geas"]["post_q"] is True and tool["annotations"]["readOnlyHint"] is True
+    one = 'index parcels_quietly for Staff post "探している種類を、URL とログに残さない"'
+    with pytest.raises(ParseError, match="理由"):
+        parse(text.replace(one, "index parcels_quietly for Staff post"), "x")
+    assert errors(text.replace(one, 'index parcels_quietly post "理由" for Staff')) == []  # for は、post の後ろでもよい
+    assert has(text.replace(one, one + "\n  create claim for Staff {\n    Claimed → 201\n    NoParcel → 404\n  }").replace("resource Claims {\n  create claim for Staff {\n    Claimed → 201\n    NoParcel → 404\n  }\n}", ""), "create は書けません")
+    assert has(text.replace("show my_parcels_of_kind for Customer", 'show my_parcels_of_kind for Customer post "理由"'), "index だけです")

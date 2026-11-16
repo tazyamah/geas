@@ -361,6 +361,7 @@ class ResAction:
     statuses: list[tuple[str, int]] = field(default_factory=list)
     line: int = 0
     actors: Optional[list] = None  # 呼べる役割（for 役割, …）。for anyone は ["anyone"]。書いていなければ None
+    post: Optional[str] = None  # index 問い合わせ post "理由"：本来は GET の問い合わせを、事情があって POST で受ける。その理由（仕様書に出す）
 
 
 @dataclass

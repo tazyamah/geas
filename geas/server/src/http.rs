@@ -399,7 +399,26 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                 let empty: Vec<Value> = Vec::new();
                 let qs = r["q_inputs"].as_array().unwrap_or(&empty);
                 let mut wrong: Option<String> = None;
-                for kv in query.split('&').filter(|x| !x.is_empty()) {
+                // 事情があって POST で受ける問い合わせ：条件は、本文の 1 つのオブジェクト {"q": {…}}。値は JSON のまま（数は数）。条件は保存しない
+                let post = r["post"] == true;
+                if post {
+                    let none = Map::new();
+                    let top = parsed.as_object().unwrap_or(&none);
+                    if !query.is_empty() {
+                        wrong = Some("この URL は、クエリ文字列を受け付けません（条件は、本文の q に書きます）".to_string());
+                    } else if top.keys().any(|k| k != "q") || !matches!(top.get("q"), None | Some(Value::Object(_))) {
+                        wrong = Some("本文は {\"q\": {…}} の形で書きます".to_string());
+                    } else if let Some(Value::Object(qm)) = top.get("q") {
+                        for (k, v) in qm {
+                            if !qs.iter().any(|qi| qi["name"] == k.as_str()) {
+                                wrong = Some(format!("本文の q の「{k}」は受け付けません（書けるのは、宣言した条件だけ）"));
+                            } else if !v.is_null() {
+                                args.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                }
+                for kv in (if post { "" } else { query }).split('&').filter(|x| !x.is_empty()) {
                     let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
                     let k = percent_decode(k, true);
                     let name = k.strip_prefix("q[").and_then(|x| x.strip_suffix(']')).unwrap_or("");
@@ -439,15 +458,18 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                 } else if let Some(name) = bad {
                     Err((400, format!("{name} は、数字で書きます")))
                 } else {
-                match if_none_match.map(|seen| en.query_version().map(|v| etag_of(&v, path, &who)).map(|now| (seen == now, now))) {
+                match if_none_match.filter(|_| !post).map(|seen| en.query_version().map(|v| etag_of(&v, path, &who)).map(|now| (seen == now, now))) {
                     Some(Ok((true, now))) => {
                         etag = Some(now);
                         Ok((304, Value::Null))
                     }
                     Some(Err(m)) => Err(failure(m)),
                     _ => en.query_text(&target, &Value::Object(args)).map(|s| {
-                        etag = Some(etag_of(&en.version(), path, &who));
-                        let s = if en.defs["queries"][&target]["paged"] == true { with_next(s, path) } else { s };
+                        // POST で受けた問い合わせには、版（ETag）も次のページの URL も付けない（続きは、答えの after を本文の q.after に入れて読む）
+                        if !post {
+                            etag = Some(etag_of(&en.version(), path, &who));
+                        }
+                        let s = if !post && en.defs["queries"][&target]["paged"] == true { with_next(s, path) } else { s };
                         text = Some(s);
                         (200, Value::Null)
                     }).map_err(failure),

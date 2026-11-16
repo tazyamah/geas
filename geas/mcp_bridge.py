@@ -16,6 +16,14 @@ def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
     g = tool["geas"]
     path = "/".join(urllib.parse.quote(str(args[s[1:]]), safe="") if s.startswith(":") else s for s in g["path"].split("/"))
     q = [(f"q[{n}]", str(args[n])) for n in g.get("q", []) if args.get(n) is not None]  # 絞り込みの条件（指定しないものは書かない）
+    if g.get("post_q"):  # 事情があって POST で受ける問い合わせ：条件は、本文の {"q": {…}}
+        data = json.dumps({"q": {n: args[n] for n in g.get("q", []) if args.get(n) is not None}}).encode()
+        req = urllib.request.Request(base.rstrip("/") + path, data=data, method="POST", headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read(MAX_REPLY).decode(errors="replace")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(MAX_REPLY).decode(errors="replace")
     path += "?" + urllib.parse.urlencode(q) if q else ""
     body = json.dumps({k: args[k] for k in g["body"] if k in args}).encode() if g["method"] != "GET" else None
     req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers={"Content-Type": "application/json"})

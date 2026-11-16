@@ -1600,6 +1600,10 @@ class Checker:
                 required = [n for n, t in tgt.inputs if not t.optional]
                 optional = [n for n, t in tgt.inputs if t.optional]
                 if is_q:
+                    if a.post and a.kind != "index":
+                        self.d(ERROR, "リソース", w, "post（POST で受ける問い合わせ）を書けるのは index だけです", a.line)
+                    if a.post and any(b.kind == "create" for b in res.actions):
+                        self.d(ERROR, "リソース", w, f"post の付いた index は POST /… になるので、同じリソースに create は書けません（検索のためのリソースを別に作ります）", a.line)
                     keys = list(res.keys) if a.kind == "show" else []
                     if a.kind == "show" and not keys:
                         self.d(ERROR, "リソース", w, "show にはパスのキー（key 名前）が要ります")

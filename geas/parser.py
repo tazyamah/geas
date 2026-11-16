@@ -1548,7 +1548,16 @@ class Parser:
             l2 = self.peek().line
             kw = self.name()
             if kw in ("index", "show"):
-                rs.actions.append(ResAction(kw, self.name(), line=l2, actors=self.for_actors()))
+                act = ResAction(kw, self.name(), line=l2, actors=self.for_actors())
+                if self.peek().kind == "NAME" and self.peek().val == "post":  # 事情のある POST：条件を URL に載せられない問い合わせ
+                    self.next()
+                    t = self.next()
+                    if t.kind != "STR" or not t.val.strip():
+                        raise ParseError('post には、POST で受ける理由を文字列で書きます（例：post "氏名で探すので、URL とログに残さない"）', t.line)
+                    act.post = t.val.strip()
+                    if act.actors is None:
+                        act.actors = self.for_actors()  # for は、post の前でも後ろでもよい
+                rs.actions.append(act)
             elif kw in ("create", "update", "destroy"):
                 act = ResAction(kw, self.name(), line=l2, actors=self.for_actors())
                 if self.peek().val == "{":  # 出来事を呼ぶ create は、結果の種類を持たないので省ける
