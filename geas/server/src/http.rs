@@ -242,6 +242,27 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
 }
 
 /// 問い合わせの応答の ETag：保存の版と URL から作る（URL ごとに違う値になり、別の URL で受け取った値では 304 にならない）
+/// URL のクエリ文字列に載せる値：英数字と - _ . ~ のほかは %XX にする
+fn encode(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') { o.push(b as char); } else { o.push_str(&format!("%{:02X}", b)); }
+    }
+    o
+}
+
+/// ページのある問い合わせの答え：続きの印（after）を、次のページの URL（next）に置き換える。続きが無ければ、そのまま返す。
+/// 次の URL は、いまの URL の条件をそのまま残し、q[after] だけを差し替えたもの（呼ぶ側は、形を知らずに next を辿れる）
+fn with_next(text: String, url: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<Value>(&text) else { return text };
+    let Some(after) = v.as_object_mut().and_then(|m| m.remove("after")).and_then(|a| a.as_str().map(String::from)) else { return text };
+    let (path, query) = url.split_once('?').unwrap_or((url, ""));
+    let mut parts: Vec<String> = query.split('&').filter(|kv| !kv.is_empty() && percent_decode(kv.split('=').next().unwrap_or(""), true) != "q[after]").map(String::from).collect();
+    parts.push(format!("q[after]={}", encode(&after)));
+    v["next"] = Value::String(format!("{}?{}", path, parts.join("&")));
+    v.to_string()
+}
+
 /// URL に書いた数：10 進の数字だけ（先頭の - は可）。+・小数・空・桁あふれは数としない
 fn int_text(c: &str) -> Option<i64> {
     c.parse::<i64>().ok().filter(|_| c.len() <= 20 && c.bytes().enumerate().all(|(i, b)| b.is_ascii_digit() || (i == 0 && b == b'-' && c.len() > 1)))
@@ -426,6 +447,7 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                     Some(Err(m)) => Err(failure(m)),
                     _ => en.query_text(&target, &Value::Object(args)).map(|s| {
                         etag = Some(etag_of(&en.version(), path, &who));
+                        let s = if en.defs["queries"][&target]["paged"] == true { with_next(s, path) } else { s };
                         text = Some(s);
                         (200, Value::Null)
                     }).map_err(failure),

@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .rest import first_by_name, internal_targets, path_inputs, q_inputs, routes as rest_routes
+from .rest import first_by_name, internal_targets, path_inputs, q_inputs, q_types, routes as rest_routes
 
 
 def class_of(chars: tuple) -> str:
@@ -103,7 +103,7 @@ def tool_defs(ck) -> list[dict]:
                 required.append(c)
             if query and kind in ("index", "show"):  # 絞り込みの条件（URL では q[名前]=値）
                 for n in q_inputs(p, by_res[res], next(a for a in by_res[res].actions if a.target == target), query):
-                    t = dict(inputs)[n]
+                    t = q_types(query)[n]
                     q_names.append(n)
                     props[n] = {**type_schema(ck, replace_opt(t)), "description": show(n)}
                     if not t.optional:

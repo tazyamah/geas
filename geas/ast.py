@@ -240,6 +240,8 @@ class Query:
 
 
 CALLER = "caller"  # 範囲（scope）の中で、呼んだ本人の ID を表す語。問い合わせの入力の名前には使えない
+# ページのある問い合わせが、言語から受ける入力：前のページの最後の行の印（サーバーが応答の next に入れて返す）
+AFTER = "after"
 
 
 @dataclass
@@ -271,7 +273,13 @@ def uses_caller(p, q) -> bool:
 def gen_inputs(p, q) -> list:
     """生成物での問い合わせの入力：書いた入力に、範囲の「呼んだ本人の ID」（caller）を足したもの。
     caller は、呼ぶ側が渡す値ではなく、サーバーが、プロキシの載せたヘッダから入れる"""
-    return [*q.inputs, (CALLER, Type("ID"))] if uses_caller(p, q) else list(q.inputs)
+    out = [*q.inputs, (CALLER, Type("ID"))] if uses_caller(p, q) else list(q.inputs)
+    return [*out, (AFTER, Type("ID", optional=True))] if paged(q) else out
+
+
+def paged(q) -> bool:
+    """ページのある問い合わせか（page 件数）。続きは、絞り込みの条件と同じ q の中の q[after]=印 で読む"""
+    return q.page is not None or q.page_n is not None
 
 
 def gen_filters(p, q) -> list:

@@ -53,7 +53,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 9. `screen`（欄・行・操作・通知・遷移・design） | ◎ | `test_screens.py`、`test_runtime.py` の「計画書の画面の具体例から…」（実際の画面で通す。node と Playwright があるときだけ）。固定通貨の金額列は `test_screens.py` の「固定の通貨の金額の列は…」 |
 | 9. ブラウザ拡張の `read`（url／element／row／lookup） | ◎ | `test_extgen.py`、`test_runtime.py` の「計画書の画面の具体例から…」（拡張の 3 通り：ページから読む・ページの表・読めない） |
 | 9. 画面の行き先 `back`・`open`（行を選んで進む） | ◎ | `test_runtime.py` の「計画書の画面の具体例から…」（一覧で行を選んで詳細へ進み、取り下げて一覧へ戻る） |
-| 10. `resource`（結果ごとの HTTP の状態・`key`・create の出来事） | ◎ | `test_rest.py`、`test_runtime.py`（状態の返り方と、境界の 400）、`test_actors.py`（絞り込みの条件 `q[名前]=値`：省ける条件、数字でない・宣言に無い名前・ほかの形・重複は 400、条件ごとに別の ETag） |
+| 10. `resource`（結果ごとの HTTP の状態・`key`・create の出来事） | ◎ | `test_rest.py`、`test_runtime.py`（状態の返り方と、境界の 400）、`test_actors.py`（絞り込みの条件 `q[名前]=値`：省ける条件、数字でない・宣言に無い名前・ほかの形・重複は 400、条件ごとに別の ETag。続きを読む `q[after]`：next を辿ると全部の行を 1 回ずつ並びの順で読める、条件が next に残る、無い行の印は 400） |
 | 10. `resource` の `update`・`destroy`・入れ子（`under`） | ◎ | `test_runtime.py` の「update・destroy・入れ子は…」と、計画書の URL の具体例から生成したテスト |
 | 10. `actor`・`for`（呼べる人の区別。ヘッダ `X-Geas-Actor`） | ◎ | `test_actors.py`（ヘッダが無ければ 401、役割が合わなければ 403 で処理は動かない、合えば通る、誰でも呼べる口、複数の役割、検査のエラー、仕様書とレシート） |
 | 10. `scope`（範囲。`from データ.範囲1.範囲2`。本人で絞る `caller` はヘッダ `X-Geas-Actor-Id`） | ◎ | `test_actors.py`（本人の分だけが返る、並べた範囲はすべてに入る行だけ、ID が無ければ 401、別の人の ETag では 304 にならない、検査のエラー、仕様書。処理の 1 件引き `データ.範囲[ID]`：自分の行は書き換えられ、他人の行と範囲の外の行は「無い」、本文の caller はヘッダの値で置き換わる） |

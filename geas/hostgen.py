@@ -8,7 +8,7 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, deed_inputs, phys
 from .rustgen import column_type, opt, rust_str, value_checks
-from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, q_inputs, route_actors, routes as rest_routes
+from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, q_inputs, q_types, route_actors, routes as rest_routes
 from .screengen import screens_def
 from .spec import fmt_cause
 from .mcp import tool_defs
@@ -324,7 +324,9 @@ def definitions(ck: Checker) -> dict:
                   # caller：本人で絞る範囲を通して行を引く処理。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
                   **({"caller": True} if ck.infos[x.name].caller else {})} for x in p.processes},
         # caller：本人で絞る範囲を使う問い合わせ。サーバーが、プロキシの載せたヘッダの「呼んだ本人の ID」を入力 caller に入れる
-        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if uses_caller(p, q) else {})} for q in p.queries},
+        "queries": {q.name: {"inputs": [n for n, _ in q.inputs], "refs": [n for n, _ in q.refs], **({"caller": True} if uses_caller(p, q) else {}),
+                            # paged：ページのある問い合わせ。サーバーが、答えの「続きの印」を次のページの URL（next）にして返す
+                            **({"paged": True} if paged(q) else {})} for q in p.queries},
         "flows": flows,
         "events": {ev.name: [{"kind": k, "query": q, "deed": d} for k, q, d in ev.steps] for ev in p.events},
         "effects": {e.name: {"args": [n for n, _ in e.params], "joins": e.joins, "no_wait": e.no_wait is not None, **({"http": http_def(e)} if e.http else {}), **({"file": file_def(e)} if e.file else {})} for e in p.effects},
@@ -341,7 +343,7 @@ def definitions(ck: Checker) -> dict:
                     # q_inputs：クエリ文字列の q[名前]=値 で受ける入力（パスに載らない入力のすべて。optional：書かなければ「指定なし」）
                     **({part: [{"name": n, **({"int": True} if ty[n].kind in PATH_INT else {}), **({"optional": True} if ty[n].optional else {})}
                                for n in pick(p, by_res[rn], next(a for a in by_res[rn].actions if a.target == tgt), ck.queries[tgt])]
-                        for part, pick in (("path_inputs", path_inputs), ("q_inputs", q_inputs)) for ty in [dict(ck.queries[tgt].inputs)]}
+                        for part, pick in (("path_inputs", path_inputs), ("q_inputs", q_inputs)) for ty in [q_types(ck.queries[tgt])]}
                        if kind in ("index", "show") and tgt in ck.queries else {}),
                     # 呼べる役割（前に置くプロキシが載せるヘッダの値と比べる）。誰でも呼べる口と、役割の無いアプリには付けない
                     **({"for": who[tgt]} if who.get(tgt) not in (None, [ANYONE]) else {})}
@@ -459,15 +461,23 @@ def host_source(ck: Checker) -> str:
         cf = [f"{x}: {from_j(t, f'ctx.get(\"{x}\")?')}" for x, t in q.refs]
         inf = [f"{x}: {input_j(x, t)}" for x, t in gen_inputs(p, q)]
         w(f'        "{n}" => {{\n            let c = {n}Ctx {{ {", ".join(cf)} }};\n            let i = {n}Input {{ {", ".join(inf)} }};\n            c.validate()?;\n            i.validate()?;')
+        pg = paged(q)
+        if pg:  # 続きの印の行が無ければ、空のページを返さずに断る（消えた行の印で、黙って終わらせない）
+            w(f'            if let Some(k) = &i.{AFTER} {{ if !Store.{q.target}.contains_key(k) {{ return Err("続きの位置（q[{AFTER}]）の行がありません。最初のページから読み直してください".to_string()); }} }}')
+        call = f"{n}_paged(&c, Store, &i)" if pg else f"({n}(&c, Store, &i), None::<String>)"
+        tail = 'if let Some(k) = &next { o.push_str(",\\"after\\":"); o.push_str(&js_str(k)); }'
         if q.select:
-            w(f'            let rows = {n}(&c, Store, &i);\n'
+            w(f'            let (rows, next) = {call};\n'
               '            let mut o = String::with_capacity(rows.len().saturating_mul(64).saturating_add(16));\n'
               '            o.push_str("{\\"rows\\":[");\n'
               f'            for (k, r) in rows.iter().enumerate() {{ if k > 0 {{ o.push(\',\'); }} {n}_row_json(&mut o, r); }}\n'
-              '            o.push_str("]}");\n'
+              '            o.push_str("]");\n'
+              f'            {tail}\n'
+              '            o.push(\'}\');\n'
               '            Ok(write_result("一覧", Vec::new(), o, vec![]))\n        }')
         else:
-            w(f'            Ok(write_result("一覧", {n}(&c, Store, &i), "{{}}".to_string(), vec![]))\n        }}')
+            w(f'            let (ids, next) = {call};\n            let mut o = String::from("{{");\n            if let Some(k) = &next {{ o.push_str("\\"after\\":"); o.push_str(&js_str(k)); }}\n            o.push(\'}}\');\n'
+              '            Ok(write_result("一覧", ids, o, vec![]))\n        }')
     w('        _ => Err(format!("処理「{}」はありません", name)),\n    }\n}')
     w(f"/// 保存ごと JSON で受け渡す口（画面の WASM・試験）。書込を適用した後の保存を \"store\" に入れて返す\n"
       f"pub fn call(request: &str) -> Result<String, String> {{\n"
