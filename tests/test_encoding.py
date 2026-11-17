@@ -84,3 +84,14 @@ def test_MCPの橋渡しは_読めない行で止まらず_誤りを返して続
     out = [json.loads(x) for x in r.stdout.splitlines()]
     assert r.returncode == 0, r.stderr
     assert [o.get("error", {}).get("code") for o in out] == [-32700, -32600, None] and out[2]["id"] == 7
+
+
+def test_見本の仕様書の前の版が読め_変更点の版が作れる(tmp_path):
+    """README から公開する「変更点つきの見本」（.github/workflows/pages.yml）の元。前の版が検査器で読めなくなったら、ここで落ちる"""
+    import subprocess, sys
+    out = subprocess.run(
+        [sys.executable, "-m", "geas", "review", str(FIX / "overseas_shop.geas"), "--plan", str(FIX / "overseas_shop_plan.md"),
+         "-o", str(tmp_path / "full.html"), "--diff-o", str(tmp_path / "changes.html"), "--base", str(FIX / "overseas_shop_before.geas")],
+        capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, out.stderr
+    assert "商品コード（13 桁）を読む" in (tmp_path / "changes.html").read_text(encoding="utf-8")
