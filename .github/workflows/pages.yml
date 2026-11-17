@@ -10,6 +10,7 @@ on:
       - "geas/**"
       - "tests/fixtures/overseas_shop/*.geas"
       - "tests/fixtures/overseas_shop/overseas_shop_plan.md"
+      - "pages/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -41,20 +42,7 @@ jobs:
             -o site/overseas_shop.html \
             --diff-o site/overseas_shop_changes.html \
             --base $F/overseas_shop_before.geas
-          cat > site/index.html <<'HTML'
-          <!doctype html>
-          <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>geas の見本の仕様書</title></head>
-          <body style="font-family:sans-serif;max-width:40em;margin:2em auto;padding:0 1em;line-height:1.7">
-          <h1>geas の見本の仕様書</h1>
-          <p>「海外にも売るお店」を題材に、<code>.geas</code> から生成した、人が読む仕様書です。</p>
-          <ul>
-          <li><a href="overseas_shop.html">仕様書の全体</a></li>
-          <li><a href="overseas_shop_changes.html">前の版からの変更と、答えてほしいこと</a></li>
-          </ul>
-          <p><a href="https://github.com/tazyamah/geas">geas のリポジトリ</a></p>
-          </body></html>
-          HTML
+          cp pages/index.html site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
