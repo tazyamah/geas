@@ -218,7 +218,7 @@ pub fn handle(req: Req, engine: &Mutex<Engine>, pwa: &Path, dev: &Path, opts: &O
     let wants_html = req.header("Accept").map_or(false, |v| v.contains("text/html"));
     if method == "GET" && wants_html && is_screen_url(path) {
         serve_static(pwa, "/")  // 画面の URL（形式 html）：どの画面でも同じ殻を返し、画面は URL から決まる
-    } else if let Some(r) = rest_route(engine, method, path, query, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("X-Geas-Actor"), req.header("X-Geas-Actor-Id")) {
+    } else if let Some(r) = rest_route(engine, method, path, query, &body, test_api, req.header("If-None-Match").map(|v| v.trim()), req.header("If-Match").map(|v| v.trim()), req.header("X-Geas-Actor"), req.header("X-Geas-Actor-Id")) {
         r
     } else if let Some(rest) = path.strip_prefix("/api/") {
         let parsed: Value = if body.trim().is_empty() { json!({}) } else { serde_json::from_str(&body).unwrap_or(Value::Null) };
@@ -274,6 +274,16 @@ fn etag_of(version: &str, path: &str, caller: &str) -> String {
     format!("\"{}-{:x}\"", version, h)
 }
 
+/// If-Match の値（ETag の並び）に、行の版 row が入っているか。1 件の読み出しの ETag（"行の版.答えの版"）も、一覧の行の _etag（"行の版"）も受ける。
+/// 弱い検証子（W/）と * は受けない（どの版でもよい、という書き込みは無い）
+fn if_match_has(header: &str, row: &str) -> bool {
+    header.split(',').any(|t| {
+        let t = t.trim();
+        let inner = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(t);
+        inner.split('.').next() == Some(row)
+    })
+}
+
 /// 問い合わせの答えが、前に送ったものから変わっていない（304）。本文は送らない
 fn not_modified(tag: &str) -> Resp {
     guard(Resp { status: 304, headers: Vec::new(), body: Vec::new() }.with("ETag", tag).with("Cache-Control", "no-store"))
@@ -320,7 +330,7 @@ fn routes() -> &'static [Value] {
 /// 問い合わせを実行せずに 304 を返す（画面の 2 秒ごとの引き直しで、変わっていない一覧を作り直して送らない）
 /// 役割（定義の for）のある URL は、前に置くプロキシが載せたヘッダ X-Geas-Actor（actor。複数はカンマ区切り）と比べる。
 /// ヘッダが無ければ 401、どの役割も合わなければ 403。本人の確かめはプロキシの仕事で、ここではしない（仕様書の「動かす前提」）
-fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, body: &str, test_api: bool, if_none_match: Option<&str>, actor: Option<&str>, actor_id: Option<&str>) -> Option<Resp> {
+fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, body: &str, test_api: bool, if_none_match: Option<&str>, if_match: Option<&str>, actor: Option<&str>, actor_id: Option<&str>) -> Option<Resp> {
     let started = std::time::Instant::now();
     let verb = match method {
         "GET" | "POST" | "PUT" | "DELETE" => method,
@@ -458,6 +468,12 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                 } else if let Some(name) = bad {
                     Err((400, format!("{name} は、数字で書きます")))
                 } else {
+                // この URL の :id が指す行（PUT・DELETE で書き換える行）があれば、その行の版を ETag の先頭に入れる（"行の版.答えの版"）。If-Match に、そのまま載せられる
+                let row_part: String = match (r["kind"].as_str(), r["row_entity"].as_str(), caps.last()) {
+                    (Some("show"), Some(ent), Some(k)) => en.row_version(ent, k).ok().flatten().map(|v| format!("{}.", v)).unwrap_or_default(),
+                    _ => String::new(),
+                };
+                let etag_of = |version: &str, path: &str, caller: &str| -> String { format!("\"{}{}", row_part, etag_of(version, path, caller).trim_start_matches('"')) };
                 match if_none_match.filter(|_| !post).map(|seen| en.query_version().map(|v| etag_of(&v, path, &who)).map(|now| (seen == now, now))) {
                     Some(Ok((true, now))) => {
                         etag = Some(now);
@@ -492,10 +508,40 @@ fn rest_route(engine: &Mutex<Engine>, method: &str, path: &str, query: &str, bod
                     }
                 }
                 let slots = input.as_object_mut().and_then(|m| m.remove("slots")).unwrap_or(json!({}));
-                en.run(&target, &input, &slots).map(|v| {
-                    let code = v["result"].as_str().and_then(|k| r["statuses"][k].as_u64()).unwrap_or(200) as u16;
-                    (code, v)
-                }).map_err(failure)
+                // 書き込みの版の確認：PUT と DELETE は、読んだときの行の版を If-Match に載せる。無ければ 428、今の版と違えば 412（処理は走らせない）。
+                // 版の確かめと処理は、同じ Mutex の中で続けて行う（あいだに別の書き込みは入らない）。行が無いときは、処理が「無い」と答える
+                let row = match (r["kind"].as_str(), r["row_entity"].as_str(), caps.last()) {
+                    (Some("update") | Some("destroy"), Some(ent), Some(k)) => Some((ent, k.as_str())),
+                    _ => None,
+                };
+                let refused: Option<(u16, String)> = match row {
+                    None => None,
+                    Some((ent, k)) => match (en.row_version(ent, k), if_match) {
+                        (Err(m), _) => Some(failure(m)),
+                        // 今の版は教えない（版は、その行を読めた人だけが持つ）
+                        (Ok(_), None) => {
+                            Some((428, "この URL の書き込みには、読んだときの行の版が要ります（ヘッダ If-Match に、一覧の行の _etag か、1 件の読み出しの ETag を載せます）".to_string()))
+                        }
+                        (Ok(Some(cur)), Some(h)) if !if_match_has(h, &cur) => Some((412, "読んだあとに、この行が変わっています。読み直して、確かめてからやり直してください".to_string())),
+                        // 本人の分だけを扱う URL では、行が無いときも同じ 412 にする（他人の行があるかどうかを、答えの違いで教えない）
+                        (Ok(None), Some(_)) if deed_caller => Some((412, "読んだあとに、この行が変わっています。読み直して、確かめてからやり直してください".to_string())),
+                        _ => None,
+                    },
+                };
+                match refused {
+                    Some(x) => Err(x),
+                    None => {
+                        let out = en.run(&target, &input, &slots).map(|v| {
+                            let code = v["result"].as_str().and_then(|k| r["statuses"][k].as_u64()).unwrap_or(200) as u16;
+                            (code, v)
+                        }).map_err(failure);
+                        // 書き換えたあとの行の版を返す（続けて書き込むときに、読み直さずに使える）
+                        if let (Some((ent, k)), Ok(_)) = (row, &out) {
+                            etag = en.row_version(ent, k).ok().flatten().map(|v| format!("\"{}\"", v));
+                        }
+                        out
+                    }
+                }
             }
             k => Err((501, format!("動作 {} は実装していません", k))),
         };
@@ -551,6 +597,11 @@ fn route(en: &mut Engine, method: &str, rest: &str, query: &str, body: &Value, t
         }
         ("POST", ["events", name]) => en.event(name, &body.get("input").cloned().unwrap_or(json!({}))).map_err(bad),
         // ---- テスト用 ----
+        // 行の版（PUT・DELETE の If-Match に載せる値）。計画書の URL の具体例から作った試験が、「その行をいま読んだ人」として書き込むために使う
+        ("GET", ["test", "row_version", entity, key]) => {
+            let v = en.row_version(entity, &decode(key)).map_err(bad)?;
+            Ok(json!({ "etag": v.map(|x| format!("\"{}\"", x)) }))
+        }
         ("GET", ["test", "state"]) => {
             let waits: Vec<Value> = en.db.all_waits().map_err(bad)?.into_iter().map(|w| json!({ "trigger": w.trigger, "args": w.args, "collected": w.collected, "deadline": w.deadline })).collect();
             let jobs: Vec<Value> = en.mock.jobs.iter().map(|j| json!({ "due": j.due, "effect": j.effect, "reply": j.reply, "trigger": j.trigger, "args": j.trigger_args })).collect();
@@ -588,7 +639,18 @@ fn route(en: &mut Engine, method: &str, rest: &str, query: &str, body: &Value, t
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, host_allowed, params};
+    use super::{decode, host_allowed, if_match_has, params};
+
+    #[test]
+    // If-Match：一覧の行の版（"r…"）も、1 件の読み出しの ETag（"r….答えの版"）も受ける。並べた版のどれかが合えばよい。* と W/ は受けない
+    fn if_match_accepts_row_tags_and_show_tags_only() {
+        assert!(if_match_has("\"r01\"", "r01"));
+        assert!(if_match_has("\"r01.5-2-ab\"", "r01"));
+        assert!(if_match_has("\"r00\", \"r01\"", "r01"));
+        for ng in ["*", "W/\"r01\"", "\"r010\"", "\"r0\"", "", "\"5-2-ab\""] {
+            assert!(!if_match_has(ng, "r01"), "{}", ng);
+        }
+    }
 
     #[test]
     // DNS の付け替えで届いたページの名前は断り、手元の名前・IP の書き方・足した名前は受ける

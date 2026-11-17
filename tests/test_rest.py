@@ -13,7 +13,7 @@ CODE = (Path(__file__).parent / "fixtures" / "overseas_shop" / "overseas_shop.ge
 
 
 def chk(src):
-    return check(parse(src), strict_names=True)
+    return check(parse(src, str(Path(__file__).resolve().parent / "fixtures" / "overseas_shop" / "overseas_shop.geas") if 'use "gtin.geas"' in src else None), strict_names=True)
 
 
 def msgs(ck, level=ERROR):

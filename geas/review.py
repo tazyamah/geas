@@ -10,7 +10,7 @@ from .ast import *  # noqa: F401,F403
 from .check import QUESTION, WARN
 from . import svg
 from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, split_top, tables, usecases
-from .spec import ACTOR_NOTE, POST_NOTE, SCOPE_NOTE, build
+from .spec import ACTOR_NOTE, IF_MATCH_NOTE, POST_NOTE, SCOPE_NOTE, build
 from .mcp import tool_defs
 
 
@@ -951,11 +951,12 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
         add("needs", "動かす前提", lead("アプリが実行環境に要求することです。環境の実際（いま何台か、どのポートが開いているか）は geas に書かず、plan や実環境から読んで照合します。照合は `geas env-verify` で行います（plan の JSON から。読めなかった事実は「確かめられなかった」で、合格にはしません）。由来が「人が書いた」の行は、`needs` に書かれた理由つきの要求です。")
             + table(["番号", "観点", "要求", "由来", "確かめ方"], spec["動かす前提"]))
     if spec["人の保証"]:
-        add("trusts", "人の保証", lead("範囲の確認や直列化を、人が引き受けた（または範囲を限った）ものです。入力は、外れると範囲外の値がそのまま入ります。足し引き（+= -=）の saturating は範囲の端で止まり、trust assume は届くと異常で止まります（計算のあふれは検査され、異常として止まります）。検査器は、宣言した範囲を事実として使っています。")
+        add("trusts", "人の保証", lead("範囲の確認や直列化を、人が引き受けた（または範囲を限った）ものです。入力は、外れると範囲外の値がそのまま入ります。足し引き（+= -=）の saturating は範囲の端で止まり、trust assume は届くと異常で止まります。途中の計算は、収まると示せたものだけが何も書かずに通ります。示せない計算を人が引き受けたものは、ここに「途中の計算」として出ます（check は溢れたら異常で止まり、verify は検証ビルドだけ確かめ、assume は確かめません）。検査器は、宣言した範囲を事実として使っています。")
             + table(["処理", "入力・足し引きする項目", "型・範囲", "実行時の確認", "理由"], spec["人の保証"]))
     if spec["ルート"]:
         add("routes", "URL（ルート）", lead("外から触れるものはすべて URL を持ちます。リソースは名詞で、動作は index／show／create／update／destroy。パスは、どのリソースかを表します。絞り込みの条件があるときだけ、クエリ文字列の q[名前]=値 で渡します（名前の後ろの ? は、省ける条件）。")
             + lead("「外から」が「内部（流れの途中）」の URL は、返事・期限・前の処理の結果から進む処理を呼ぶものです。外から直接呼ぶと、決済の返事などの確かめを飛ばせてしまうので、サーバーは答えません（テストのために --test で起こしたときだけ答えます）。")
+            + (lead(IF_MATCH_NOTE + "。") if any(r[0] in ("PUT", "DELETE") for r in spec["ルート"]) else "")
             + route_table(spec)
             + ("<h3>範囲（名前を付けた行の集合）</h3>" + lead(SCOPE_NOTE + "。") + table(["範囲", "データ", "入る行", "使う問い合わせ・処理"], spec["範囲"]) if spec.get("範囲") else "")
             + ("<h3>POST で受ける問い合わせ</h3>" + lead(POST_NOTE + "。") + table(["URL", "問い合わせ", "POST で受ける理由"], [("POST " + a, b, c) for a, b, c in spec["POSTの問い合わせ"]]) if spec.get("POSTの問い合わせ") else "")

@@ -8,7 +8,7 @@ from dataclasses import replace
 from .ast import *  # noqa: F401,F403
 from .check import Checker, deed_inputs, phys
 from .rustgen import column_type, opt, rust_str, value_checks
-from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, post_queries, q_inputs, q_types, route_actors, routes as rest_routes
+from .rest import ANYONE, PATH_INT, first_by_name, internal_targets, path_inputs, post_queries, q_inputs, q_types, route_actors, routes as rest_routes, versioned
 from .screengen import screens_def
 from .spec import fmt_cause
 from .mcp import tool_defs
@@ -125,6 +125,11 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     }
     if k == 2 { o.push((n >> 4) as u8); } else if k == 3 { o.extend([(n >> 10) as u8, (n >> 2) as u8]); }
     Ok(o)
+}
+/// 行の版：DB に書く行の JSON から作る（中身が同じなら同じ値）。書き込みの版の確認（If-Match）と、一覧の各行の _etag に使う
+pub fn row_etag(row: &str) -> String {
+    let h = row.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    format!("r{:016x}", h)
 }
 pub fn js_set(s: &BTreeSet<String>) -> String { format!("[{}]", s.iter().map(|x| js_str(x)).collect::<Vec<_>>().join(",")) }
 pub fn js_arr(v: &[String]) -> String { format!("[{}]", v.iter().map(|x| js_str(x)).collect::<Vec<_>>().join(",")) }
@@ -319,6 +324,7 @@ def definitions(ck: Checker) -> dict:
     who = route_actors(p)
     by_res = first_by_name(p)
     posts = post_queries(p)
+    rows_of = versioned(p)
     inner = internal_targets(p)  # 流れの途中の処理を呼ぶ URL：サーバーは --test のときだけ答える（仕様書の URL の表で「内部」）
     return {
         "deeds": {x.name: {"inputs": [n for n, _ in x.inputs], "refs": [n for n, _ in x.refs], "new_ids": sorted(set(ck.infos[x.name].new_ids)),
@@ -340,6 +346,8 @@ def definitions(ck: Checker) -> dict:
         "data_folder": data_folder_def(ck),
         "routes": [{"method": m, "path": path, "kind": kind, "target": tgt, "resource": rn, "statuses": dict(st),
                     **({"id_input": next((n for n, t in ck.procs[tgt].inputs if t.kind == "ID"), "")} if kind in ("update", "destroy") and tgt in ck.procs else {}),
+                    # row_entity：この URL の :id が指す行の実体。PUT・DELETE は、この行の版を If-Match と比べる。show は、答えの ETag にこの行の版を入れる
+                    **({"row_entity": rows_of[rn]} if kind in ("update", "destroy", "show") and rn in rows_of else {}),
                     **({"internal": True} if tgt in inner else {}),
                     # post：本来は GET の問い合わせを、POST で受ける（条件は、本文の {"q": {…}}）
                     **({"post": True} if kind == "index" and tgt in posts else {}),
@@ -381,12 +389,16 @@ def server_api(p) -> str:
         "pub fn row_json(store: &Store, entity: &str, key: &str) -> Option<String> {\n"
         "    match entity {\n"
         f"{get}\n"
-        "        _ => None,\n    }\n}"
+        "        _ => None,\n    }\n}\n"
+        "/// メモリ上の保存の 1 行の版。行が無ければ None\n"
+        "pub fn row_version(store: &Store, entity: &str, key: &str) -> Option<String> {\n"
+        "    row_json(store, entity, key).map(|s| row_etag(&s))\n}"
     )
 
 
 def host_source(ck: Checker) -> str:
     p = ck.p
+    etag_data = set(versioned(p).values())  # PUT・DELETE で書き換える実体
     out = [JSON_PRELUDE]
     w = out.append
     # データ・保存の変換
@@ -455,8 +467,12 @@ def host_source(ck: Checker) -> str:
             cols = [(c, column_type(ck, q, c)) for c in q.select]
             # 列名は生成のときに JSON の文字列にしておき、値は o の後ろへ直接書く
             body = " ".join(f'o.push_str({rust_str(("{" if k == 0 else ",") + json.dumps(c.name, ensure_ascii=False) + ":")}); {put_j(t, f"r.{c.name}")}'
-                            for k, (c, t) in enumerate(cols)) + " o.push('}');" if cols else 'o.push_str("{}");'
-            w(f'fn {n}_row_json(o: &mut String, r: &{n}Row) {{\n    {body}\n}}')
+                            for k, (c, t) in enumerate(cols))
+            if q.target in etag_data and cols:  # PUT・DELETE で書き換える実体の一覧：各行に、その行の版（_etag）を付ける（If-Match に載せる値）
+                body += (f' if let Some(row) = Store.{q.target}.get(&r.row_key_) {{ o.push_str(",\\"_etag\\":\\""); '
+                         f'o.push_str(&row_etag(&{q.target}_to_json(row))); o.push(\'"\'); }}')
+            body = body + " o.push('}');" if cols else 'o.push_str("{}");'
+            w(f'fn {n}_row_json(o: &mut String, r: &{n}Row, Store: &Store) {{\n    let _ = Store;\n    {body}\n}}')
     # 処理の呼び出し
     w("fn write_result(name: &str, args: Vec<String>, body: String, effects: Vec<String>) -> String {\n"
       '    format!("{{\\"result\\":{},\\"args\\":{},\\"body\\":{},\\"effects\\":[{}]}}", js_str(name), js_arr(&args), body, effects.join(","))\n}')
@@ -486,7 +502,7 @@ def host_source(ck: Checker) -> str:
             w(f'            let (rows, next) = {call};\n'
               '            let mut o = String::with_capacity(rows.len().saturating_mul(64).saturating_add(16));\n'
               '            o.push_str("{\\"rows\\":[");\n'
-              f'            for (k, r) in rows.iter().enumerate() {{ if k > 0 {{ o.push(\',\'); }} {n}_row_json(&mut o, r); }}\n'
+              f'            for (k, r) in rows.iter().enumerate() {{ if k > 0 {{ o.push(\',\'); }} {n}_row_json(&mut o, r, Store); }}\n'
               '            o.push_str("]");\n'
               f'            {tail}\n'
               '            o.push(\'}\');\n'

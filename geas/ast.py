@@ -27,7 +27,6 @@ class Type:
     unit: Optional[str] = None
     optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
     chars: Optional[tuple] = None  # 文字列の使える文字。(下限, 上限) のコードポイントの組を、小さい順につないだもの
-    check: Optional[str] = None  # 文字列の検査数字の種類（gtin＝JAN/EAN/UPC のチェックディジット）
     fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     maxn: Optional[int] = None  # 写像の要素数の上限（K → V max N）。sum の範囲を示すのに使う
     read: Optional[str] = None  # 論理型に結びつけた、raw から変換する convert の名前。この型の値は、境界でこの変換を通る（入力の選別を通す境界）
@@ -688,7 +687,8 @@ def show_type(t: Type) -> str:
     if k in ("ID", "日時", "真偽"):
         return k
     if k == "文字列":
-        return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.check is None else f" 検査数字 {t.check}")
+        # read：外から入る所で通す変換（拒否の条件は、仕様書の部品の表に出る）
+        return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.read is None else f" 変換 {t.read}")
     if k == "バイト列":
         return "バイト列" + show_range(t.range)
     if k == "生":

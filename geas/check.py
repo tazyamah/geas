@@ -13,13 +13,6 @@ from .names import label_gaps, name_problems
 from .parser import parse_chars
 
 
-def valid_gtin(s: str) -> bool:
-    """JAN・EAN・UPC の検査数字（右から2桁目を3倍、次を1倍…の合計が10の倍数）。長さは 8・12・13・14"""
-    if not s.isdigit() or len(s) not in (8, 12, 13, 14):
-        return False
-    return sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(reversed(s))) % 10 == 0
-
-
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
 
@@ -537,7 +530,7 @@ class Checker:
                 if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
                     self.d(ERROR, "範囲", where, f"変換の結果が戻り値の範囲{show_range(r)}に収まると示せません"
                            f"（式の範囲 {iv_show((lo, hi))}）。引数の型か式を見直してください")
-            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None or pt.ret.check is not None):
+            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None):
                 self.d(ERROR, "範囲", where, "長さや文字種が決まっている文字列を返す変換は、まだ静的に示せません")
             self.part_types.update(pc.info.types)
             return
@@ -1382,10 +1375,13 @@ class Checker:
             if need_group and rx.groups < 1:
                 self.d(ERROR, "画面", where, f"read の url の正規表現「{pat}」には、値を取り出す ( ) が要ります")
         ty = self.queries[sc.shows[0]].inputs[0][1]
-        if ty.check == "gtin":
-            for k, v in rd.lookup.items():
-                if not valid_gtin(v):
-                    self.d(ERROR, "画面", where, f"read の lookup「{k}」の値「{v}」は、検査数字（gtin）が合っていません")
+        # 直に書いた値（lookup）は、入力の型に結んだ変換（read）の拒否の条件で確かめる（サーバーが境界で断る値を、定義に残さない）
+        from .rawexpr import refusal, requires_tree
+        req = requires_tree(self.parts.get(ty.read)) if ty.read else None
+        for k, v in (rd.lookup.items() if req else []):
+            why = refusal(req, v)
+            if why is not None:
+                self.d(ERROR, "画面", where, f"read の lookup「{k}」の値「{v}」は、入力の型の変換 {self.p.show_names(ty.read)} が断ります（{why}）")
 
     def check_slot_rules(self):
         """slot の値の決め方（rule）。決める slot が処理にあり、条件の名前が使え、最後が default で、値の種類が合うこと"""
@@ -1731,7 +1727,7 @@ class Checker:
     def check_resources(self):
         """リソースの検査。親と対象が実在し、動作の種類と対象（処理か問い合わせ）が合い、URL にクエリ文字列を使わず（問い合わせの入力はパスのキーか親のIDで埋まる）、
         処理の結果の種類ごとに HTTP の状態が決まっていること。同じ URL・同じ処理や問い合わせを2度書けない。リソースがあるのに行き先の無い処理・問い合わせは警告。"""
-        from .rest import METHOD, PATH_INT, PATH_TEXT, routes
+        from .rest import METHOD, PATH_INT, PATH_TEXT, routes, row_entity
         p = self.p
         if not p.resources:
             return
@@ -1779,6 +1775,10 @@ class Checker:
                         self.d(ERROR, "リソース", w, f"{a.kind} は 1 つの ID で対象を決めるので、キーが複数のリソース（key {', '.join(res.keys)}）には書けません（別のリソースに分けます）")
                     if a.kind in ("update", "destroy") and not any(t.kind == "ID" for _, t in tgt.inputs):
                         self.d(ERROR, "リソース", w, f"{a.kind} は /…/:id の ID で対象を決めるので、処理に ID の入力が要ります")
+                    elif a.kind in ("update", "destroy") and not row_entity(self.p, tgt.name):
+                        idn = next(n for n, t in tgt.inputs if t.kind == "ID")
+                        self.d(ERROR, "リソース", w, f"{a.kind} の処理は、ID の入力で 1 行を引きます（let x = 実体[{idn}] else {{ … }}）。"
+                               "サーバーは、その行の版を If-Match と比べてから処理を走らせます（どの行を書き換えるのかが、処理から分かる必要があります）")
                     rdef = self.results.get(tgt.result)
                     variants = [v for v, _ in rdef.variants] if rdef else []
                     given = [v for v, _ in a.statuses]
@@ -3758,7 +3758,7 @@ class ProcChecker:
     def check_text_fit(self, e, dst: Type, where: str, line: int):
         """長さか使える文字が決まっている文字列の項目へ書くとき、書く値の長さと文字が収まると示せるか。
         示せるのは、宣言のある入力・項目・slot と、部品の戻り値を、そのまま書く場合だけ（外から来る値は、境界で確かめてある）"""
-        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.check is None and dst.read is None) or isinstance(e, Null):
+        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.read is None) or isinstance(e, Null):
             return
         if isinstance(e, Call) and e.n in self.ck.parts:
             src = self.ck.parts[e.n].ret
@@ -3775,8 +3775,8 @@ class ProcChecker:
                 if dst.chars is not None and (chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in chars)):
                     self.d(ERROR, "文字種", f"{where} に書く文字列「{show(e)}」の文字が、項目の使える文字に収まると示せません"
                            f"（書く値{'の文字は制限なし' if chars is None else ' [' + show_chars(chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
-                if dst.read is not None or dst.check is not None:
-                    self.d(ERROR, "検査", f"{where} は変換か検査数字を通った値だけを書けるので、つないだ文字列「{show(e)}」は書けません", line)
+                if dst.read is not None:
+                    self.d(ERROR, "検査", f"{where} は変換を通った値だけを書けるので、つないだ文字列「{show(e)}」は書けません", line)
                 return
         if src is None or src.kind != "文字列":
             if src is None:
@@ -3792,9 +3792,6 @@ class ProcChecker:
         if dst.read is not None and src.read != dst.read:
             self.d(ERROR, "検査", f"{where} に書く文字列が、変換 {dst.read} を通った値と示せません"
                    f"（書く値{'は変換を通っていない' if src.read is None else 'の変換は ' + src.read} ／ 項目は {dst.read}）。型に read {dst.read} が結ばれた入力・項目・部品の戻り値を、そのまま書いてください", line)
-        if dst.check is not None and src.check != dst.check:
-            self.d(ERROR, "検査数字", f"{where} に書く文字列が、検査数字（{dst.check}）を満たすと示せません"
-                   f"（書く値{'は検査数字なし' if src.check is None else 'の検査数字は ' + src.check} ／ 項目は {dst.check}）", line)
 
     def delete(self, st: Delete):
         """delete 変数：let で引いた1件を消す。keep のデータは消せない。状態を持つデータは、消してよい状態（removable）と、その状態だと確かめた後でだけ消せる（足りなければ問い）"""

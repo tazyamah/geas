@@ -550,23 +550,16 @@ class Parser:
             raise self.err(str(e))
 
     def check_opt(self, rng, chars):
-        """check gtin：JAN・EAN・UPC の最後の1桁（チェックディジット）が合っている文字列。長さは8・12・13・14桁、文字は数字だけ"""
-        if not self.accept("check"):
-            return None
-        kind = self.name()
-        if kind != "gtin":
-            raise self.err(f"check に書けるのは gtin だけです（「{kind}」は使えません）")
-        if rng is None or rng.lo != rng.hi or rng.lo not in (8, 12, 13, 14):
-            raise self.err("check gtin の文字列は、長さを 8・12・13・14 のどれか1つに決めてください（例：text 13..13 of \"0-9\" check gtin）")
-        if chars != ((48, 57),):
-            raise self.err('check gtin の文字列は、文字種を of "0-9" にしてください')
-        return kind
+        """check gtin は 2026-11-16 に言語から外した。検査数字は、geas の式で書いた変換（標準モジュール Gtin）を型に結んで確かめる"""
+        if self.is_("check"):
+            raise self.err('check gtin は無くなりました。検査数字は、標準モジュール Gtin（geas/std/gtin.geas を .geas の隣に置く）で確かめます：'
+                           'use "gtin.geas" と書き、型は Gtin.Gtin13（8・12・14 桁は Gtin.Gtin8・Gtin.Gtin12・Gtin.Gtin14）を使います')
 
     def type(self) -> Type:
         line = self.peek().line
         named = self.peek().val in self.ltypes and not self.is_("→", 1)
         t = self._type()
-        if not (self.in_ltype or named) and (t.kind in ("写像", "集合") or t.range is not None or t.chars is not None or t.check is not None):
+        if not (self.in_ltype or named) and (t.kind in ("写像", "集合") or t.range is not None or t.chars is not None):
             raise ParseError("範囲や組み合わせは、ltype で名前を付けてから使ってください（例：ltype 数量 = int 1..99）", line)
         return t
 
@@ -591,7 +584,8 @@ class Parser:
             return Type("集合", value=Type("ID"), maxn=self.max_opt())
         if tok == "text":  # 範囲は長さ（文字数）。of "a-z0-9_" は使える文字
             rng, chars = self.range_opt(), self.chars_opt()
-            return Type("文字列", range=rng, chars=chars, check=self.check_opt(rng, chars))
+            self.check_opt(rng, chars)
+            return Type("文字列", range=rng, chars=chars)
         if tok in ("time", "bool"):
             return Type(SIMPLE_TYPES[tok])
         if tok == "raw":  # 未検査の生データ（外から来たままの文字列）。convert の引数にだけ書ける

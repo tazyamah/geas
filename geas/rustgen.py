@@ -109,27 +109,6 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
         None => Ok(()),
     }
 }
-/// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
-/// GTIN の判定（文言を組み立てない判定。足し込みは saturating なので、どれだけ長くても panic しない）
-pub fn gtin_ok(s: &str) -> bool {
-    gtin_chars_ok(s.chars())
-}
-pub fn gtin_chars_ok<I: DoubleEndedIterator<Item = char>>(cs: I) -> bool {
-    let mut sum: u32 = 0;
-    for (i, c) in cs.rev().enumerate() {
-        match c.to_digit(10) {
-            Some(d) => sum = sum.saturating_add(if i % 2 == 1 { d.saturating_mul(3) } else { d }),
-            None => return false,
-        }
-    }
-    sum % 10 == 0
-}
-pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
-    if !gtin_ok(s) {
-        return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
-    }
-    Ok(())
-}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
@@ -252,8 +231,6 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "文字列" and t.chars is not None:
         chk.append(f'check_chars("{label}", &{x}, {chars_rust(t.chars)})?;')
-    if t.kind == "文字列" and t.check == "gtin":
-        chk.append(f'check_gtin("{label}", &{x})?;')
     if t.kind == "バイト列" and t.range:
         chk.append(f'check_range("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind in ("整数", "金額") and t.range:
@@ -386,6 +363,8 @@ fn os_path_expand(input: &str) -> Result<String, String> {
 
 class Gen:
     def __init__(self, ck: Checker):
+        from .rest import versioned
+        self.etag_data = set(versioned(ck.p).values())  # PUT・DELETE で書き換える実体（一覧の行に、行のキーを持たせる）
         assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
@@ -448,6 +427,8 @@ class Gen:
             self.w(f"pub struct {n}Row {{")
             for c, t in cols:
                 self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else field_rust(t)},")  # 集計は桁あふれしない広い整数
+            if q.target in self.etag_data:  # PUT・DELETE で書き換える実体の行：どの行かを持っておく（サーバーが、行の版を答えに付ける）
+                self.w("    pub row_key_: String,")
             self.w("}")
             fmt = "/".join(f"{c.name}={{}}" for c, _ in cols)
             vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
@@ -547,6 +528,8 @@ class Gen:
                              if fields[c.field].type.optional else f"{c.name}: r.{c.field}.len() as i128")
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
+        if q.target in self.etag_data:
+            parts.append(f"row_key_: r.{key}.clone()")
         self.w(f"        Some({n}Row {{ {', '.join(parts)} }})")
         self.w(f"    }}).collect(){', next)' if pg else ''}\n}}\n")
 
@@ -984,8 +967,6 @@ class ProcGen:
             checks.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.read:
             checks.append(f'if let Err(m) = {pt.ret.read}(&result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
-        if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
-            checks.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.guarantee is not None:
             saved = dict(self.scope)
             for n, t in [*pt.params, ("result", pt.ret)]:

@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from .plan import n, route_match
-from .rest import routes
+from .rest import routes, versioned
 
 HEADER = '''# SPDX-License-Identifier: GPL-3.0-or-later
 """計画書の「URL の具体例」から geas が生成したテスト。手で直さない（計画書を直して作り直す）。
@@ -28,7 +28,7 @@ import pytest
 
 APP = Path(__file__).resolve().parent.parent
 
-# (ID, メソッド, 経路, 入力, 期待する結果, 期待する状態, 期待する本文, 控える)
+# (ID, メソッド, 経路, 入力, 期待する結果, 期待する状態, 期待する本文, 控える, 書き換える行の実体)
 ROWS = %s
 
 
@@ -64,9 +64,9 @@ def vars_():
     return {}
 
 
-def call(base, method, path, body):
+def call(base, method, path, body, if_match=None):
     req = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", **({"If-Match": if_match} if if_match else {})})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, json.loads(r.read())
@@ -96,9 +96,12 @@ def subset(want, got):
 
 @pytest.mark.parametrize("row", ROWS, ids=[r[0] for r in ROWS])
 def test_url_example(base, vars_, row):
-    rid, method, path, body, result, status, expect, keep = row
+    rid, method, path, body, result, status, expect, keep, entity = row
     path = fill(path, vars_)
-    code, j = call(base, method, path, None if body is None else json.loads(fill(body, vars_)))
+    tag = None
+    if entity:  # PUT・DELETE：その行をいま読んだ人として呼ぶ（行の版を If-Match に載せる。行が無ければ、どの行の版でもない値）
+        tag = call(base, "GET", "/api/test/row_version/" + entity + "/" + path.rsplit("/", 1)[1], None)[1].get("etag") or '"none"'
+    code, j = call(base, method, path, None if body is None else json.loads(fill(body, vars_)), tag)
     assert code == status, (rid, method, path, code, j)
     if result:
         assert j.get("result") == result, (rid, j)
@@ -146,7 +149,8 @@ def url_rows(ck, plan: dict) -> list[tuple]:
                 except ValueError as e:
                     raise ValueError(f"URL例 {r.get('ID', '').strip()}: {label} が JSON ではありません（{e}）")
         out.append((r["ID"].strip(), r["メソッド"].strip(), r["経路"].strip(), body if body not in ("", "－", "-") else None,
-                    res, int(r["期待する状態"].strip()), expect if expect not in ("", "－", "-") else None, keep))
+                    res, int(r["期待する状態"].strip()), expect if expect not in ("", "－", "-") else None, keep,
+                    next((versioned(p).get(rn, "") for m, path, k, _t, rn, _s in rs if (m, path) == rt and k in ("update", "destroy")), "")))
     return out
 
 

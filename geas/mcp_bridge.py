@@ -26,10 +26,16 @@ def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
             return e.code, e.read(MAX_REPLY).decode(errors="replace")
     path += "?" + urllib.parse.urlencode(q) if q else ""
     body = json.dumps({k: args[k] for k in g["body"] if k in args}).encode() if g["method"] != "GET" else None
-    req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if g.get("if_match") and args.get("if_match"):  # 書き込みの版の確認：読んだときの行の版を、ヘッダ If-Match で送る
+        tag = str(args["if_match"]).strip()
+        headers["If-Match"] = tag if tag.startswith('"') else f'"{tag}"'
+    req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, r.read(MAX_REPLY).decode(errors="replace")
+            text = r.read(MAX_REPLY).decode(errors="replace")
+            # 1 件の読み出し：答えの版（ETag）を、本文の前に 1 行で付ける（書き込みのツールの if_match に、そのまま渡せる）
+            return r.status, (f"ETag: {r.headers['ETag']}\n{text}" if g.get("etag") and r.headers.get("ETag") else text)
     except urllib.error.HTTPError as e:  # 結果の種類（404・409・422 など）も、AI が読む返事
         return e.code, e.read(MAX_REPLY).decode(errors="replace")
 

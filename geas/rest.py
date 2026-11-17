@@ -157,3 +157,40 @@ def screen_url(p, sc) -> str:
         if qn in by:
             return by[qn][0]
     return ""
+
+
+# 仕様書に 1 回だけ書く、書き込みの版の確認の決まり（.geas には書かない。PUT と DELETE のすべてに、例外なく効く）
+IF_MATCH_NOTE = ("PUT と DELETE は、読んだときの行の版をヘッダ If-Match に載せて呼びます（一覧の行の _etag か、1 件の読み出しの ETag）。"
+                 "載せなければ 428、読んだあとに行が変わっていれば 412 で、どちらも処理を走らせません。POST の命令には要りません（状態の遷移の確かめが担います）")
+
+
+def row_entity(p, target: str) -> str:
+    """update・destroy の処理が書き換える 1 行の実体：処理の ID の入力（URL の :id）で引く実体（let x = 実体[id] else …）。無ければ空。
+    サーバーは、この行の版を If-Match と比べてから処理を走らせる（書き込みの版の確認）"""
+    from .ast import Assign, ForEach, If, Index, Name
+    proc = next((x for x in p.processes if x.name == target), None)
+    if proc is None:
+        return ""
+    idn = next((n for n, t in proc.inputs if t.kind == "ID"), None)
+
+    def find(stmts):
+        for st in stmts:
+            if isinstance(st, Assign) and isinstance(st.e, Index) and isinstance(st.e.e, Name) and st.e.e.n == idn:
+                return st.e.d
+            for inner in ([st.body, st.els or []] if isinstance(st, If) else [st.body] if isinstance(st, ForEach) else []):
+                got = find(inner)
+                if got:
+                    return got
+        return ""
+    return find(proc.body) if idn else ""
+
+
+def versioned(p) -> dict:
+    """リソース名 → update・destroy が書き換える行の実体（そのリソースの /…/:id が指す行）。show の答えの ETag にも、この行の版を入れる"""
+    out: dict = {}
+    for _, _, kind, tgt, rn, _ in _table(p)[0]:
+        if kind in ("update", "destroy") and rn not in out:
+            e = row_entity(p, tgt)
+            if e:
+                out[rn] = e
+    return out

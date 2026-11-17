@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """コードから「検査可能な仕様書」（③）を生成する。突合では構造のまま使い、人向けには Markdown にする。"""
-from .rest import screen_url
+from .rest import IF_MATCH_NOTE, screen_url
 from .ast import *  # noqa: F401,F403
 from .check import Checker, VERIFIED_STORES, phys, tok_of
 
@@ -405,7 +405,9 @@ def build_raw(ck: Checker) -> dict:
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret),
-                   "= " + show(pt.body) if pt.body is not None else (show(pt.guarantee) if pt.guarantee is not None else "戻り値の範囲"))
+                   # raw から変換する convert は、断る条件（成り立たなければ入力不正にする条件と、その理由）も出す
+                   "".join(f"{show(c)} でなければ断る（{why}）。 " for c, why in pt.requires) + "= " + show(pt.body) if pt.body is not None
+                   else (show(pt.guarantee) if pt.guarantee is not None else "戻り値の範囲"))
                   for pt in p.parts if not pt.external or pt.name in ck.used_libs]
     from .partcheck import load_ledger, status_text
     ledger = load_ledger(getattr(ck, "code_path", None))  # 部品の境界値の検査（geas parts --record）の結果。宣言を実際に呼んで確かめたかを添える
@@ -589,6 +591,8 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
                 "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
         out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
+        if any(a in ("PUT", "DELETE") for a, *_ in spec["ルート"]):
+            out += ["", IF_MATCH_NOTE + "。"]
     if spec.get("POSTの問い合わせ"):
         out += ["", f"## POST で受ける問い合わせ（{POST_NOTE}）", "", "| URL | 問い合わせ | POST で受ける理由 |", "|---|---|---|"]
         out += [f"| POST {a} | {b} | {c} |" for a, b, c in spec["POSTの問い合わせ"]]

@@ -5,13 +5,40 @@
   "use strict";
   const R = root.GEAS_EXT.read;
 
-  // 入力に check gtin があるとき、JAN・EAN・UPC の最後の1桁が合っているか（サーバーと同じ決まり）
+  // 入力の型に結んだ変換（Geas の convert）の拒否の条件を、送る前に確かめる（サーバーが境界で断るのと同じ条件。defs.js の input.requires）。
+  // 条件は式の木。数が大きすぎて正確に計算できないときは、ここでは決めずに通す（サーバーが決める）
+  class Unsure extends Error {}
+  function val(t, s, env) {
+    const k = t[0], cs = [...s];
+    const num = (x) => { if (!Number.isSafeInteger(x)) throw new Unsure(); return x; };
+    switch (k) {
+      case "num": case "bool": return t[1];
+      case "var": return env[t[1]];
+      case "len": return cs.length;
+      case "only": return cs.every((c) => t[1].some(([a, b]) => a <= c.codePointAt(0) && c.codePointAt(0) <= b));
+      case "digit": { const i = val(t[1], s, env); return i >= 0 && i < cs.length && /^[0-9]$/.test(cs[i]) ? Number(cs[i]) : 0; }
+      case "not": return !val(t[1], s, env);
+      case "if": return val(val(t[1], s, env) ? t[2] : t[3], s, env);
+      case "and": return val(t[1], s, env) && val(t[2], s, env);
+      case "or": return val(t[1], s, env) || val(t[2], s, env);
+      case "sum": { let acc = 0; for (let i = 0; i < cs.length; i++) acc = num(acc + val(t[2], s, { ...env, [t[1]]: i })); return acc; }
+    }
+    const xs = t.slice(1).map((a) => val(a, s, env)), [a, b] = xs;
+    switch (k) {
+      case "<": return a < b; case ">": return a > b; case "<=": return a <= b; case ">=": return a >= b; case "==": return a === b; case "!=": return a !== b;
+      case "+": return num(a + b); case "-": return num(a - b); case "*": return num(a * b);
+      case "/": return Math.floor(a / b); case "%": return ((a % b) + b) % b;
+      case "min": return Math.min(...xs); case "max": return Math.max(...xs); case "abs": return Math.abs(a);
+    }
+    throw new Unsure();
+  }
   function valid(s) {
-    if (root.GEAS_EXT.input.check !== "gtin") return true;
-    if (!/^\d+$/.test(s) || ![8, 12, 13, 14].includes(s.length)) return false;
-    let sum = 0;
-    [...s].reverse().forEach((c, i) => (sum += Number(c) * (i % 2 ? 3 : 1)));
-    return sum % 10 === 0;
+    try {
+      return (root.GEAS_EXT.input.requires || []).every(([t]) => val(t, s, {}));
+    } catch (e) {
+      if (e instanceof Unsure) return true;
+      throw e;
+    }
   }
 
   function subjectOf(url, doc) {

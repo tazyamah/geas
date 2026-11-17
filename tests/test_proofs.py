@@ -23,8 +23,8 @@ def kani_ready() -> bool:
 def test_証明が使う関数は前置きにあり_証明は1件以上ある():
     src = (ROOT / "proofs/prelude_proofs.rs").read_text()
     names = proofs_run.harnesses()
-    assert len(names) >= 8 and {"gtin_ok_exact_13", "first_bad_char_exact", "fold_width_kana_exact"} <= set(names)  # unwind などの属性が付いた証明も拾う
-    for f in sorted(set(re.findall(r"\b(range_ok|ratio_ok|floor|ceil|half_up|mul_ratio|scale|first_bad_in|gtin_chars_ok|fold_width_kana)\(", src))):
+    assert len(names) >= 6 and {"first_bad_char_exact", "fold_width_kana_exact"} <= set(names)  # unwind などの属性が付いた証明も拾う
+    for f in sorted(set(re.findall(r"\b(range_ok|ratio_ok|floor|ceil|half_up|mul_ratio|scale|first_bad_in|fold_width_kana)\(", src))):
         assert re.search(rf"pub fn {f}[(<]", PRELUDE), f  # ジェネリクスの関数は < が続く
 
 

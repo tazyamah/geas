@@ -6,6 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
+from .rawexpr import requires_tree
 from .rest import routes
 from .screengen import CURRENCY_MINOR, query_def
 
@@ -25,7 +26,9 @@ def defs_of(ck, sc, server: str) -> dict:
     return {
         "title": title, "label": show(sc.name), "about": f"ページを開くと、{title}の「{show(qn)}」を表示します。",
         "server": server, "route": {"method": route[0], "path": route[1]},
-        "input": {**qd["inputs"][0], "label": show(qd["inputs"][0]["name"]), "check": ck.queries[qn].inputs[0][1].check or ""},
+        "input": {**qd["inputs"][0], "label": show(qd["inputs"][0]["name"]), 
+                  # requires：入力の型に結んだ変換（read）の拒否の条件。ページから読んだ値を、送る前に同じ条件で確かめる（木にできなければ空で、境界に任せる）
+                  "requires": requires_tree(ck.parts.get(ck.queries[qn].inputs[0][1].read)) or []},
         "read": {"subject": sc.read.subject, "urls": sc.read.urls, "elements": [list(e) for e in sc.read.elements], "rows": sc.read.value_rows, "lookup": sc.read.lookup}, "columns": qd["columns"], "minor": CURRENCY_MINOR,
         "texts": {"loading": "調べています…", "unknown": "この商品の{input}が分かりません（{subject}）。",
                   "none": f"この商品は、{title}では扱っていません（{{input}} {{value}}）。", "open": f"{title}を開く",

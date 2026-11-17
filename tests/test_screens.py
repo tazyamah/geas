@@ -12,7 +12,7 @@ CODE = (DIR / "overseas_shop.geas").read_text()
 
 
 def chk(src):
-    return check(parse(src), strict_names=True)
+    return check(parse(src, str(Path(__file__).resolve().parent / "fixtures" / "overseas_shop" / "overseas_shop.geas")), strict_names=True)  # 標準モジュール Gtin（use "gtin.geas"）の隣のファイルとして読む
 
 
 def msgs(ck, level):
@@ -169,7 +169,7 @@ def test_MCPのツール定義は_URLの定義から機械的に作られ_仕様
     o = tools["create_orders"]["inputSchema"]
     assert o["required"] == ["customer_id", "items", "ship_to", "slots"] and "tax_rate" not in o["properties"]["slots"]["properties"]  # サーバーが決める slot は渡させない
     assert tools["show_product_prices"]["annotations"]["readOnlyHint"] and tools["destroy_products"]["annotations"]["destructiveHint"]
-    assert tools["update_products"]["inputSchema"]["required"] == ["id", "quantity"]
+    assert tools["update_products"]["inputSchema"]["required"] == ["id", "quantity", "if_match"]  # 書き込みには、読んだときの行の版が要る
     html = review(ck, PLAN, [], "（海外店）")
     assert 'value="mcp"' in html and "MCP（AI から）" in html and 'data-view="etc"' in html and "注文の状況を AI に聞く" in html
     assert "⚠" not in html  # 台本のツール呼び出しは、定義と合っている
@@ -195,7 +195,7 @@ def test_MCPの橋渡しはツールの呼び出しをRESTに中継する():
             self.send_response(404); self.end_headers(); self.wfile.write(b'{"error":"x"}')
 
         def do_PUT(self):
-            seen.append(("PUT", self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+            seen.append(("PUT", self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"]))), self.headers.get("If-Match")))
             self.send_response(200); self.end_headers(); self.wfile.write(b'{"result":"ok"}')
 
         def log_message(self, *a):
@@ -204,8 +204,11 @@ def test_MCPの橋渡しはツールの呼び出しをRESTに中継する():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
     tools = tool_defs(chk(CODE))
-    r = handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "update_products", "arguments": {"id": "tea-jp", "quantity": 5}}}, tools, base)
-    assert not r["result"]["isError"] and seen[-1] == ("PUT", "/products/tea-jp", {"quantity": 5})
+    r = handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "update_products", "arguments": {"id": "tea-jp", "quantity": 5, "if_match": "r0123"}}}, tools, base)
+    # 書き込みのツールは、読んだときの行の版（if_match）を受け、ヘッダ If-Match で送る（本文には入れない）
+    assert not r["result"]["isError"] and seen[-1] == ("PUT", "/products/tea-jp", {"quantity": 5}, '"r0123"')
+    upd = next(t for t in tools if t["name"] == "update_products")
+    assert "if_match" in upd["inputSchema"]["required"] and "_etag" in upd["inputSchema"]["properties"]["if_match"]["description"]
     r = handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "show_product_prices", "arguments": {"jan": "x y"}}}, tools, base)
     assert r["result"]["isError"] and seen[-1] == ("GET", "/product_prices/x%20y")
     assert len(handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, tools, base)["result"]["tools"]) == len(tools)
