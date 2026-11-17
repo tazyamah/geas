@@ -2780,9 +2780,14 @@ def test_check_gtin_は言語から外れ_直し方が出る():
         chk('ltype Jan = text 13..13 of "0-9" check gtin\n')
 
 
-def test_標準モジュール_Gtin_は_同梱のものと例の隣のものが同じ():
-    std = Path(__file__).parent.parent / "geas" / "std" / "gtin.geas"
-    assert std.read_text(encoding="utf-8") == (EX.parent / "overseas_shop" / "gtin.geas").read_text(encoding="utf-8")
+def test_標準モジュールは_隣に置かなくても_同梱のものが使われる(tmp_path):
+    assert not msgs(chk(GTIN), ERROR)  # ファイルから読まなくても、同梱の標準モジュールは取り込める
+    f = tmp_path / "app.geas"
+    f.write_text(GTIN, encoding="utf-8")
+    assert not msgs(check(parse(GTIN, str(f))), ERROR)  # 隣に gtin.geas は無い
+    (tmp_path / "gtin.geas").write_text("module Gtin\nltype Other = int 0..1\n", encoding="utf-8")
+    with pytest.raises(Exception, match="Gtin13"):  # 隣に同じ名前のファイルがあれば、そちらが使われる
+        check(parse(GTIN, str(f)))
 
 
 @needs_cargo

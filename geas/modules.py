@@ -10,6 +10,9 @@ from pathlib import Path
 
 from .lexer import LexError, Tok, lex
 
+# geas に同梱の標準モジュールの置き場所。use "gtin.geas" は、取り込む側の隣に同じ名前のファイルが無ければ、ここから読む
+STD = Path(__file__).resolve().parent / "std"
+
 # モジュールに書ける宣言（状態を持たないもの）
 MODULE_DECLS = {"ltype", "convert", "library", "result", "deed"}
 # 宣言を始めるキーワード（モジュールには書けないものを見つけるため）
@@ -156,7 +159,9 @@ def _load_module(path: Path, loaded: Loaded, stack: list[Path]) -> str:
 def use_all(uses, base: Path, loaded: Loaded, stack: list[Path]) -> dict[str, dict[str, str]]:
     visible: dict[str, dict[str, str]] = {}
     for rel, line, (version, sha) in uses:
-        target = base.parent / rel
+        target = base.parent / rel if base is not None else STD / rel
+        if not target.exists() and (STD / rel).exists():  # 隣に無ければ、geas に同梱の標準モジュール（geas/std）を使う
+            target = STD / rel
         mod = load_module(target, loaded, stack, line)
         if version is not None and loaded.versions.get(mod, "") != version:
             raise ModuleError(f"モジュール {mod} の version は「{loaded.versions.get(mod) or '（無し）'}」で、use に書いた「{version}」と違います", line)
@@ -171,8 +176,9 @@ def expand(toks: list[Tok], path: Path | None) -> tuple[list[Tok], dict[str, tup
     uses, toks = split_uses(toks)
     if not uses:
         return toks, {}
-    if path is None:
-        raise ModuleError("use は、ファイルから読むときだけ使えます", toks[0].line if toks else 0)
+    if path is None and not all((STD / rel).exists() for rel, _, _ in uses):  # ファイルから読まないとき、取り込めるのは同梱の標準モジュールだけ
+        raise ModuleError("use は、ファイルから読むときだけ使えます（geas に同梱の標準モジュールは除く）", toks[0].line if toks else 0)
     loaded = Loaded()
-    visible = use_all(uses, Path(path).resolve(), loaded, [Path(path).resolve()])
+    here = Path(path).resolve() if path is not None else None
+    visible = use_all(uses, here, loaded, [here] if here is not None else [])
     return loaded.toks + replace_refs(toks, visible), loaded.origin

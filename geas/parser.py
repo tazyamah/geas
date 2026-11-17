@@ -552,7 +552,7 @@ class Parser:
     def check_opt(self, rng, chars):
         """check gtin は 2026-11-16 に言語から外した。検査数字は、geas の式で書いた変換（標準モジュール Gtin）を型に結んで確かめる"""
         if self.is_("check"):
-            raise self.err('check gtin は無くなりました。検査数字は、標準モジュール Gtin（geas/std/gtin.geas を .geas の隣に置く）で確かめます：'
+            raise self.err('check gtin は無くなりました。検査数字は、標準モジュール Gtin（geas に同梱）で確かめます：'
                            'use "gtin.geas" と書き、型は Gtin.Gtin13（8・12・14 桁は Gtin.Gtin8・Gtin.Gtin12・Gtin.Gtin14）を使います')
 
     def type(self) -> Type:

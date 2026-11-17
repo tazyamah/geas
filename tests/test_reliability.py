@@ -435,3 +435,27 @@ def test_生成した_Rust_は_示せた計算から溢れの確かめを外す(
     assert ".wrapping_mul(" in rust("  let x = a * b\n" + cond) and ".checked_mul(" not in rust("  let x = a * b\n" + cond).split("pub fn put_tray")[1]
     assert ".checked_mul(" in rust('  let x = a * b * c trust check "小さい"\n' + cond).split("pub fn put_tray")[1]
     assert "cfg!(debug_assertions)" in rust('  let x = a * b * c trust verify "小さい"\n' + cond)
+
+
+@pytest.mark.skipif(__import__("shutil").which("cargo") is None, reason="cargo が無い")
+def test_途中の計算は_段階どおりに動く(tmp_path):
+    """9e18 を 3 つ掛けると、計算に使う幅（i128）を超える。check は異常で止まり、assume は確かめずに先へ進む。
+    verify は、検証ビルド（cargo run の既定）では check と同じに止まる"""
+    import subprocess
+    from geas.examples import write_crate
+    from geas.rustgen import generate
+    req = ('r#"{"name":"put_tray","ctx":{"new_Tray_id":"T"},'
+           '"input":{"a":9000000000000000000,"b":9000000000000000000,"c":9000000000000000000},"store":{}}"#')
+    main = "use geas_app::host::call;\nfn main() {\n    match call(" + req + ') { Ok(s) => println!("OK {}", s), Err(e) => println!("ERR {}", e) }\n}\n'
+    out = {}
+    for level in ("check", "verify", "assume"):
+        ck = check(parse(CALC_HEAD + f'  let x = a * b * c trust {level} "試験"\n  if x > 5 {{ return Refused }}\n' + CALC_MAKE + TAIL))
+        d = tmp_path / level
+        d.mkdir()
+        write_crate(ck, generate(ck), main, d, host=True)
+        r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=d, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-2500:]
+        out[level] = r.stdout.strip()
+    assert out["check"].startswith("ERR") and "あふれ" in out["check"], out
+    assert out["verify"] == out["check"], out
+    assert out["assume"].startswith("OK"), out

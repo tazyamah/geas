@@ -10,7 +10,7 @@ from .ast import *  # noqa: F401,F403
 from .check import QUESTION, WARN
 from . import svg
 from .plan import COVERAGE_HEAD, Finding, UNSPEC, coverage, read_plan, split_top, tables, usecases
-from .spec import ACTOR_NOTE, IF_MATCH_NOTE, POST_NOTE, SCOPE_NOTE, build
+from .spec import ACTOR_NOTE, IF_MATCH_NOTE, POST_NOTE, SCOPE_NOTE, STOPS_NOTE, build
 from .mcp import tool_defs
 
 
@@ -897,7 +897,7 @@ def review(ck, plan_md: str | None = None, findings: list[Finding] | None = None
     add("data", "データ", table(["データ", "項目", "型・範囲", "必須", "一意"], spec["データ"]))
     procs = [(x["処理"], ", ".join(x["入力"]), ", ".join(x["読む"]), ", ".join(x["書く"]), " / ".join(f"{v}→{d}" for v, d in x["結果"]), ", ".join(x["外部"]) or "なし") for x in spec["処理"]]
     rules = "<h3>処理</h3>" + table(["処理", "入力", "読む", "書く", "結果 → 行き先", "外部作用"], procs)
-    rules += "<h3>処理の中身</h3>" + lead("上から下へ進みます。四角は「すること」、六角は「分かれ道」、角の丸い太枠は「結果」で、そこで終わりです。ここに出ない動きを、処理は持ちません。") + "".join(
+    rules += "<h3>処理の中身</h3>" + lead("上から下へ進みます。四角は「すること」、六角は「分かれ道」、角の丸い太枠は「結果」で、そこで終わりです。ここに出ない動きを、処理は持ちません。" + STOPS_NOTE) + "".join(
         f'<h4>{escape(x["処理"])}</h4>' + (lead("外から決まる値（slot）：" + "、".join(f"{n}: {ty}" for n, ty in x["参照"])) if x["参照"] else "")
         + fig(svg.steps(x["図"], f"処理の中身 {x['処理']}"))
         for x in spec["処理"])

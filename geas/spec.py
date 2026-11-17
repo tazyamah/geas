@@ -256,6 +256,11 @@ def actor_rows(p, route_rows) -> list[tuple]:
     return out + [("誰でも", "（要らない）", "、".join(u for u, w in urls if w == [ANYONE]) or "なし")]
 
 
+# 処理が必ず止まること（仕様書に 1 回だけ書く）
+STOPS_NOTE = ("処理は必ず止まります。繰り返しは、件数の上限がある集まりを回すものだけです。"
+              "止まらないことがありうるのは、「人の保証」に出ている根の言語のライブラリ（library）の中だけです。")
+
+
 def build(ck: Checker) -> dict:
     from .rest import INTERNAL, OPEN, actors_text, internal_targets, post_queries, routes, shown_path
     spec = build_raw(ck)
@@ -518,6 +523,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
     out += ["", "## 処理の中身（上から順に進む。「結果」に着いたら、そこで終わる）"]
+    out += ["", STOPS_NOTE]
     for x in spec["処理"]:
         out += ["", f"### {x['処理']}", ""]
         if x["参照"]:

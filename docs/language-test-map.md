@@ -18,7 +18,7 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 
 | リファレンスの項目 | 実行 | 動かすテスト |
 |---|---|---|
-| 2. `int` の範囲・`text` の長さと文字・`check gtin`・`ratio`・`currency` を外から入れるときの確かめ | ◎ | `test_geas.py` の「ホストは入力の長さと文字を境界で確かめる」「check_gtin は正しい13桁だけ通す」「slot も境界で宣言の範囲を確かめる」、お店の通し「外から来る値は境界で確かめる」 |
+| 2. `int` の範囲・`text` の長さと文字・標準モジュール `Gtin`（検査数字）・`ratio`・`currency` を外から入れるときの確かめ | ◎ | `test_geas.py` の「ホストは入力の長さと文字を境界で確かめる」「check_gtin は正しい13桁だけ通す」「slot も境界で宣言の範囲を確かめる」、お店の通し「外から来る値は境界で確かめる」 |
 | 2. `time`・`vtime`・合成型（`ltype X { … }`） | ◎ | `test_geas.py` の「ホストは時刻の計算をして…」「vtime の変換は暦どおりの秒になり…」「標準のタイムゾーンで暦の秒がずれ…」「合成型はホストの境界で成分ごとに確かめる」 |
 | 2. 写像・集合・`ref` | ◎ | 「id の写像の値は合成型でも…」、`test_behavior.py`（数量の写像・集合の入力） |
 | 3. 無いかもしれない（null）と、キーが無い（absent）の区別 | ◎ | `test_geas.py` の「ホストは null とキーが無いことを区別する」「…キー無しと null を同じに扱う」 |
@@ -69,6 +69,13 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | 常駐（`resident`：検査・仕様書、トレイのアイコン作成、重複起動の断り） | ◎／○ | `test_resident_check.py`、`test_window.py`。実トレイのクリック・隠れる動きは未確認（○） |
 | サーバーの再起動で、待ち・時計の先・ID の採番が続く | ◎ | `test_runtime.py` の「再起動しても…」 |
 | サーバーが保存をメモリに持つこと（別のサーバー・DB の直接の書き換えが次のリクエストで見える、巻き戻しでメモリの保存も捨てる）・1KB を超える応答が待たずに返ること | ◎ | `test_runtime.py` の「保存はメモリに持つが…」「1KBを超える応答も…」、サーバーの単体テスト（`db.rs` の data_version、`engine.rs` の巻き戻し） |
+| 4. `if`・`else`・`for` の中の `let`、文字列の定数との比較・`+`、集合の `add`／`remove` と `max N` | ○ | `test_reliability.py`（検査）。生成した Rust が組めることは、手元の見本で確かめた（試験にはしていない） |
+| 3. 定義した項目と、2 項目の不変条件 | ○ | `test_reliability.py`（検査と仕様書） |
+| 4. 途中の計算の `trust prove／check／verify／assume` | ◎ | `test_reliability.py` の「途中の計算は 段階どおりに動く」（check と検証ビルドの verify は溢れで止まり、assume は進む）。通常ビルドの verify は動かしていない。お店の例（`tests/fixtures/shop/shop_rust`）は、示せた計算から溢れの確かめを外した形で組めて動く |
+| 3. `migration` の `rename entity`／`drop entity` | ◎ | `test_migration.py` の「実体の改名と削除は 起動時に行ごと移り 消える」ほか |
+| 10. 書き込みの版の確認（PUT・DELETE の If-Match。428・412） | ◎ | `test_runtime.py` の「PUT と DELETE は 読んだときの行の版が要る」、`test_actors.py`（本人の分だけの URL） |
+| 2. 標準モジュール `Gtin`（検査数字） | ◎ | `test_geas.py` の「標準モジュール Gtin は 正しい検査数字だけ通す」 |
+| 4. `library` の具体例（`example`） | ◎ | `test_parts.py`（実際に呼んで比べる） |
 | モジュール（`use`／`module`） | ◎ | `test_geas.py` の「モジュールを使ったコードがビルドでき動く」 |
 
 ## まだ無いもの（✕）
