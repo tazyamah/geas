@@ -459,3 +459,57 @@ def test_途中の計算は_段階どおりに動く(tmp_path):
     assert out["check"].startswith("ERR") and "あふれ" in out["check"], out
     assert out["verify"] == out["check"], out
     assert out["assume"].startswith("OK"), out
+    # 通常ビルド（--release）の verify は確かめない：溢れた値（桁が回った値）のまま先へ進み、異常にも panic にもならない。check は通常ビルドでも止まる
+    for level, want in (("verify", "OK"), ("check", "ERR")):
+        r = subprocess.run(["cargo", "run", "--release", "--quiet", "--offline"], cwd=tmp_path / level, capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout.startswith(want), (level, r.stdout, r.stderr[-1500:])
+
+
+# ---- 定義した項目を、問い合わせの列（画面の表示）に出す ----
+HELD_QUERY = """
+query stock_list {
+  from Product
+  select product_id, stock, held
+  order stock desc
+  reads Product.product_id, Product.stock, Product.reserved
+}
+"""
+
+
+def held_src(query=HELD_QUERY):
+    return REL_SRC.format(body="  if p.held + n > p.cap { return OverCap }\n  p.stock += n\n", inv="invariant Product: held <= cap",
+                          derived=HELD, reads=ALL, writes="Product.stock") + query
+
+
+def test_定義した項目は_問い合わせの列に出せて_読むのは元の項目():
+    ck = check(parse(held_src()))
+    assert [d.msg for d in ck.diags if d.level == "エラー"] == []
+    # 読む宣言には、定義の式の元の項目（stock と reserved）が要る
+    msgs = [d.msg for d in check(parse(held_src(HELD_QUERY.replace(", Product.reserved", "")))).diags if d.level == "エラー"]
+    assert any("「Product.reserved」を読むのに、宣言（読む）にありません" in m for m in msgs), msgs
+    # 画面の定義の列にも、型つきで出る
+    from geas.screengen import query_def
+    cols = {c["name"]: c for c in query_def(ck, ck.queries["stock_list"], ck.p.show_names)["columns"]}
+    assert cols["held"]["kind"] == cols["stock"]["kind"]
+
+
+def test_定義した項目は_条件や並びには書けない():
+    msgs = [d.msg for d in check(parse(held_src(HELD_QUERY.replace("order stock desc", "order held desc")))).diags if d.level == "エラー"]
+    assert any("定義した項目「held」は、問い合わせでは select の列にだけ書けます" in m for m in msgs), msgs
+
+
+@pytest.mark.skipif(__import__("shutil").which("cargo") is None, reason="cargo が無い")
+def test_問い合わせの答えに_定義した項目の値が出る(tmp_path):
+    import json
+    import subprocess
+    from geas.examples import write_crate
+    from geas.rustgen import generate
+    ck = check(parse(held_src()))
+    store = {"Product": {"a": {"product_id": "a", "stock": 3, "reserved": 4, "cap": 10}, "b": {"product_id": "b", "stock": 600, "reserved": 300, "cap": 1000}}}
+    req = json.dumps({"name": "stock_list", "ctx": {}, "input": {}, "store": store})
+    main = 'use geas_app::host::call;\nfn main() {\n    match call(r#"' + req + '"#) { Ok(s) => println!("{}", s), Err(e) => println!("ERR {}", e) }\n}\n'
+    write_crate(ck, generate(ck), main, tmp_path, host=True)
+    r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    rows = json.loads(r.stdout)["body"]["rows"]
+    assert rows == [{"product_id": "b", "stock": 600, "held": 900}, {"product_id": "a", "stock": 3, "held": 7}], r.stdout

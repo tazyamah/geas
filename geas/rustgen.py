@@ -526,6 +526,16 @@ class Gen:
             elif c.kind == "件数":
                 parts.append(f"{c.name}: r.{c.field}.as_ref().map_or(0, |m| m.len()) as i128"
                              if fields[c.field].type.optional else f"{c.name}: r.{c.field}.len() as i128")
+            elif any(x.name == c.field for x in self.ck.data[q.target].derived):
+                # 定義した項目（保存しない）：同じ行の項目から計算する。型の範囲に収まることは、元の項目へ書くたびに検査が示し、保存の行も読むときに確かめてある
+                dv = next(x for x in self.ck.data[q.target].derived if x.name == c.field)
+                def calc(e):
+                    if isinstance(e, Num):
+                        return f"{e.v}i128"
+                    if isinstance(e, Name):
+                        return f"(r.{e.n} as i128)"
+                    return f"({calc(e.l)}).wrapping_{'add' if e.op == '+' else 'sub'}({calc(e.r)})"
+                parts.append(f"{c.name}: (({calc(dv.expr)}) as {phys(dv.type)})")
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
         if q.target in self.etag_data:
