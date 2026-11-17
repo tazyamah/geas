@@ -18,7 +18,11 @@ FIX = "tests/fixtures/overseas_shop"
 
 # サイドバーの並び（グループ名, [(Markdown のパス, 出力名)]）。載せない Markdown は変換しない。
 NAV = [
-    ("はじめに", [("docs/README.md", "index")]),
+    ("はじめに", [
+        ("docs/getting-started.md", "getting-started"),
+        ("docs/how-it-works.md", "how-it-works"),
+        ("docs/README.md", "index"),
+    ]),
     ("使う", [
         ("docs/ai-guide.md", "ai-guide"),
         ("docs/language-reference.md", "language-reference"),

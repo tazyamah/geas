@@ -1,0 +1,91 @@
+app "メモ帳"
+
+needs exposure internal "手元で試すだけで、インターネットには出さない"
+
+// はじめかたの例：メモを書いて、公開する。名前は半角英数、仕様書に出す日本語の名前は /// で付ける。
+
+/// 本文
+ltype NoteBody = text 1..200
+
+/// メモ
+entity Note {
+  /// メモID
+  note_id: id unique
+  /// 本文
+  body: NoteBody required
+  /// 状態
+  status: NoteStatus
+}
+
+/// メモの状態
+state NoteStatus {
+  /// 下書き
+  initial Draft
+  /// 公開中
+  final Published
+}
+
+/// メモを書いた結果
+result WriteNoteResult {
+  /// 書いた
+  Written(note_id: id)
+}
+
+/// 公開した結果
+result PublishNoteResult {
+  /// 公開した
+  Done
+  /// メモが無い
+  NoSuchNote
+  /// 下書きではない
+  NotDraft
+}
+
+/// メモを書く
+deed write_note {
+  input body: NoteBody required
+  writes Note
+  transition Note: (new) → Draft
+  result WriteNoteResult
+  effects none
+
+  let note = create Note { body: body, status: Draft }
+  return Written(note.note_id)
+}
+
+/// メモを公開する
+deed publish_note {
+  input note_id: id required
+  reads Note.status
+  writes Note.status
+  transition Note: Draft → Published
+  result PublishNoteResult
+  effects none
+
+  let note = Note[note_id] else { return NoSuchNote }
+  if note.status != Draft { return NotDraft }
+  note.status = Published
+  return Done
+}
+
+/// メモ
+resource Notes {
+  create write_note {
+    Written → 201
+  }
+}
+
+/// メモの公開
+resource NotePublications {
+  create publish_note {
+    Done → 201
+    NoSuchNote → 404
+    NotDraft → 409
+  }
+}
+
+/// メモの流れ
+nexus MemoFlow {
+  write_note: Written → reply
+  publish_note: Done → reply, NoSuchNote → reply, NotDraft → reply
+}

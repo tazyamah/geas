@@ -6,6 +6,8 @@
 
 | 文書 | 内容 |
 |---|---|
+| [getting-started.md](getting-started.md) | はじめかた（チュートリアル）：入れて、小さなアプリを作り、仕様書を出すまで |
+| [how-it-works.md](how-it-works.md) | 仕組み：なぜ仕様書とコードがずれないのか（要約） |
 | [ai-guide.md](ai-guide.md) | 入れ方、コマンド、作業の流れ、守ること、ソースの地図 |
 | [language-reference.md](language-reference.md) | 言語の書き方の一覧（食い違ったら検査器が正本） |
 | [language-concepts.md](language-concepts.md) | 言語の考え方と例（読み物） |
