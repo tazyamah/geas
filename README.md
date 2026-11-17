@@ -34,7 +34,7 @@ python -m pytest tests                            # テスト
 ## 読むもの
 
 - AI の方：[AGENTS.md](AGENTS.md) → [docs/ai-guide.md](docs/ai-guide.md)
-- 文書の一覧：[docs/README.md](docs/README.md)
+- 文書：[文書サイト](https://tazyamah.github.io/geas/docs/)（一覧は [docs/README.md](docs/README.md)）
 - 動く全体の例：[tests/fixtures/overseas_shop/](tests/fixtures/overseas_shop/)
 - 信頼してよい範囲（保証できること・できないこと）：[docs/why-spec-and-code-dont-drift.md](docs/why-spec-and-code-dont-drift.md)
 
