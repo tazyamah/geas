@@ -13,8 +13,6 @@
 - [仕様書の全体](https://tazyamah.github.io/geas/overseas_shop.html)：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証まで。
 - [前の版からの変更と、答えてほしいこと](https://tazyamah.github.io/geas/overseas_shop_changes.html)：更新のたびに、人が見るのはここだけ。
 
-（上のリンクは、リポジトリの Settings → Pages の Source を「GitHub Actions」にすると開けます。同じ全体版は [tests/fixtures/overseas_shop/overseas_shop_review.html](tests/fixtures/overseas_shop/overseas_shop_review.html) にもあります。）
-
 ## 流れ
 
 1. 会話で計画書（plan、Markdown）を作る（[skills/plan-interview](skills/plan-interview/SKILL.md)）。
