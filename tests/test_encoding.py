@@ -95,3 +95,12 @@ def test_見本の仕様書の前の版が読め_変更点の版が作れる(tmp
         capture_output=True, text=True, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     assert "商品コード（13 桁）を読む" in (tmp_path / "changes.html").read_text(encoding="utf-8")
+
+
+def test_はじめかたの例は検査を通り_文書に載せた中身と一致する():
+    """docs/getting-started.md に載せた memo.geas は、実物と同じで、検査を通る"""
+    memo = ROOT / "tests" / "fixtures" / "tutorial" / "memo.geas"
+    doc = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
+    assert memo.read_text(encoding="utf-8").rstrip("\n") in doc
+    out = subprocess.run([sys.executable, "-m", "geas", "check", str(memo)], capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0 and "検査: 通りました" in out.stdout, out.stdout + out.stderr

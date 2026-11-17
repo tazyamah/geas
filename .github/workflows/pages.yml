@@ -1,4 +1,4 @@
-# 見本の仕様書（お店の例）を GitHub Pages に公開する。README のリンク先。
+# 紹介ページ、見本の仕様書（お店の例）、docs・skills の Markdown を HTML にした文書サイトを GitHub Pages に公開する。README のリンク先。
 # 全体の版と、前の版（overseas_shop_before.geas）からの変更が出る版の 2 つを、そのとき生成する。
 # 初回だけ、リポジトリの Settings → Pages → Source を「GitHub Actions」にしておく。
 name: pages
@@ -11,6 +11,10 @@ on:
       - "tests/fixtures/overseas_shop/*.geas"
       - "tests/fixtures/overseas_shop/overseas_shop_plan.md"
       - "pages/**"
+      - "docs/**"
+      - "skills/**"
+      - "tools/**"
+      - "tests/fixtures/overseas_shop/*.md"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -43,6 +47,8 @@ jobs:
             --diff-o site/overseas_shop_changes.html \
             --base $F/overseas_shop_before.geas
           cp pages/index.html site/index.html
+          pip install -q markdown
+          python tools/build_site.py site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
