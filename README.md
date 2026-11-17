@@ -1,111 +1,45 @@
 # Geas（ギアス）
 
-約束を守らせる言語。計画書（会話で作る仕様書）とコードを突き合わせて、言ったとおりに作れているかを機械で保証します。
+**AI がコードを書き、人はコードを一切読まずに、仕様書だけでレビューできる。** それを保証する言語です。
+
+仕様書（人が読む）とコード（AI が書く）が直結合していて、仕様書に出ない動きはコードに書けません。言ったとおりに作れているかは、読んで確かめるのではなく、検査器が機械で示します。
 
 名前の由来は、アイルランド伝承の geis（守らねばならない誓いと禁忌）です。制約を重くするほど、保証が強くなります。
 
-## AI の方へ
+## まず見る：生成された仕様書の見本
 
-AI（Claude Code など）が geas を入れて使うときは、[AGENTS.md](AGENTS.md) から [docs/ai-guide.md](docs/ai-guide.md)（入れ方・コマンド・作業の流れ）と [docs/language-reference.md](docs/language-reference.md)（言語リファレンス）へ進んでください。
+「海外にも売るお店」を題材にした、`.geas` から生成した仕様書です（人が読むのは、これだけ）。
 
-## 用語
+- [仕様書の全体](https://tazyamah.github.io/geas/overseas_shop.html)：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証まで。
+- [前の版からの変更と、答えてほしいこと](https://tazyamah.github.io/geas/overseas_shop_changes.html)：更新のたびに、人が見るのはここだけ。
 
-| 日本語 | 名前 |
-|---|---|
-| 処理 | Deed |
-| 参照（外から埋まる枠） | Slot |
-| 束（複数の外部作用を結ぶ1つの約束） | Bond |
-| フロー（結果の行き先でつなぐ） | Nexus |
-| データへの参照型 | ref |
-
-選定理由と避けた候補は [docs/naming.md](docs/naming.md) にあります。コードの拡張子は `.geas` です。
+（上のリンクは、リポジトリの Settings → Pages の Source を「GitHub Actions」にすると開けます。同じ全体版は [tests/fixtures/overseas_shop/overseas_shop_review.html](tests/fixtures/overseas_shop/overseas_shop_review.html) にもあります。）
 
 ## 流れ
 
 1. 会話で計画書（plan、Markdown）を作る（[skills/plan-interview](skills/plan-interview/SKILL.md)）。
 2. 計画書から、AI がコード（`.geas`）を起こす。
-3. コードを検査し、仕様書を生成して、計画書と突き合わせる。具体例は生成した Rust で実際に動かして確かめる。
-   検査の問いと、仕様書のレビュー前の確認は、1問ずつ聞く（[skills/geas-develop](skills/geas-develop/SKILL.md)）。
+3. 検査し、仕様書を生成して、計画書と突き合わせる。生成した Rust で具体例を動かして確かめる。人は仕様書をレビューする（[skills/geas-develop](skills/geas-develop/SKILL.md)）。
 
-## 使い方（試作の Python 版。最終的にはすべて Rust にする）
+## 使い方
+
+Python 3.10 以上、外部ライブラリなし（試作の Python 版。生成物と実行部は Rust）。
 
 ```
 python -m geas check アプリ.geas                  # 検査
-python -m geas spec アプリ.geas                   # 仕様書を生成
+python -m geas review アプリ.geas --plan 計画書.md -o 仕様書.html   # 人が読む仕様書
 python -m geas rust アプリ.geas -o 出力先          # Rust を生成
 python -m geas compare アプリ.geas 計画書.md       # 計画書と突合（具体例も実行）
 python -m pytest tests                            # テスト
 ```
 
-ひとり用つぶやきの例（会話から計画書を作り、コード、Rust/WASM、画面まで試したもの）は、[specgap の `lang_examples/solo_tweet`](https://github.com/tazyamah/specgap/tree/main/lang_examples/solo_tweet) にあります（試作の名前のままです）。
+## 読むもの
 
-## 書き方（キーワードと名前は半角英数。日本語の表示名は `///` で付ける）
-
-一覧は [docs/language-reference.md](docs/language-reference.md) にあります。以下は、考え方の説明です。
-
-名前の規則は [docs/v0.1.0-scope.md](docs/v0.1.0-scope.md) の「名前の書き方」。以下の例は、書き方の説明のため日本語の名前を使っている（実際の検査は通らない）。お店の例は `tests/fixtures/shop/shop.geas`。
-
-```
-ltype 数量 = int 1..99                                    // 論理型：範囲や組み合わせは、必ず名前を付けてから使う（使う場所より前に書く）
-ltype 商品数量 = 商品 → 数量
-ltype 点 { x: 数量, y: 数量, z: 数量 optional }                                // 合成型：成分は値の型（名前つきの論理型か約束のない組み込み）。作るときは 点 { x: 1, y: 2 }、読むときは 位置.x（入れ子でも平ら）。optional の成分は未指定にでき、未指定にアクセスしうる道があるとエラー。組み込みの vtime（year month day hour minute second、すべて optional。仮想日時のこと）もこの型
-entity 注文 { 注文ID: id unique, 状態: 注文状態 ... }      // 組み込みの型：id text time bytes int ratio money(JPY) ref X（範囲・組み合わせは ltype）
-store 注文 in 外部DB                                      // 保存先は entity の外に書く（保存しない要件なら書かない）。外に置くものは、未同期の状態「記録」を言語が足す
-deed 決済要求 {
-  input 注文ID: id required                             // 宣言：input slot reads writes transition result effects
-  reads 注文.状態
-  ...
-  let 注文 = 注文[注文ID] else { return 注文なし }        // 本体は Rust 風（body も then もない）
-  if 注文.状態 != 受付 { return 状態違い }
-  for k in 注文.明細 { request 決済.請求(k, idempotency_key = (注文ID, k)) }
-  return 要求済
-}
-nexus 注文受付 { 受注: 受付 → 決済要求, 顧客なし → reply, ... }   // flow は nexus の別名。行き先は reply か wait トリガ名
-trigger 決済待ち(注文ID: id) { reply 決済成功 → ... , deadline now + 30 min → ... }
-```
-
-データの項目は、原則としてすべて「無いかもしれない」（null になりうる）ものとして扱います。必ずある約束は `required` で書き、仕様書の「必須」に出ます（キーと状態の項目は必須）。null になりうる項目は、使う前に `let 題 = メモ.題 else { return 題なし }` か `if メモ.題 is null { return 題なし }` で確かめます（確かめずに使うと検査で止まるので、生成したコードは null で壊れません）。新規作成では書かなかった項目が null になり、`メモ.題 = null` で null に戻せます。1件や項目そのものが無いこと（undefined。`D[k] is absent` で確かめる）と、値が null であることは別のものです。問い合わせでは、null はどの条件・絞り込みも満たさず、並びでは最後になります。
-
-処理と問い合わせの入力も同じで、書かなければ「無いかもしれない」入力です。必ず要る入力には `required` を書き（`input 注文ID: id required`）、仕様書の入力欄に「（必須）」と出て計画書と突き合わせます。無いかもしれない入力は、使う前に `let x = 入力 else { return … }` か `if 入力 is null { return … }` で確かめます（null になりうる項目へそのまま入れるだけなら、確かめは要りません）。外から受け取るときは、キーが無いのも null も同じ「無い」として扱い、空文字は「ある」です。空文字と未入力を区別したいときは、処理の手前の入力の境界で不正として弾きます。必ず要る入力が無い・null なら入力不正です。`trigger` の引数には、必ず要る入力しか渡せません。
-
-整数と金額は違う型で、そのままでは混ぜられません。許すのは、同じ型どうしの計算、金額 × 整数（数量ぶん）、金額 × 割合（端数は `round(値, floor|ceil|half_up, JPY)` で整数にする）です。違う型にするときは `money(個数)`・`int(金額)` で変えてから計算します。数字をそのまま書いたもの（`0` など）は、どちらの型としても使えます。
-
-結果の中身には名前を付けます（`result 受注結果 { 受付(注文ID: id), 在庫不足(不足: ID集合), 顧客なし }`）。ネクサスで次の処理へ進むときは、結果の中身を次の処理の入力へ名前と型で渡します。過不足や型の違いはエラーです（`trigger` の引数と同じルール）。
-
-根の言語（Rust）のライブラリは `library` で呼びます（`library tax_included(x: Yen) -> Yen from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"`）。宣言の後ろの行に、具体例を 1 つ以上書きます（`example tax_included(100) == 110`。`geas parts` が実際に呼んで比べます）。`call` の式に、繰り返し（loop・while・for・クロージャ）は書けません。戻り値の範囲か保証が無い宣言や、戻り値（`result`）を使わない保証、理由の無い `trust` は、検査でエラーです。呼ぶたびに、戻り値の範囲と保証を確かめる Rust の `if` を生成し、違反したとき（ライブラリの panic を含む）は処理を止めます（書込は適用されず、保存は変わりません）。呼ぶ先は仕様書の「人の保証」に出ます。引数と戻り値の型（金額か整数か）は、検査で確かめます。`round` のような組み込みの部品は宣言しません。
-
-論理型どうしの一方通行の変換は、`convert 税込(x: 非負金額) -> 非負金額 = x + x` と式で書きます。定義が geas の式なので、外の実装も保証も要りません。戻り値の範囲に収まることは、引数の範囲から検査器が静的に示し、示せなければ検査でエラーにします（実行時には確かめません）。生成コードの中で式を計算するだけです（外から受け取る値の `raw` からの変換は、この次に足します）。
-
-外部作用（`request`）には冪等キー（`idempotency_key`）が必須で、ID か文字列、またはその組 `(注文ID, k)` で書きます。`for` の中では、回すたびに違う値と、`for` の外で決まる値の両方を組に含めます（回す値だけだと、別の注文で同じ商品を回したときにキーがぶつかり、外のサービスに重複として捨てられるため）。組は、区切りがあいまいにならない形（`["O1","P1"]`）で1つの文字列にして外へ渡します。
-
-`if` の中には、`return`・項目の更新・`update`・`request`・入れ子の `if` を書けます（`let` は外に書きます）。検査は、状態を変える文ごとに「その分岐で元の状態を確かめているか」を追います。
-
-文字列 `text` は、長さ（文字数）と使える文字を書けます（`text 1..20 of "a-z0-9_"`。どちらも省けて、省いた分は制限なしです）。`of` のあとは、`-` でつないだ範囲と、`\\` で逃がした文字です。入力と slot は境界で確かめ、範囲外は入力不正にします。項目へ書くときは、書く値の長さと文字が項目に収まると検査が示せなければエラーです（示せるのは、宣言のある入力・項目・slot と部品の戻り値を、そのまま書く場合です）。形式（メールアドレスなど）の正規表現は入れません。JAN・EAN・UPC は、標準モジュール `Gtin`（geas に同梱。`use "gtin.geas"` と書く）の型 `Gtin.Gtin13` などを使うと、最後の1桁の検査数字まで境界で確かめ、確かめていない文字列は書けなくなります（確かめ方は geas の式で書いてあり、仕様書に出ます）。構造のある形式は、入出力型の設計で扱います。
-
-時刻 `time` は、期間（`30 min`・`24 hour`・`10 sec`）を足し引きでき（`現在 + 24 hour`）、時刻どうしの引き算は秒数（整数）になります。期間は時刻に足し引きするためだけの値で、項目には入れられません。人が「1日後」と言うとき、86400秒後とは限らない（夏時間・タイムゾーンで暦の1日の長さが変わる）ので、`day`・`week`・`month`・`year` は書けません（書くとエラー）。ちょうどの時間は `24 hour` のように書きます。暦の計算（月の足し算・曜日・タイムゾーン・夏時間・祝日）は、論理日時として設計してから入れます。時刻の表し方（Rust ではいま秒の整数）と範囲は、物理型と同じく生成器の選択で、言語には書きません。いまの Rust 生成では、外から来る時刻の絶対値が 10^15 秒までを境界で確かめます（足し引きであふれないため）。
-
-外から来る入力のうち、宣言にない項目は、来ていないものとして扱います（エラーにも警告にもしません）。約束を守らせる相手は geas で作る人で、宣言にない項目は、その人が受け付けると決めていないものだからです。入力の綴りの間違いは、宣言した項目が「無い」ことで現れます（無いかもしれない入力なら「無い」として、必須なら入力不正になります）。
-
-問い合わせの `filter` と `page` に使う入力が無いときは、絞り込まず（`page` なら全件を）返します。この動きは、仕様書の条件欄に「（最小が無ければ絞らない）」のように出ます。
-
-`page 20` か `page 件数`（整数の入力）は「この並びで1ページ分、最大 N 件」という意味で、SQL の limit のような仕組みの名前ではありません。並びが決まらないと、どの1ページかが決まらないので、`order` が必須です（無いとエラー）。生成コードで何を使うかは生成器の仕事で、言語には出しません。続きのページの取り方は、入出力型の設計と一緒に決めます。
-
-`query` の `where` は、1行が `or` でつないだ組、行どうしが `and` です（`where 状態 == 公開 or 状態 == 下書き`、`where 重さ >= 10`）。
-
-`query` に `select 注文ID, 顧客.顧客ID as 顧客, sum(明細) as 点数` と書くと、IDの列でなく列つきの行を返します（参照の先の項目は結合、`sum` と `count` はキーつきの集まりの集計）。
-
-文字列の検索は `filter 本文 contains 単語` が完全一致の部分文字列で、同一視する軸は書いたものだけです（`ignore_case`＝大小、`ignore_kana`＝ひらがなとカタカナ、`ignore_width`＝全角と半角の英数記号）。正規化（NFC）は入力の境界で済ませる前提で、検索には持ち込みません。
-
-`invariant` に書けるのは「項目 >= 数」と「状態の項目 == 状態 implies 項目 > 数」の形です。検査は、項目へ書き込むたびに、その場で値の範囲から約束が守れることを示し、示せなければエラーにします（項目の論理型の範囲 `ltype 在庫数 = int 0..` なども同じように示します）。値の範囲は、入力と項目の範囲、`if x.項目 <= 0 { return … }` のような確認、減らす前の不足の確認から分かります。
-
-問い合わせの `filter 項目 equals 入力` は、文字列・ID・整数の完全一致です（キー以外の項目で1件を引くとき。例：JANコードから価格を引く）。
-
-他に `state`（initial middle final endless reject）、`result`、`effect`（failures no_wait）、`library`、`invariant`（implies）、`query`、`event`。全体の例は [tests/fixtures/shop/shop.geas](tests/fixtures/shop/shop.geas)。
+- AI の方：[AGENTS.md](AGENTS.md) → [docs/ai-guide.md](docs/ai-guide.md)
+- 文書の一覧：[docs/README.md](docs/README.md)
+- 動く全体の例：[tests/fixtures/overseas_shop/](tests/fixtures/overseas_shop/)
+- 信頼してよい範囲（保証できること・できないこと）：[docs/why-spec-and-code-dont-drift.md](docs/why-spec-and-code-dont-drift.md)
 
 ## ライセンス
 
-geas 本体は GPL-3.0-or-later です。使うのは自由で、改変して配るときはその改変も公開します。生成された Rust とバイナリは制限なく自由に使えます。生成コードへ写される部品だけは MIT OR Apache-2.0 です。詳しくは [docs/license.md](docs/license.md)、貢献の条件は [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 状態
-
-試作は [tazyamah/specgap](https://github.com/tazyamah/specgap) の `specgap_lang/` で進めてきました。ここへ移して、v0.1.0 を目指します。キーワードは英語にしました（名前と、構文木の中身は日本語のまま）。
+geas 本体は GPL-3.0-or-later です。生成された Rust とバイナリは制限なく自由に使えます。詳しくは [docs/license.md](docs/license.md)、貢献の条件は [CONTRIBUTING.md](CONTRIBUTING.md)。

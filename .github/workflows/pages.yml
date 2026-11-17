@@ -1,0 +1,63 @@
+# 見本の仕様書（お店の例）を GitHub Pages に公開する。README のリンク先。
+# 全体の版と、前の版（overseas_shop_before.geas）からの変更が出る版の 2 つを、そのとき生成する。
+# 初回だけ、リポジトリの Settings → Pages → Source を「GitHub Actions」にしておく。
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "geas/**"
+      - "tests/fixtures/overseas_shop/*.geas"
+      - "tests/fixtures/overseas_shop/overseas_shop_plan.md"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 仕様書を生成する
+        run: |
+          F=tests/fixtures/overseas_shop
+          mkdir -p site
+          python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
+            -o site/overseas_shop.html \
+            --diff-o site/overseas_shop_changes.html \
+            --base $F/overseas_shop_before.geas
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>geas の見本の仕様書</title></head>
+          <body style="font-family:sans-serif;max-width:40em;margin:2em auto;padding:0 1em;line-height:1.7">
+          <h1>geas の見本の仕様書</h1>
+          <p>「海外にも売るお店」を題材に、<code>.geas</code> から生成した、人が読む仕様書です。</p>
+          <ul>
+          <li><a href="overseas_shop.html">仕様書の全体</a></li>
+          <li><a href="overseas_shop_changes.html">前の版からの変更と、答えてほしいこと</a></li>
+          </ul>
+          <p><a href="https://github.com/tazyamah/geas">geas のリポジトリ</a></p>
+          </body></html>
+          HTML
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

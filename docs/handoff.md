@@ -4,6 +4,7 @@
 
 ## まず読むもの
 
+0. 一覧は [README.md](README.md)。
 1. [ai-guide.md](ai-guide.md)：入れ方、コマンド、作業の流れ、守ること、ソースの地図。
 2. [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md)：仕様書とコードがずれない仕組みと、信頼できる範囲・できない範囲。
 3. [roadmap.md](roadmap.md)：未着手・保留の一覧。**何をやり残しているかはここ**。

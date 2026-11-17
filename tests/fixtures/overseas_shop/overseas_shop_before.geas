@@ -1,0 +1,803 @@
+app "海外にも売るお店"
+
+// 海外にも売るお店：商品ごとに売る通貨（円・ドル）、決済と在庫の確保を並行で待つ注文。通貨は slot で渡す。
+// 「使うようになったら考える」だった4件（応答の中身・par の書き込み・合成型を使える場所・金額の単位）を使う題材。
+// お店の例（../shop/shop.geas）の続きで、名前は半角英数、日本語の表示名は /// で付ける。
+
+/// 在庫数
+ltype StockCount = int 0..1000000
+/// 数量
+ltype Quantity = int 1..99
+/// 商品数量
+ltype ProductQuantity = Product → Quantity max 100
+/// 単価
+ltype UnitPrice = money(currency) 0..10000000
+/// 送料
+ltype ShippingFee = money(currency) 0..100000
+/// 合計金額
+ltype OrderTotal = money(currency) 0..1000000000000
+/// 税率値
+ltype TaxRateValue = ratio 0..1
+/// ID集合
+ltype IdSet = set of id
+/// ポイント
+ltype PointCount = int 0..1000000000
+/// 国コード
+ltype CountryCode = text 2..2 of "A-Z"
+/// 郵便番号
+ltype PostalCode = text 3..10 of "0-9A-Z-"
+/// 住所の行
+ltype AddressLine = text 1..80
+/// 商品名
+ltype ProductName = text 1..80
+/// JANコード
+ltype JanCode = text 13..13 of "0-9"
+/// 配送先
+ltype Address {
+  /// 国
+  country: CountryCode
+  /// 郵便番号
+  postal_code: PostalCode
+  /// 住所
+  line: AddressLine
+}
+
+/// 商品
+entity Product {
+  /// 商品ID
+  product_id: id unique
+  /// 商品名
+  name: ProductName required
+  /// JANコード
+  jan: JanCode required
+  /// 在庫
+  stock: StockCount required
+  /// 通貨
+  currency: currency required
+  /// 価格
+  price: UnitPrice required
+  // 取り下げても、注文の明細には商品IDが残る（確定のときに「商品なし」として扱う）
+  on delete Order.items → leave
+}
+
+/// 顧客
+entity Customer {
+  /// 顧客ID
+  customer_id: id unique
+  /// ポイント
+  points: PointCount required
+}
+
+/// 注文
+entity Order {
+  /// 注文ID
+  order_id: id unique
+  /// 顧客
+  customer: ref Customer required
+  /// 明細
+  items: ProductQuantity required
+  /// 配送先
+  ship_to: Address required
+  /// 通貨
+  currency: currency required
+  /// 合計
+  total: OrderTotal required
+  /// 状態
+  status: OrderStatus
+}
+
+/// 注文状態
+state OrderStatus {
+  /// 受付
+  initial Received
+  /// 決済要求済
+  middle PaymentRequested
+  final /// 完了
+    Completed, /// キャンセル
+    Canceled
+  reject Completed → Canceled reason "完了後は返品で扱う"
+}
+
+/// 受注結果
+result PlaceOrderResult {
+  /// 受付
+  Received(order_id: id)
+  /// 在庫不足
+  OutOfStock(/// 不足
+    short: IdSet)
+  /// 商品なし
+  NoSuchProduct(/// 未登録
+    unregistered: IdSet)
+  /// 通貨が違う
+  OtherCurrency(/// 違う商品
+    mismatched: IdSet)
+  /// 顧客なし
+  NoSuchCustomer
+}
+
+/// 決済要求結果
+result RequestPaymentResult {
+  /// 要求済
+  Requested
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+  /// 合計ゼロ
+  ZeroTotal
+}
+
+/// 在庫確保の要求結果
+result HoldResult {
+  /// 要求済
+  HoldRequested
+  /// 注文なし
+  NoSuchOrder
+}
+
+/// ポイント結果
+result PointsResult {
+  /// 加算済
+  Granted
+  /// 注文なし
+  NoSuchOrder
+  /// 顧客なし
+  NoSuchCustomer
+  /// 上限
+  PointsFull
+}
+
+/// 決済と在庫の結果の見立て
+result SettleResult {
+  /// 承認
+  Approved(order_id: id)
+  /// 決済失敗
+  PaymentFailed(order_id: id)
+  /// 在庫を確保できず
+  StockShort(order_id: id, /// 与信
+    auth_id: id)
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+/// 取り消し結果
+result CancelResult {
+  /// 反映済
+  Applied
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+/// 確定結果
+result FinishResult {
+  /// 反映済
+  Applied
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+  /// 在庫が足りなかった
+  StockLacking
+}
+
+/// 決済
+effect Payment. /// 請求
+  charge(order_id: id, /// 通貨
+    currency: currency, /// 金額
+    amount: money(currency)) replies PaymentSettled
+effect Payment. /// 与信の取り消し
+  refund(order_id: id, /// 与信
+    auth_id: id) no_wait "返金の失敗は人が見る"
+/// 倉庫
+effect Warehouse. /// 在庫の確保
+  hold(order_id: id, /// 届け先
+    to: Address) joins OrderPending replies StockSettled
+/// 配送
+effect Shipping. /// 出荷
+  ship(order_id: id, /// 届け先
+    to: Address) no_wait "出荷の結果は追跡の画面で人が見る"
+
+/// 決済が済んだ（与信が取れたか、拒否か）
+reply PaymentSettled(/// 与信
+  auth_id: id) {
+  /// 承認
+  Approved gives auth_id
+  /// 拒否
+  Declined
+}
+/// 倉庫の返事（足りない商品があれば入る）
+reply StockSettled(/// 不足
+  short: IdSet) {
+  /// 確保できた
+  Held
+  /// 在庫不足
+  Short gives short
+}
+
+// 税率：国内向け（円）は10%、外貨は輸出免税として0%
+rule tax_rate {
+  currency == JPY: 10/100
+  default: 0/1
+}
+
+// 送料（その通貨の最小単位）：円は国内500円・海外2500円、ドルとユーロは国内1500・海外3000（セント）
+rule shipping {
+  currency == JPY and ship_to.country == "JP": 500
+  currency == JPY: 2500
+  ship_to.country == "JP": 1500
+  default: 3000
+}
+
+/// 注文
+deed place_order {
+  input customer_id: id required, items: ProductQuantity required, ship_to: Address required
+  /// 通貨
+  slot currency: currency
+  /// 税率
+  slot tax_rate: TaxRateValue
+  /// 送料
+  slot shipping: ShippingFee
+  reads Product.stock, Product.price, Product.currency, Customer
+  writes Order
+  transition Order: (new) → Received
+  result PlaceOrderResult
+  effects none
+
+  let customer = Customer[customer_id] else { return NoSuchCustomer }
+  let unregistered = { k | (k, v) in items, Product[k] is absent }
+  if unregistered is nonempty { return NoSuchProduct(unregistered) }
+  let other_currency = { k | (k, v) in items, Product[k].currency != currency }
+  if other_currency is nonempty { return OtherCurrency(other_currency) }
+  let short = { k | (k, v) in items, Product[k].stock < v }
+  if short is nonempty { return OutOfStock(short) }
+  let subtotal = sum { Product[k].price * v | (k, v) in items }
+  let total = subtotal + round(subtotal * tax_rate, floor, currency) + shipping
+  let order = create Order { customer: customer_id, items: items, ship_to: ship_to, currency: currency, total: total, status: Received }
+  return Received(order.order_id)
+}
+
+/// 決済要求
+deed request_payment {
+  input order_id: id required
+  reads Order.total, Order.currency, Order.status
+  writes Order.status
+  transition Order: Received → PaymentRequested
+  result RequestPaymentResult
+  effects Payment.charge
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != Received { return WrongStatus }
+  if order.total <= 0 { return ZeroTotal }
+  order.status = PaymentRequested
+  request Payment.charge(order_id, order.currency, order.total, idempotency_key = order_id)
+  return Requested
+}
+
+/// 在庫の確保要求
+deed request_stock_hold {
+  input order_id: id required
+  reads Order.ship_to
+  result HoldResult
+  effects Warehouse.hold
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  request Warehouse.hold(order_id, order.ship_to, idempotency_key = order_id)
+  return HoldRequested
+}
+
+/// キャンペーンポイントの加算
+deed grant_campaign_points {
+  input order_id: id required
+  reads Order.customer, Customer.points
+  writes Customer.points
+  result PointsResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  let customer = Customer[order.customer] else { return NoSuchCustomer }
+  if customer.points > 999999995 { return PointsFull }
+  customer.points += 5
+  return Granted
+}
+
+/// ポイントの加算
+deed grant_points {
+  input order_id: id required
+  reads Order.customer, Customer.points
+  writes Customer.points
+  result PointsResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  let customer = Customer[order.customer] else { return NoSuchCustomer }
+  if customer.points > 999999990 { return PointsFull }
+  customer.points += 10
+  return Granted
+}
+
+// 決済と倉庫の返事は、2つともそろってから見立てる。一部が失敗の中身で来ても、ここで判断する
+/// 決済と在庫の見立て
+deed settle_order {
+  input order_id: id required, auth_id: id, short: IdSet
+  reads Order.status
+  result SettleResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  let auth = auth_id else { return PaymentFailed(order_id) }
+  let lacking = short else { return Approved(order_id) }
+  return StockShort(order_id, auth)
+}
+
+/// 注文の確定
+deed complete_order {
+  input order_id: id required
+  reads Order.status, Order.items, Order.ship_to, Product.stock
+  writes Order.status, Product.stock
+  transition Order: PaymentRequested → Completed
+  result FinishResult
+  effects Shipping.ship
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  let unregistered = { k | (k, v) in order.items, Product[k] is absent }
+  if unregistered is nonempty { return StockLacking }
+  let short = { k | (k, v) in order.items, Product[k].stock < v }
+  if short is nonempty { return StockLacking }
+  update { Product[k].stock -= v | (k, v) in order.items }
+  order.status = Completed
+  request Shipping.ship(order_id, order.ship_to, idempotency_key = order_id)
+  return Applied
+}
+
+/// 決済失敗の取り消し
+deed cancel_unpaid {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  return Applied
+}
+
+/// 在庫不足の返金と取り消し
+deed refund_and_cancel {
+  input order_id: id required, auth_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects Payment.refund
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  request Payment.refund(order_id, auth_id, idempotency_key = order_id)
+  return Applied
+}
+
+/// 決済状況の引き直し結果
+result RecheckResult {
+  /// 引き直し済
+  Rechecked
+  /// 注文なし
+  NoSuchOrder
+  /// 状態違い
+  WrongStatus
+}
+
+// スマホや PC のアプリが、つながりを取り戻したときに呼ばれる。決済の返事を取りこぼしたかもしれない注文に、同じ冪等キーで請求を出し直して、決済の返事（PaymentSettled）をもう一度受ける。二重には請求されない
+/// 決済状況の引き直し
+deed recheck_payment {
+  input order_id: id required
+  reads Order.total, Order.currency, Order.status
+  result RecheckResult
+  effects Payment.charge
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  request Payment.charge(order_id, order.currency, order.total, idempotency_key = order_id)
+  return Rechecked
+}
+
+/// 期限切れの取り消し
+deed expire_order {
+  input order_id: id required
+  reads Order.status
+  writes Order.status
+  transition Order: PaymentRequested → Canceled
+  result CancelResult
+  effects none
+
+  let order = Order[order_id] else { return NoSuchOrder }
+  if order.status != PaymentRequested { return WrongStatus }
+  order.status = Canceled
+  return Applied
+}
+
+/// 入荷の結果
+result RestockResult {
+  /// 入荷済
+  Restocked
+  /// 商品なし
+  NoSuchProduct
+  /// 在庫の上限
+  StockFull
+}
+
+/// 取り下げの結果
+result WithdrawResult {
+  /// 取り下げ済
+  Withdrawn
+  /// 商品なし
+  NoSuchProduct
+}
+
+/// 商品の入荷
+deed restock_product {
+  input product_id: id required, /// 入荷数
+    quantity: Quantity required
+  reads Product.stock
+  writes Product.stock
+  result RestockResult
+  effects none
+
+  let product = Product[product_id] else { return NoSuchProduct }
+  if product.stock > 999901 { return StockFull }
+  product.stock = product.stock + quantity
+  return Restocked
+}
+
+/// 商品の取り下げ
+deed withdraw_product {
+  input product_id: id required
+  reads Product
+  writes Product
+  result WithdrawResult
+  effects none
+
+  let product = Product[product_id] else { return NoSuchProduct }
+  delete product
+  return Withdrawn
+}
+
+/// 注文一覧
+query order_list {
+  from Order
+  where status != Canceled
+  select order_id, customer.customer_id as customer, sum(items) as /// 点数
+    item_count
+  reads Order.status, Order.order_id, Order.customer, Customer.customer_id, Order.items
+}
+
+/// 商品一覧
+query product_list {
+  from Product
+  select product_id, name, jan, currency, price, stock
+  reads Product.product_id, Product.name, Product.jan, Product.currency, Product.price, Product.stock
+}
+
+/// 顧客一覧
+query customer_list {
+  from Customer
+  select customer_id, points
+  reads Customer.customer_id, Customer.points
+}
+
+/// 顧客の注文一覧
+query orders_of {
+  input customer: id required
+  from Order
+  filter customer equals customer
+  select order_id, status, currency, total, sum(items) as /// 点数
+    item_count
+  reads Order.customer, Order.order_id, Order.status, Order.currency, Order.total, Order.items
+}
+
+/// 決済の返事待ちの注文
+query awaiting_payment {
+  from Order
+  where status == PaymentRequested
+  reads Order.status
+}
+
+// ブラウザ拡張が使う。Amazon の ASIN から JAN への変換は拡張の側（クライアント）の仕事で、サーバーは JAN で引く
+/// JANコードから価格を引く
+query price_by_jan {
+  input jan: JanCode required
+  from Product
+  filter jan equals jan
+  select product_id, currency, price
+  reads Product.jan, Product.product_id, Product.currency, Product.price
+}
+
+/// 注文受付
+nexus Intake {
+  place_order: Received → par { request_payment, request_stock_hold, grant_points, grant_campaign_points }, OutOfStock → reply, OtherCurrency → reply, NoSuchProduct → reply, NoSuchCustomer → reply
+  request_payment: Requested → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply, ZeroTotal → reply
+  request_stock_hold: HoldRequested → reply, NoSuchOrder → reply
+  grant_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply, PointsFull → reply
+  grant_campaign_points: Granted → reply, NoSuchOrder → reply, NoSuchCustomer → reply, PointsFull → reply
+}
+
+// 決済の返事と倉庫の返事がそろったら見立てる。そろわないまま30分たったら取り消す
+/// 注文待ち
+trigger OrderPending(order_id: id) {
+  all reply PaymentSettled, StockSettled → settle_order
+  deadline now + 30 min → expire_order
+}
+
+/// 確定の流れ
+nexus Settlement {
+  settle_order: Approved → complete_order, PaymentFailed → cancel_unpaid, StockShort → refund_and_cancel, NoSuchOrder → reply, WrongStatus → reply
+  complete_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply, StockLacking → reply
+  cancel_unpaid: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+  refund_and_cancel: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+  expire_order: Applied → reply, NoSuchOrder → reply, WrongStatus → reply
+}
+
+/// 商品の入荷の流れ
+nexus Restock {
+  restock_product: Restocked → reply, NoSuchProduct → reply, StockFull → reply
+}
+
+/// 商品の取り下げの流れ
+nexus Withdrawal {
+  withdraw_product: Withdrawn → reply, NoSuchProduct → reply
+}
+
+/// 決済状況の引き直しの流れ
+nexus Recheck {
+  recheck_payment: Rechecked → wait OrderPending, NoSuchOrder → reply, WrongStatus → reply
+}
+
+// アプリの「つながりが戻った」は、サーバーの外で起きる出来事。サーバーは、返事待ちの注文1件ずつに引き直しを起こす
+/// つながりが戻った
+event Reconnected on online {
+  each awaiting_payment → recheck_payment
+}
+
+invariant Product: stock >= 0
+invariant Order: status == PaymentRequested implies total > 0
+
+/// 商品一覧の画面
+screen ProductList {
+  show product_list
+  open OrderForm
+  design {
+    layout grid
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 注文の画面
+screen OrderForm(product_id: id) {
+  field customer_id from customer_list, items from product_list, ship_to
+  slot currency
+  action place_order {
+    Received → MyOrders
+    OutOfStock → stay
+    NoSuchProduct → stay
+    OtherCurrency → stay
+    NoSuchCustomer → stay
+  }
+  design {
+    layout form
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 注文の履歴の画面
+screen MyOrders {
+  field customer from customer_list
+  show orders_of
+  design {
+    layout list
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 価格の確認の画面（Chrome 拡張）
+screen PriceCheck entry {
+  page "*://www.amazon.co.jp/*", "*://www.amazon.com/*"
+  read {
+    subject ASIN url "/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)"
+    subject ASIN element "input#ASIN" matches "[A-Z0-9]{10}"
+    value row "JAN", "EAN", "GTIN"
+    value lookup "B0SHOPTEA1": "4901234567894"
+    value lookup "B0SHOPKNF1": "4909876543214"
+    value lookup "B0SHOPBWL1": "4911112222333"
+    value lookup "B0SHOPVSE1": "4922223333443"
+  }
+  field jan
+  show price_by_jan
+  design {
+    layout stack
+    accent "#e47911"
+    mode dark
+  }
+}
+
+// URL（RESTful）。リソースごとに名前から URL が決まり、結果の種類ごとに HTTP の状態を決める。条件はパスで渡す
+/// 商品の管理の画面
+screen ProductAdmin entry {
+  show product_list
+  field product_id from product_list
+  field quantity
+  action restock_product {
+    Restocked → stay
+    NoSuchProduct → stay
+    StockFull → stay
+  }
+  action withdraw_product {
+    Withdrawn → stay
+    NoSuchProduct → stay
+  }
+  design {
+    layout form
+    accent "#8a5a00"
+  }
+}
+
+/// 注文
+resource Orders {
+  create place_order {
+    Received → 201
+    OutOfStock → 422
+    NoSuchProduct → 404
+    OtherCurrency → 422
+    NoSuchCustomer → 404
+  }
+  index order_list
+}
+
+/// 決済要求
+resource PaymentRequests {
+  create request_payment {
+    Requested → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+    ZeroTotal → 422
+  }
+}
+
+/// 在庫確保
+resource StockHolds {
+  create request_stock_hold {
+    HoldRequested → 201
+    NoSuchOrder → 404
+  }
+}
+
+/// ポイント付与
+resource PointGrants {
+  create grant_points {
+    Granted → 201
+    NoSuchOrder → 404
+    NoSuchCustomer → 404
+    PointsFull → 409
+  }
+}
+
+/// キャンペーンポイント付与
+resource CampaignPointGrants {
+  create grant_campaign_points {
+    Granted → 201
+    NoSuchOrder → 404
+    NoSuchCustomer → 404
+    PointsFull → 409
+  }
+}
+
+/// 決済と在庫の見立て
+resource OrderSettlements {
+  create settle_order {
+    Approved → 201
+    PaymentFailed → 201
+    StockShort → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 注文の確定
+resource OrderCompletions {
+  create complete_order {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+    StockLacking → 422
+  }
+}
+
+/// 決済失敗の取り消し
+resource UnpaidCancellations {
+  create cancel_unpaid {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 返金つきの取り消し
+resource RefundCancellations {
+  create refund_and_cancel {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 期限切れの取り消し
+resource ExpiryCancellations {
+  create expire_order {
+    Applied → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 決済状況の引き直し依頼
+resource OrderRecheckRequests {
+  create recheck_payment {
+    Rechecked → 201
+    NoSuchOrder → 404
+    WrongStatus → 409
+  }
+}
+
+/// 商品
+resource Products {
+  index product_list
+  update restock_product {
+    Restocked → 200
+    NoSuchProduct → 404
+    StockFull → 409
+  }
+  destroy withdraw_product {
+    Withdrawn → 200
+    NoSuchProduct → 404
+  }
+}
+
+/// 顧客
+resource Customers {
+  index customer_list
+}
+
+/// 顧客の注文
+resource CustomerOrders under Customers {
+  index orders_of
+}
+
+/// 決済待ちの注文
+resource AwaitingPaymentOrders {
+  index awaiting_payment
+}
+
+/// 商品の価格
+resource ProductPrices key jan {
+  show price_by_jan
+}
+
+/// つながりが戻った
+resource Reconnections {
+  create Reconnected
+}
+
+// 動かす前提：アプリが実行環境に要求すること（環境の実際は書かない）
+needs exposure public "海外のお客さんがブラウザから買う"
+needs secret Payment.api_key "決済事業者の API 鍵"

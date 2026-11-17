@@ -20,6 +20,7 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | 決まった設計の経緯（par・待ち合わせ・金額の単位・検査数字など） | [v0.1.0-scope.md](v0.1.0-scope.md) |
 | モジュール（`use`／`module`） | [modules.md](modules.md) |
 | 日時の考え方 | [datetime.md](datetime.md) |
+| 文書の一覧 | [README.md](README.md) |
 | 未決の事柄 | [open-questions.md](open-questions.md) |
 
 迷ったら、**検査器（`python -m geas check`）が正本**です。書き方の説明と検査器が食い違ったら、検査器の動きを信じて、説明のほうを直してください。
