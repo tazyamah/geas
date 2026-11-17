@@ -70,8 +70,8 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 | サーバーの再起動で、待ち・時計の先・ID の採番が続く | ◎ | `test_runtime.py` の「再起動しても…」 |
 | サーバーが保存をメモリに持つこと（別のサーバー・DB の直接の書き換えが次のリクエストで見える、巻き戻しでメモリの保存も捨てる）・1KB を超える応答が待たずに返ること | ◎ | `test_runtime.py` の「保存はメモリに持つが…」「1KBを超える応答も…」、サーバーの単体テスト（`db.rs` の data_version、`engine.rs` の巻き戻し） |
 | 4. `if`・`else`・`for` の中の `let`、文字列の定数との比較・`+`、集合の `add`／`remove` と `max N` | ○ | `test_reliability.py`（検査）。生成した Rust が組めることは、手元の見本で確かめた（試験にはしていない） |
-| 3. 定義した項目と、2 項目の不変条件 | ○ | `test_reliability.py`（検査と仕様書） |
-| 4. 途中の計算の `trust prove／check／verify／assume` | ◎ | `test_reliability.py` の「途中の計算は 段階どおりに動く」（check と検証ビルドの verify は溢れで止まり、assume は進む）。通常ビルドの verify は動かしていない。お店の例（`tests/fixtures/shop/shop_rust`）は、示せた計算から溢れの確かめを外した形で組めて動く |
+| 3. 定義した項目と、2 項目の不変条件 | ◎ | `test_reliability.py`（検査と仕様書、「問い合わせの答えに 定義した項目の値が出る」） |
+| 4. 途中の計算の `trust prove／check／verify／assume` | ◎ | `test_reliability.py` の「途中の計算は 段階どおりに動く」（check と検証ビルドの verify は溢れで止まり、assume と通常ビルドの verify は進む）。お店の例（`tests/fixtures/shop/shop_rust`）は、示せた計算から溢れの確かめを外した形で組めて動く |
 | 3. `migration` の `rename entity`／`drop entity` | ◎ | `test_migration.py` の「実体の改名と削除は 起動時に行ごと移り 消える」ほか |
 | 10. 書き込みの版の確認（PUT・DELETE の If-Match。428・412） | ◎ | `test_runtime.py` の「PUT と DELETE は 読んだときの行の版が要る」、`test_actors.py`（本人の分だけの URL） |
 | 2. 標準モジュール `Gtin`（検査数字） | ◎ | `test_geas.py` の「標準モジュール Gtin は 正しい検査数字だけ通す」 |

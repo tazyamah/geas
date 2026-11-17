@@ -170,6 +170,9 @@ def column_type(ck, q, c) -> Type:
         return replace(t, optional=t.optional or own[c.via].type.optional)  # 参照が null なら、その先の列も null
     if c.kind == "件数":
         return Type("整数")
+    dv = next((x for x in ck.data[q.target].derived if x.name == c.field), None)
+    if dv is not None and c.kind == "項目":  # 定義した項目（保存しない）：読むたびに、同じ行の項目から計算した値
+        return replace(dv.type, optional=False)  # いつも式から決まるので、無いことはない
     f = own[c.field]
     return Type("整数") if c.kind == "合計" else f.type
 
@@ -1072,7 +1075,10 @@ class Checker:
 
             def field_of(fn):
                 if fn not in fields:
-                    self.d(ERROR, "名前", where, f"データ {dt.name} に項目「{fn}」がありません" + near(fn, [f.name for f in dt.fields]))
+                    if any(x.name == fn for x in dt.derived):
+                        self.d(ERROR, "項目", where, f"定義した項目「{fn}」は、問い合わせでは select の列にだけ書けます（条件・絞り込み・並び・集計には、保存する項目を使います）")
+                    else:
+                        self.d(ERROR, "名前", where, f"データ {dt.name} に項目「{fn}」がありません" + near(fn, [f.name for f in dt.fields]))
                     return None
                 used.add(f"{dt.name}.{fn}")
                 return fields[fn]
@@ -1138,6 +1144,10 @@ class Checker:
                     used.add(f"{tdt.name}.{c.field}")
                     if tf.type.kind not in SELECT_KINDS:
                         self.d(ERROR, "型", where, f"「{c.via}.{c.field}」は select に書けない型です（{tf.type.kind}）")
+                    continue
+                dv = next((x for x in dt.derived if x.name == c.field), None) if c.kind == "項目" else None
+                if dv is not None:  # 定義した項目を列に出す：読むのは、定義の式の元の項目（宣言の「読む」にも、元の項目を書く）
+                    used.update(f"{dt.name}.{n}" for n in names_in(dv.expr))
                     continue
                 f = field_of(c.field)
                 if f is None:
