@@ -44,6 +44,7 @@ class Field:
     unique: bool = False
     required: bool = False
     line: int = field(default=0, compare=False, kw_only=True)  # 書いた行（検査の指摘に付ける）
+    expr: object = field(default=None, kw_only=True)  # 定義した項目（名前: 型 = 式）の式。保存せず、読むたびにほかの項目から決まる
 
 
 @dataclass
@@ -55,6 +56,7 @@ class Data:
     keep: bool = False  # 削除させない（keep）。書かなければ、削除されうるものとして扱う
     removable: list[str] = field(default_factory=list)  # 消してよい状態（removable in …）。状態を持つデータは、これか keep が要る
     on_delete: list[tuple[str, str, str]] = field(default_factory=list)  # 消したとき、参照元の扱い：(参照元のデータ, 項目, detach｜cascade｜leave)
+    derived: list = field(default_factory=list)  # 定義した項目（保存しない。同じ行の数の項目の足し算・引き算）。fields には入れない
 
 
 @dataclass
@@ -170,6 +172,7 @@ class ReplyDef:
 class Migration:
     """保存の形の版（migration N { … }）。前の版の DB を、起動時にこの版の形へ書き換える。消さずに積む。
     steps は (すること, 実体, 項目, 中身, 行)。すること は add（中身は値）・rename（中身は ("to", 新しい名前)）・drop（中身は None）。
+    実体ごとの手順は rename_entity（項目は None、中身は ("to", 新しい名前)）・drop_entity（項目も中身も None）。
     add の値は (種類, 中身)：("int", 数)・("str", 文字列)・("bool", 真偽)・("null", None)・("name", 状態の名前)・("ratio", "n/d")"""
     version: int
     steps: list
@@ -577,6 +580,7 @@ class Return:
     variant: str
     args: list
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -585,6 +589,7 @@ class Assign:
     e: object
     absent: Optional[Return] = None
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -593,6 +598,7 @@ class Create:
     data: str
     fields: list[tuple[str, object]]
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -639,6 +645,7 @@ class SetField:
     line: int = 0
     op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印。"add" "remove" は集合に 1 つ足す・外す（e は要素）
     guard: Optional[tuple] = None  # 範囲の確認を人が引き受ける印。("saturating"|"assume", 理由)。+= と -= だけ
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass

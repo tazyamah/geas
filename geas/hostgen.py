@@ -295,15 +295,16 @@ def migration_defs(ck) -> list:
     """migration の手順を、サーバーが起動時に当てる形にする。add の値は、保存の行の JSON での形
     （割合は "分子/分母" の文字列、状態は名前の文字列）。型は、その項目の最後の名前（あとで rename されるなら、その先）で見る"""
     steps = ck.migration_steps()
+    norm = ck.migration_norm()  # 型を見るときは、実体の最後の名前で見る（サーバーへ渡す名前は、その版の時点の名前のまま）
     out: dict = {}
     for i, (version, op, dn, fn, arg, _) in enumerate(steps):
-        st = {"op": op, "entity": dn, "field": fn}
-        if op == "rename":
+        st = {"op": op, "entity": dn, "field": fn or ""}
+        if op in ("rename", "rename_entity"):
             st["to"] = arg[1]
         elif op == "add":
             kind, val = arg
-            final = ck.migration_final(steps, i)
-            f = next((x for x in ck.data[dn].fields if x.name == final), None) if final else None
+            final = ck.migration_final(norm, i)
+            f = next((x for x in ck.data[norm[i][2]].fields if x.name == final), None) if final and norm[i][2] in ck.data else None
             st["value"] = f"{val}/1" if kind == "int" and f is not None and f.type.kind == "割合" else val
         out.setdefault(version, []).append(st)
     return [{"version": m.version, "steps": out.get(m.version, [])} for m in ck.p.migrations]
@@ -402,6 +403,15 @@ def host_source(ck: Checker) -> str:
             t = stored(f.type)
             for c in value_checks(f"{d.name}.{f.name}", replace(t, optional=False), "x" if t.optional else f"r.{f.name}", t.optional):
                 w(f"    if let Some(x) = &r.{f.name} {{ {c} }}" if t.optional else f"    {c}")
+        for rel in ck.rel_invs:  # 項目どうしを比べる約束と、定義した項目の範囲も、保存の行で確かめる（検査器はこれを前提に示す）
+            if rel["data"] != d.name:
+                continue
+            for fd, c in rel["cons"]:
+                terms = " + ".join(f"({k}i128) * (r.{n} as i128)" for n, k in sorted(fd.items())) or "0i128"
+                cond = f"({terms}) + ({c}i128) <= 0"
+                if rel["when"] is not None:
+                    cond = f'r.{rel["when"][0]} != {next(x.type.target for x in d.fields if x.name == rel["when"][0])}::{rel["when"][1]} || {cond}'
+                w(f'    if !({cond}) {{ return Err(format!("{{}} の行が、約束「{{}}」を守っていません", "{d.name}", {rust_str(rel["text"])})); }}')
         w("    Ok(())\n}")
         w(f"fn {d.name}_to_json(r: &{d.name}) -> String {{\n    let mut v: Vec<String> = Vec::new();")
         for f in d.fields:

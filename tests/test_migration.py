@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""保存の形の移行（migration 版 { add 実体.項目 = 値 ／ rename 実体.項目 to 新しい名前 ／ drop 実体.項目 }）。
+"""保存の形の移行（migration 版 { add 実体.項目 = 値 ／ rename 実体.項目 to 新しい名前 ／ drop 実体.項目 ／ rename entity 実体 to 新しい名前 ／ drop entity 実体 }）。
 前の版の DB を、起動時に 1 回でまとめて今の形へ書き換える。途中で失敗したら、何も変えずに止まる。
 cargo が無い環境では、組んで動かす試験を飛ばす。"""
 import json
@@ -218,3 +218,100 @@ def test_drop_を書かずに消した項目は_行に残ったままになる(b
     db = a_db(tmp_path / "left.sqlite", row, version=3)
     assert start(built, db).returncode == 0
     assert state(db) == ({"p-1": row}, 3)
+
+
+# ---- 実体の名前を変える・実体を消す（rename entity ／ drop entity） ----
+M4 = "\nmigration 4 {\n  rename entity Parcel to Package\n  drop entity Coupon\n}\n"
+
+
+def v4(m4: str = M4, name: str = "Package") -> str:
+    """版 4：実体 Parcel の名前を Package に変え、昔の実体 Coupon を消した。前の migration は、その版の時点の名前（Parcel）のまま残す"""
+    return app("note", "").replace("Parcel", name) + M2 + M3 + m4
+
+
+def test_rename_entity_と_drop_entity_の検査():
+    assert errors(v4()) == []
+    # 定義の名前を変えていない・消していない
+    assert has(v4(name="Parcel"), "実体「Parcel」は、今も定義にあります。名前を変えたなら、実体の定義も「Package」にしてください")
+    assert has(v4(M4.replace("drop entity Coupon", "drop entity Package")), "消すなら、実体の定義も消してください")
+    assert has(v4(M4.replace("to Package", "to Parcel"), name="Parcel"), "新しい名前が、前と同じです")
+    assert has(v4(M4.replace("to Package", "to Packet")), "実体「Packet」が、今の定義にありません")
+    # 実体の名前を変えたあとの版では、項目の手順も新しい名前で書く
+    assert errors(v4(M4 + "\nmigration 5 {\n  drop Package.old\n}\n")) == []
+    assert has(v4(M4 + "\nmigration 5 {\n  drop Parcel.old\n}\n"), "実体「Parcel」がありません")
+    # entity を挟まない書き方は、項目の手順と取り違えないよう、直し方を出す
+    with pytest.raises(ParseError, match="rename entity Parcel to 新しい名前"):
+        parse(v4(M4.replace("rename entity Parcel", "rename Parcel")), str(SRC))
+    with pytest.raises(ParseError, match="drop entity Coupon"):
+        parse(v4(M4.replace("drop entity Coupon", "drop Coupon")), str(SRC))
+
+
+def test_前の版と比べて_書いていない実体の改名と削除は止まる():
+    from geas.spec import build, render
+
+    def against(new_text, base_text):
+        ck = ck_of(new_text)
+        ck.check_against(ck_of(base_text))
+        return [d.msg for d in ck.diags if d.level == "エラー"]
+
+    assert against(v4(), v3()) == [] and against(v4(), V1) == []
+    # 実体の名前を変えたのに書いていない（前の版の実体が無くなった、と言う）
+    gone = against(v4(""), v3())
+    assert any("前の版にあった実体「Parcel」がありません" in m and "drop entity Parcel" in m and "rename entity Parcel to 新しい名前" in m for m in gone), gone
+    # 名前を変えた実体でも、項目の増減は前の版の同じ実体と比べる
+    more = against(v4().replace("  /// 重さ\n  weight: Weight required\n", "  /// 重さ\n  weight: Weight required\n  extra: Kind\n", 1), v3())
+    assert len(more) == 1 and "前の版に無い項目「extra」が増えました" in more[0], more
+    md = render(ck_of(v4()), build(ck_of(v4())), "")
+    assert "| 版 4 | 実体の名前を変える | Parcel | 行はそのまま、実体 Package に移る |" in md
+    assert "| 版 4 | 実体を消す | Coupon | 行はすべて捨てる |" in md
+
+
+@pytest.fixture(scope="module")
+def built4(tmp_path_factory):
+    if shutil.which("cargo") is None:
+        pytest.skip("cargo が無い")
+    out = tmp_path_factory.mktemp("migration4")
+    code = out / "v4.geas"
+    code.write_text(v4(), encoding="utf-8")
+    subprocess.run([sys.executable, "-m", "geas", "rust", str(code), "-o", str(out / "app"), "--host", "--runtime"], check=True, capture_output=True, text=True, cwd=ROOT)
+    r = subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=out / "app" / "server", capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2500:]
+    return out / "app" / "server" / "target" / "release" / "geas_server"
+
+
+def tables(db) -> dict:
+    with sqlite3.connect(db) as c:
+        names = [n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'geas_%' AND name NOT LIKE 'sqlite_%'")]
+        out = {n: {k: json.loads(v) for k, v in c.execute(f'SELECT k, v FROM "{n}"')} for n in names}
+        out["#kv"] = dict(c.execute("SELECT k, v FROM geas_kv"))
+    return out
+
+
+def test_実体の改名と削除は_起動時に行ごと移り_消える(built4, tmp_path):
+    db = a_db(tmp_path / "v3.sqlite", NOW, version=3)
+    with sqlite3.connect(db) as c:
+        c.execute('CREATE TABLE "Coupon" (k TEXT PRIMARY KEY, v TEXT NOT NULL)')
+        c.execute("""INSERT INTO "Coupon" VALUES ('c-1', '{"coupon_id": "c-1"}')""")
+        c.execute("INSERT INTO geas_kv VALUES ('id:Parcel', 7), ('id:Coupon', 2)")
+    assert start(built4, db).returncode == 0
+    t = tables(db)
+    assert t["Package"] == {"p-1": NOW} and "Parcel" not in t and "Coupon" not in t  # 行は新しい名前の表へ移り、前の表は消える
+    assert t["#kv"] == {"schema_version": 4, "id:Package": 7}  # 採番の続きも引き継ぐ（消した実体のぶんは消える）
+    assert start(built4, db).returncode == 0 and tables(db) == t  # 2 回目は何もしない
+
+
+def test_版を覚えていない古いDBも_前の名前の表から移る(built4, tmp_path):
+    db = a_db(tmp_path / "v1.sqlite", {**OLD, "legacy": 1})
+    assert start(built4, db).returncode == 0
+    t = tables(db)
+    assert t["Package"] == {"p-1": NOW} and "Parcel" not in t and t["#kv"]["schema_version"] == 4
+
+
+def test_実体の移行も_合わない行があれば何も変えずに止まる(built4, tmp_path):
+    bad = {**NOW, "fee": -1}
+    db = a_db(tmp_path / "bad.sqlite", bad, version=3)
+    r = start(built4, db)
+    assert r.returncode != 0 and "今の保存の形に合わせられません" in r.stderr and "DB は変えていません" in r.stderr, r.stderr[-800:]
+    with sqlite3.connect(db) as c:
+        assert {k: json.loads(v) for k, v in c.execute('SELECT k, v FROM "Parcel"')} == {"p-1": bad}
+        assert c.execute("SELECT v FROM geas_kv WHERE k = 'schema_version'").fetchone() == (3,)

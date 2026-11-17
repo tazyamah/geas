@@ -339,9 +339,10 @@ def test_if_の中の確認は外へ持ち出さない():
     assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
-def test_if_の中に_let_は書けない():
+def test_if_の中に_let_を書ける():
+    # 2026-11-16 から：枝の中の let は書ける（名前は枝を抜けたら消える。試験は tests/test_reliability.py）
     ck = chk(mutate(CODE, GUARD, "  if order.status == Received {\n    let x = Order[order_id] else { return NoSuchOrder }\n  }\n"))
-    assert any("if の中" in m for m in msgs(ck, ERROR))
+    assert not any("if の中" in m for m in msgs(ck, ERROR))
 
 
 def test_条件つきの変更は_Rust_の_if_の中に出る():

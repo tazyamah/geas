@@ -283,6 +283,10 @@ def build_raw(ck: Checker) -> dict:
         (d.name, f.name, show_type(f.type), "" if f.type.optional else "○", "○" if f.unique else "")
         for d in p.data
         for f in d.fields
+    ] + [  # 定義した項目：保存せず、読むたびに同じ行のほかの項目から決まる
+        (d.name, f.name, f"{show_type(f.type)}（保存しない。= {show(f.expr)}）", "○", "")
+        for d in p.data
+        for f in d.derived
     ]
     states, trans, rejects = [], [], []
     for d in p.data:
@@ -367,6 +371,10 @@ def build_raw(ck: Checker) -> dict:
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
     def migration_row(version, op, dn, fn, arg):
+        if op == "rename_entity":
+            return (f"版 {version}", "実体の名前を変える", dn, f"行はそのまま、実体 {arg[1]} に移る")
+        if op == "drop_entity":
+            return (f"版 {version}", "実体を消す", dn, "行はすべて捨てる")
         if op == "rename":
             return (f"版 {version}", "名前を変える", f"{dn}.{fn}", f"値はそのまま、項目 {arg[1]} に移る")
         if op == "drop":
@@ -389,6 +397,10 @@ def build_raw(ck: Checker) -> dict:
             ft = next(y.type for y in ck.data[d].fields if y.name == f)
             spec["人の保証"].append((x.name, f"{target} {op}", show_type(ft),
                                   "範囲の端で止まる" if mode == "saturating" else "確かめない（届くと異常で止まる）", why))
+        for expr, level, why in ck.infos[x.name].calc_trusts:  # 途中の計算が収まると示せず、人が引き受けた文
+            spec["人の保証"].append((x.name, f"途中の計算 {expr}", "収まると示せていない",
+                                  {"check": "毎回確かめる（溢れたら異常で止まる）", "verify": "検証ビルドだけ確かめる（通常ビルドでは溢れた値がそのまま使われる）",
+                                   "assume": "確かめない（溢れた値がそのまま使われる）"}[level], why))
     spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs), read_text(sc.read)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]

@@ -244,3 +244,194 @@ def test_集合に記号は使えず_直し方が出る():
         parse(SET_SRC.format(max="max 3", req="required", body="  t.tags << tag_id\n", reads="", writes=""))
     with pytest.raises(Exception, match="add 要素 to 変数.項目"):
         parse(SET_SRC.format(max="max 3", req="required", body="  add tag_id into t.tags\n", reads="", writes=""))
+
+
+# ---- 定義した項目（保存しない）と、同じ行の 2 項目を比べる不変条件 ----
+REL_SRC = """ltype Quantity = int 0..1000
+ltype Total = int 0..2000
+
+entity Product {{
+  product_id: id unique
+  stock: Quantity required
+  reserved: Quantity required
+  cap: Quantity required
+{derived}}}
+{inv}
+result StockResult {{
+  Done
+  NoProduct
+  OverCap
+  Short
+}}
+deed change_stock {{
+  input product_id: id required
+  input n: Quantity required
+  reads {reads}
+  writes {writes}
+  result StockResult
+  effects none
+
+  let p = Product[product_id] else {{ return NoProduct }}
+{body}  return Done
+}}
+nexus Changing {{
+  change_stock: Done → reply, NoProduct → reply, OverCap → reply, Short → reply
+}}
+"""
+HELD = "  held: Total = stock + reserved\n"
+ALL = "Product.stock, Product.reserved, Product.cap"
+
+
+def rel_errors(body, inv="invariant Product: held <= cap", derived=HELD, reads=ALL, writes="Product.stock") -> list:
+    src = REL_SRC.format(body=body, inv=inv, derived=derived, reads=reads, writes=writes)
+    return [d.msg for d in check(parse(src)).diags if d.level == "エラー"]
+
+
+def test_定義した項目を比べる不変条件は_確かめてから書けば通る():
+    assert rel_errors("  if p.held + n > p.cap { return OverCap }\n  p.stock += n\n") == []
+
+
+def test_確かめずに増やすと_不変条件を示せない():
+    msgs = rel_errors("  if p.stock + n > 1000 { return OverCap }\n  p.stock += n\n", reads="Product.stock")
+    assert any("不変条件 Product: held <= cap を示せません" in m for m in msgs), msgs
+
+
+def test_減らすだけなら_前から成り立つ約束で示せる():
+    assert rel_errors("  if p.stock < n { return Short }\n  p.stock -= n\n", reads="Product.stock") == []
+
+
+def test_上限を下げる側にも_確かめが要る():
+    assert any("不変条件 Product: held <= cap を示せません" in m
+               for m in rel_errors("  p.cap = n\n", reads="Product.cap", writes="Product.cap"))
+    assert rel_errors("  if n < p.held { return OverCap }\n  p.cap = n\n", reads="Product.stock, Product.reserved", writes="Product.cap") == []
+
+
+def test_2_つの項目を直に比べる不変条件():
+    inv = "invariant Product: reserved <= stock"
+    assert rel_errors("  if p.reserved + n > p.stock { return OverCap }\n  p.reserved += n\n", inv=inv, derived="",
+                      reads="Product.reserved, Product.stock", writes="Product.reserved") == []
+    msgs = rel_errors("  if p.stock < n { return Short }\n  p.stock -= n\n", inv=inv, derived="", reads="Product.stock")
+    assert any("不変条件 Product: reserved <= stock を示せません" in m for m in msgs), msgs
+
+
+def test_不変条件に式は直に書けず_定義してから比べる():
+    msgs = rel_errors("", inv="invariant Product: stock + reserved <= cap", derived="", reads="Product.stock", writes="Product.stock")
+    assert any("式は項目として定義してから比べます" in m for m in msgs), msgs
+
+
+def test_定義した項目は_入れ子にできない():
+    msgs = rel_errors("", inv="", derived=HELD + "  more: Total = held + stock\n")
+    assert any("定義した項目「held」は使えません（入れ子にはしません" in m for m in msgs), msgs
+
+
+def test_定義した項目の式は_足し算と引き算だけ():
+    msgs = rel_errors("", inv="", derived="  twice: Total = stock * 2\n")
+    assert any("足し算と引き算だけです" in m for m in msgs), msgs
+
+
+def test_定義した項目には書き込めない():
+    msgs = rel_errors("  p.held = n\n", inv="")
+    assert any("項目「held」がありません" in m or "定義した項目" in m for m in msgs), msgs
+
+
+def test_定義した項目の型の範囲も_書き込みのたびに示す():
+    # held は 0..1500 と約束した。stock と reserved はそれぞれ 0..1000 なので、足すと超えうる
+    derived = "  held: Held = stock + reserved\n"
+    src = lambda body: REL_SRC.replace("ltype Total = int 0..2000", "ltype Held = int 0..1500").format(
+        body=body, inv="", derived=derived, reads="Product.stock, Product.reserved", writes="Product.stock")
+    errs = lambda body: [d.msg for d in check(parse(src(body))).diags if d.level == "エラー"]
+    assert any("held（= stock + reserved）が範囲 0..1500に収まる を示せません" in m for m in errs("  if p.stock + n > 1000 { return OverCap }\n  p.stock += n\n"))
+    assert errs("  if p.held + n > 1500 or p.stock + n > 1000 { return OverCap }\n  p.stock += n\n") == []
+
+
+def test_仕様書に_定義した項目と証明の結果が出る():
+    from geas.spec import build, render
+    ck = check(parse(REL_SRC.format(body="  if p.held + n > p.cap { return OverCap }\n  p.stock += n\n", inv="invariant Product: held <= cap",
+                                    derived=HELD, reads=ALL, writes="Product.stock")))
+    md = render(ck, build(ck))
+    assert "（保存しない。= stock + reserved）" in md
+    assert "| Product: held <= cap | change_stock: 証明済み（書く前に確かめている） |" in md
+
+
+# ---- 途中の計算が収まると示す（trust prove / check / verify / assume） ----
+CALC_HEAD = """ltype Wide = int 0..9000000000000000000
+ltype Out = int 0..
+
+entity Tray {
+  tray_id: id unique
+  n: Out required
+}
+result PutResult {
+  Done(tray_id: id)
+  Refused
+}
+deed put_tray {
+  input a: Wide required
+  input b: Wide required
+  input c: Wide required
+  writes Tray
+  result PutResult
+  effects none
+
+"""
+CALC_MAKE = "  let t = create Tray { n: 1 }\n  return Done(t.tray_id)\n"
+
+
+def calc_diags(body: str, level: str = "エラー") -> list:
+    return [d.msg for d in check(parse(CALC_HEAD + body + CALC_MAKE + TAIL)).diags if d.level == level]
+
+
+def test_収まると示せる計算には_何も書かなくてよい():
+    # 2 つの掛け算は 9e18 × 9e18 < 2^127 で、計算に使う幅に収まる
+    assert calc_diags("  let x = a * b\n  if x > 5 { return Refused }\n") == []
+
+
+def test_収まると示せない途中の計算はエラー():
+    msgs = calc_diags("  let x = a * b * c\n  if x > 5 { return Refused }\n")
+    assert any("途中の計算が収まると示せません" in m and "trust check" in m for m in msgs), msgs
+
+
+def test_trust_prove_は_書かないのと同じ():
+    assert calc_diags('  let x = a * b trust prove "2 つまでなら収まる"\n  if x > 5 { return Refused }\n') == []
+    msgs = calc_diags('  let x = a * b * c trust prove "収まるはず"\n  if x > 5 { return Refused }\n')
+    assert any("途中の計算が収まると示せません" in m for m in msgs), msgs
+
+
+def test_trust_check_は_エラーを警告に下げる():
+    body = '  let x = a * b * c trust check "実際の値は小さい"\n  if x > 5 { return Refused }\n'
+    assert calc_diags(body) == []
+    assert any("trust check" in m for m in calc_diags(body, "警告"))
+
+
+@pytest.mark.parametrize("level", ["verify", "assume"])
+def test_trust_verify_と_assume_は_警告も出さない(level):
+    body = f'  let x = a * b * c trust {level} "実際の値は小さい"\n  if x > 5 {{ return Refused }}\n'
+    assert calc_diags(body) == [] and calc_diags(body, "警告") == []
+
+
+def test_示せている文に_trust_を書くとエラー():
+    msgs = calc_diags('  let x = a * b trust assume "念のため"\n  if x > 5 { return Refused }\n')
+    assert any("trust assume は要りません" in m for m in msgs), msgs
+
+
+def test_trust_の段階の名前を間違えると_候補が出る():
+    with pytest.raises(Exception) as e:
+        parse(CALC_HEAD + '  let x = a * b * c trust warn "x"\n' + CALC_MAKE + TAIL)
+    assert "prove" in str(e.value) and "assume" in str(e.value)
+
+
+def test_人が引き受けた計算は_仕様書の人の保証に出る():
+    from geas.spec import build as build_spec
+    ck = check(parse(CALC_HEAD + '  let x = a * b * c trust verify "実際の値は小さい"\n  if x > 5 { return Refused }\n' + CALC_MAKE + TAIL))
+    rows = [r for r in build_spec(ck)["人の保証"] if "途中の計算" in r[1]]
+    assert rows and "検証ビルドだけ" in rows[0][3] and rows[0][4] == "実際の値は小さい"
+
+
+def test_生成した_Rust_は_示せた計算から溢れの確かめを外す():
+    from geas.rustgen import generate
+    def rust(body):
+        return generate(check(parse(CALC_HEAD + body + CALC_MAKE + TAIL)))
+    cond = "  if x > 5 { return Refused }\n"
+    assert ".wrapping_mul(" in rust("  let x = a * b\n" + cond) and ".checked_mul(" not in rust("  let x = a * b\n" + cond).split("pub fn put_tray")[1]
+    assert ".checked_mul(" in rust('  let x = a * b * c trust check "小さい"\n' + cond).split("pub fn put_tray")[1]
+    assert "cfg!(debug_assertions)" in rust('  let x = a * b * c trust verify "小さい"\n' + cond)

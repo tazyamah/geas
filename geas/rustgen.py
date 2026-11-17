@@ -5,7 +5,7 @@ from dataclasses import is_dataclass, replace
 
 from .ast import *  # noqa: F401,F403
 from .parser import parse_chars
-from .check import Checker, ProcInfo, column_type, deed_inputs, phys, tok_of, iv_of
+from .check import Checker, ProcInfo, column_type, deed_inputs, names_in, phys, tok_of, iv_of
 from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -831,10 +831,15 @@ class Gen:
         self.w("];\n")
 
 
+DERIVED_PARTS: dict = {}  # 定義した項目の名前 → 元の項目の名前（生成のあいだだけ。どのデータのものかは見ず、多めに読むことにする）
+
+
 def reads_in(x):
     """式（や文の中の式）が読む (変数, 項目)。変数をまるごと読むところ（x == y など）は (変数, None)"""
     if isinstance(x, Attr) and isinstance(x.e, Name):
         yield (x.e.n, x.n)
+        for part in DERIVED_PARTS.get(x.n, ()):  # 定義した項目を読むのは、元の項目を読むこと
+            yield (x.e.n, part)
     elif isinstance(x, Name):
         yield (x.n, None)
     elif is_dataclass(x) and not isinstance(x, type):
@@ -885,6 +890,10 @@ class ProcGen:
         self.in_loop = False
         # 書いた後に読む項目は、変数に手元の写しを持たせて書き換え、読むと書いた値が見えるようにする（検査器もそう示す）。
         # 保存への書き込みは、これまでどおり writes にためて、処理の後に適用する
+        DERIVED_PARTS.clear()
+        for d in g.ck.p.data:
+            for f in d.derived:
+                DERIVED_PARTS.setdefault(f.name, set()).update(names_in(f.expr))
         self.local_fields = reads_after_writes(proc.body, set())
         self.copied = {v for v, _ in self.local_fields}
         self.owned: set[str] = set()  # 1件を値で持つ変数（写しと、create で作ったもの）。ほかの変数は保存の行への参照
@@ -1010,6 +1019,8 @@ class ProcGen:
             return f"{e.v}i128"
         if isinstance(e, Dur):
             return f"{e.secs}i64"
+        if id(e) in self.info.derived:  # 定義した項目（x.held）は、定義の式（x.stock + x.reserved）を計算する
+            return self.rx(self.info.derived[id(e)][1])
         if isinstance(e, StrLit):  # 処理の中に直に書いた文字列（比較と、つなぐ + にだけ書ける）
             return f"{rust_str(e.s)}.to_string()"
         if isinstance(e, Name):
@@ -1108,7 +1119,15 @@ class ProcGen:
                 return f"scale({r}, {l})?" if lt in fr else f"scale({l}, {r})?"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
                 return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
-            if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）
+            if e.op in ("+", "-", "*"):
+                how = self.info.calc.get(id(e), "check")
+                f = {"+": "add", "-": "sub", "*": "mul"}[e.op]
+                if how in ("prove", "assume"):  # 収まると検査で示してある（prove）か、人が確かめないと引き受けた（assume）：溢れを確かめない
+                    return f"(({l}).wrapping_{f}({r}))"
+                if how == "verify":  # 検証ビルドだけ確かめる。通常ビルドでは確かめない（桁が回った値になる。未定義動作にはしない）
+                    return (f"{{ let (a_, b_): (i128, i128) = ({l}, {r}); if cfg!(debug_assertions) {{ a_.checked_{f}(b_).ok_or(Fault::Overflow({rust_str(show(e))}))? }} "
+                            f"else {{ a_.wrapping_{f}(b_) }} }}")
+                # 収まると示せていない計算（trust check）：あふれたら panic でなく Fault
                 return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow({rust_str(show(e))}))?)'
             op = {"かつ": "&&", "または": "||"}.get(e.op, e.op)
             return f"({l} {op} {r})"

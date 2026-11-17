@@ -470,7 +470,7 @@ class Parser:
         if self.is_("store"):
             raise self.err(f"保存先は entity の中ではなく、別の行で store {name} in 保存先 と書きます")
         self.block_open()
-        fields = []
+        fields, derived = [], []
         keep, removable, on_delete = False, [], []
         while not self.accept("}"):
             if self.is_("keep") and not self.is_(":", 1):  # 削除させない
@@ -510,10 +510,14 @@ class Parser:
                     f.required = True
                 else:
                     raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
-            fields.append(f)
+            if self.accept("="):  # 名前: 型 = 式：定義した項目（保存しない）
+                f.expr = self.expr()
+                derived.append(f)
+            else:
+                fields.append(f)
             self.end_line()
         d = Data(name, fields, line)
-        d.keep, d.removable, d.on_delete = keep, removable, on_delete
+        d.keep, d.removable, d.on_delete, d.derived = keep, removable, on_delete, derived
         return d
 
     def signed_num(self):
@@ -1167,25 +1171,44 @@ class Parser:
             if self.peek().val in ("+=", "-="):  # x.f += e は x.f = x.f + e（読む項目にも数える）。並列の枝で重なってよい可換な更新の印を残す
                 op = self.next().val
                 e = self.expr()
-                guard = None
+                guard = calc = None
                 if self.is_("saturating") or self.is_("trust"):  # saturating "理由"（範囲の端で止める）／trust assume "理由"（届かないと人が承知する）
                     mode = self.next().val
                     if mode == "trust":
-                        if not self.accept("assume"):
-                            raise self.err("+= と -= の trust は assume だけです（trust assume \"理由\"）")
+                        if self.peek().val in ("prove", "check", "verify"):  # 途中の計算の trust（項目の範囲の確認は外さない）
+                            calc = self.next().val
+                        elif not self.accept("assume"):
+                            raise self.err("trust のあとには prove（示せなければエラー）、check（警告を出し、実行時に確かめる）、"
+                                           "verify（検証ビルドだけ確かめる）、assume（確かめない）のどれかを書きます")
                         mode = "assume"
                     why = self.next()
                     if why.kind != "STR" or not why.val.strip():
-                        raise self.err(f'{"trust assume" if mode == "assume" else mode} には、理由を "…" で書いてください')
-                    guard = (mode, why.val)
+                        raise self.err(f'{"trust " + (calc or "assume") if mode == "assume" else mode} には、理由を "…" で書いてください')
+                    guard = (mode, why.val) if calc is None else None
                 s = SetField(n, f, Bin(op[0], Attr(Name(n), f), e), line, op, guard)
+                if calc is not None:
+                    s.calc = (calc, why.val)
             else:
                 if self.is_("<") and self.is_("<", 1):
                     raise self.err(f"集合に足す記号 << はありません。add 要素 to {n}.{f} と書きます（外すのは remove 要素 from {n}.{f}）")
                 self.expect("=")
                 s = SetField(n, f, self.expr(), line)
+        if self.is_("trust") and isinstance(s, (Return, Assign, Create, SetField)) and getattr(s, "guard", None) is None and s.calc is None:
+            s.calc = self.calc_trust()
         self.end_stmt()
         return s
+
+    def calc_trust(self) -> tuple:
+        """文の末尾の trust prove|check|verify|assume "理由"：途中の計算が収まると示せないときに、人が引き受ける段階"""
+        self.expect("trust")
+        if self.peek().val not in ("prove", "check", "verify", "assume"):
+            raise self.err("trust のあとには prove（示せなければエラー）、check（警告を出し、実行時に確かめる）、"
+                           "verify（検証ビルドだけ確かめる）、assume（確かめない）のどれかを書きます")
+        level = self.next().val
+        why = self.next()
+        if why.kind != "STR" or not why.val.strip():
+            raise self.err(f'trust {level} には、理由を "…" で書いてください')
+        return (level, why.val)
 
     # ---- 式 ----
     def expr(self):
@@ -1719,8 +1742,17 @@ class Parser:
         steps = []
         while not self.accept("}"):
             t = self.peek()
-            if self.accept("rename"):  # rename 実体.項目 to 新しい名前
+            if self.accept("rename"):  # rename 実体.項目 to 新しい名前 ／ rename entity 実体 to 新しい名前
+                if self.accept("entity"):
+                    entity = self.name()
+                    if not self.accept("to"):
+                        raise self.unexpected("実体の名前の変更は「rename entity 実体 to 新しい名前」です（to が要ります）")
+                    steps.append(("rename_entity", entity, None, ("to", self.name()), t.line))
+                    self.end_line()
+                    continue
                 entity = self.name()
+                if not self.is_("."):
+                    raise self.unexpected(f"項目の名前を変えるなら「rename {entity}.項目 to 新しい名前」、実体の名前を変えるなら「rename entity {entity} to 新しい名前」です")
                 self.expect(".")
                 fname = self.name()
                 if not self.accept("to"):
@@ -1728,14 +1760,20 @@ class Parser:
                 steps.append(("rename", entity, fname, ("to", self.name()), t.line))
                 self.end_line()
                 continue
-            if self.accept("drop"):  # drop 実体.項目
+            if self.accept("drop"):  # drop 実体.項目 ／ drop entity 実体
+                if self.accept("entity"):
+                    steps.append(("drop_entity", self.name(), None, None, t.line))
+                    self.end_line()
+                    continue
                 entity = self.name()
+                if not self.is_("."):
+                    raise self.unexpected(f"項目を消すなら「drop {entity}.項目」、実体ごと消すなら「drop entity {entity}」です")
                 self.expect(".")
                 steps.append(("drop", entity, self.name(), None, t.line))
                 self.end_line()
                 continue
             if not self.accept("add"):
-                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」「rename 実体.項目 to 新しい名前」「drop 実体.項目」です（「{shown(t)}」があります）")
+                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」「rename 実体.項目 to 新しい名前」「drop 実体.項目」「rename entity 実体 to 新しい名前」「drop entity 実体」です（「{shown(t)}」があります）")
             entity = self.name()
             self.expect(".")
             fname = self.name()
