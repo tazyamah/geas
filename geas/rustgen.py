@@ -5,7 +5,7 @@ from dataclasses import is_dataclass, replace
 
 from .ast import *  # noqa: F401,F403
 from .parser import parse_chars
-from .check import Checker, ProcInfo, column_type, deed_inputs, phys, tok_of, iv_of
+from .check import Checker, ProcInfo, column_type, deed_inputs, names_in, phys, tok_of, iv_of
 from .screengen import rust_screens
 
 PRELUDE = r'''// SPDX-License-Identifier: MIT OR Apache-2.0
@@ -108,27 +108,6 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
         Some(c) => Err(format!("{} に使えない文字 {:?} があります", name, c)),
         None => Ok(()),
     }
-}
-/// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
-/// GTIN の判定（文言を組み立てない判定。足し込みは saturating なので、どれだけ長くても panic しない）
-pub fn gtin_ok(s: &str) -> bool {
-    gtin_chars_ok(s.chars())
-}
-pub fn gtin_chars_ok<I: DoubleEndedIterator<Item = char>>(cs: I) -> bool {
-    let mut sum: u32 = 0;
-    for (i, c) in cs.rev().enumerate() {
-        match c.to_digit(10) {
-            Some(d) => sum = sum.saturating_add(if i % 2 == 1 { d.saturating_mul(3) } else { d }),
-            None => return false,
-        }
-    }
-    sum % 10 == 0
-}
-pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
-    if !gtin_ok(s) {
-        return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
-    }
-    Ok(())
 }
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn join_idem_key(xs: &[String]) -> String {
@@ -252,8 +231,6 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
         chk.append(f'check_range("{label}の長さ", {x}.chars().count() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind == "文字列" and t.chars is not None:
         chk.append(f'check_chars("{label}", &{x}, {chars_rust(t.chars)})?;')
-    if t.kind == "文字列" and t.check == "gtin":
-        chk.append(f'check_gtin("{label}", &{x})?;')
     if t.kind == "バイト列" and t.range:
         chk.append(f'check_range("{label}の長さ", {x}.len() as i128, {opt(t.range.lo)}, {opt(t.range.hi)})?;')
     if t.kind in ("整数", "金額") and t.range:
@@ -261,7 +238,7 @@ def value_checks(label: str, t: Type, x: str, deref: bool) -> list[str]:
     if t.kind == "割合":  # 範囲を書かなくても、分母と値の大きさの物理上限は確かめる
         r = t.range
         chk.append(f'check_ratio("{label}", {ref}, {opt(r.lo if r else None)}, {opt(r.hi if r else None)})?;')
-    if t.kind == "写像" and t.maxn is not None:  # 検査器は max N を前提に合計の範囲を示すので、外から来る写像は境界で要素数を止める
+    if t.kind in ("写像", "集合") and t.maxn is not None:  # 検査器は max N を前提に合計の範囲や件数を示すので、外から来る写像・集合は境界で要素数を止める
         chk.append(f'check_range("{label}の要素数", {x}.len() as i128, Some(0), Some({t.maxn}))?;')
     if t.kind == "写像" and t.value.kind in ("整数", "金額") and t.value.range:
         r = t.value.range
@@ -386,6 +363,8 @@ fn os_path_expand(input: &str) -> Result<String, String> {
 
 class Gen:
     def __init__(self, ck: Checker):
+        from .rest import versioned
+        self.etag_data = set(versioned(ck.p).values())  # PUT・DELETE で書き換える実体（一覧の行に、行のキーを持たせる）
         assert ck.ready, "検査にエラーか問いが残っているので生成しません"
         self.ck = ck
         self.p = ck.p
@@ -448,6 +427,8 @@ class Gen:
             self.w(f"pub struct {n}Row {{")
             for c, t in cols:
                 self.w(f"    pub {c.name}: {'i128' if c.kind in ('合計', '件数') else field_rust(t)},")  # 集計は桁あふれしない広い整数
+            if q.target in self.etag_data:  # PUT・DELETE で書き換える実体の行：どの行かを持っておく（サーバーが、行の版を答えに付ける）
+                self.w("    pub row_key_: String,")
             self.w("}")
             fmt = "/".join(f"{c.name}={{}}" for c, _ in cols)
             vals = ", ".join(show_expr(t, f"self.{c.name}") for c, t in cols)
@@ -547,6 +528,8 @@ class Gen:
                              if fields[c.field].type.optional else f"{c.name}: r.{c.field}.len() as i128")
             else:
                 parts.append(f"{c.name}: r.{c.field}.clone()")
+        if q.target in self.etag_data:
+            parts.append(f"row_key_: r.{key}.clone()")
         self.w(f"        Some({n}Row {{ {', '.join(parts)} }})")
         self.w(f"    }}).collect(){', next)' if pg else ''}\n}}\n")
 
@@ -831,10 +814,15 @@ class Gen:
         self.w("];\n")
 
 
+DERIVED_PARTS: dict = {}  # 定義した項目の名前 → 元の項目の名前（生成のあいだだけ。どのデータのものかは見ず、多めに読むことにする）
+
+
 def reads_in(x):
     """式（や文の中の式）が読む (変数, 項目)。変数をまるごと読むところ（x == y など）は (変数, None)"""
     if isinstance(x, Attr) and isinstance(x.e, Name):
         yield (x.e.n, x.n)
+        for part in DERIVED_PARTS.get(x.n, ()):  # 定義した項目を読むのは、元の項目を読むこと
+            yield (x.e.n, part)
     elif isinstance(x, Name):
         yield (x.n, None)
     elif is_dataclass(x) and not isinstance(x, type):
@@ -885,6 +873,10 @@ class ProcGen:
         self.in_loop = False
         # 書いた後に読む項目は、変数に手元の写しを持たせて書き換え、読むと書いた値が見えるようにする（検査器もそう示す）。
         # 保存への書き込みは、これまでどおり writes にためて、処理の後に適用する
+        DERIVED_PARTS.clear()
+        for d in g.ck.p.data:
+            for f in d.derived:
+                DERIVED_PARTS.setdefault(f.name, set()).update(names_in(f.expr))
         self.local_fields = reads_after_writes(proc.body, set())
         self.copied = {v for v, _ in self.local_fields}
         self.owned: set[str] = set()  # 1件を値で持つ変数（写しと、create で作ったもの）。ほかの変数は保存の行への参照
@@ -975,8 +967,6 @@ class ProcGen:
             checks.append(f'if let Err(m) = check_chars("result", &result, {chars_rust(pt.ret.chars)}) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.ret.kind == "文字列" and pt.ret.read:
             checks.append(f'if let Err(m) = {pt.ret.read}(&result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
-        if pt.ret.kind == "文字列" and pt.ret.check == "gtin":
-            checks.append(f'if let Err(m) = check_gtin("result", &result) {{ return Err(Fault::Guarantee("{e.n}", m)) }}')
         if pt.guarantee is not None:
             saved = dict(self.scope)
             for n, t in [*pt.params, ("result", pt.ret)]:
@@ -1010,6 +1000,10 @@ class ProcGen:
             return f"{e.v}i128"
         if isinstance(e, Dur):
             return f"{e.secs}i64"
+        if id(e) in self.info.derived:  # 定義した項目（x.held）は、定義の式（x.stock + x.reserved）を計算する
+            return self.rx(self.info.derived[id(e)][1])
+        if isinstance(e, StrLit):  # 処理の中に直に書いた文字列（比較と、つなぐ + にだけ書ける）
+            return f"{rust_str(e.s)}.to_string()"
         if isinstance(e, Name):
             if e.n in self.scope:
                 kind, tok = self.scope[e.n]
@@ -1089,6 +1083,8 @@ class ProcGen:
             if e.op == "in":
                 return f"{self.coll(e.r)}.{'contains' if rt == 'Set' else 'contains_key'}(&({self.rx(e.l)}))"
             l, r = self.rx(e.l), self.rx(e.r)
+            if e.op == "+" and lt == "Str":  # 文字列をつなぐ（長さは、入れ先に収まると検査で示してある）
+                return f'format!("{{}}{{}}", {l}, {r})'
             if e.op in ("/", "%") and isinstance(e.r, Num):  # 正の定数で割る。負の値も、切り捨て（負の無限大へ）と 0 以上の余りにそろえる
                 return f"({l}).{'div_euclid' if e.op == '/' else 'rem_euclid'}({r})"
             if e.op in ("/", "%"):  # 変数で割る：1 以上と示してある（Unproven）か、0 のときの値を使う。i64::MIN / -1 のあふれは Fault
@@ -1104,7 +1100,15 @@ class ProcGen:
                 return f"scale({r}, {l})?" if lt in fr else f"scale({l}, {r})?"
             if e.op == "-" and (lt, rt) == ("Time", "Time"):  # 時刻の差は秒数（整数は i128 で持つ）
                 return f'(({l} as i128).checked_sub({r} as i128).ok_or(Fault::Overflow("時刻の差"))?)'
-            if e.op in ("+", "-", "*"):  # あふれたら panic でなく Fault（検査器が収まると示した所では起きない）
+            if e.op in ("+", "-", "*"):
+                how = self.info.calc.get(id(e), "check")
+                f = {"+": "add", "-": "sub", "*": "mul"}[e.op]
+                if how in ("prove", "assume"):  # 収まると検査で示してある（prove）か、人が確かめないと引き受けた（assume）：溢れを確かめない
+                    return f"(({l}).wrapping_{f}({r}))"
+                if how == "verify":  # 検証ビルドだけ確かめる。通常ビルドでは確かめない（桁が回った値になる。未定義動作にはしない）
+                    return (f"{{ let (a_, b_): (i128, i128) = ({l}, {r}); if cfg!(debug_assertions) {{ a_.checked_{f}(b_).ok_or(Fault::Overflow({rust_str(show(e))}))? }} "
+                            f"else {{ a_.wrapping_{f}(b_) }} }}")
+                # 収まると示せていない計算（trust check）：あふれたら panic でなく Fault
                 return f'(({l}).{ {"+": "checked_add", "-": "checked_sub", "*": "checked_mul"}[e.op] }({r}).ok_or(Fault::Overflow({rust_str(show(e))}))?)'
             op = {"かつ": "&&", "または": "||"}.get(e.op, e.op)
             return f"({l} {op} {r})"
@@ -1261,7 +1265,10 @@ class ProcGen:
             d = self.info.lookup_vars[st.var]
             key = self.g.key(d)
             ft = self.field_type(d, st.f)
-            if st.guard is not None and st.guard[0] == "saturating":  # 範囲の端で止める。端の内側に収めてから物理数へ
+            if st.op in ("add", "remove"):  # 集合に 1 つ足す・外す（足す前に、上限に届いていないと検査で示してある）
+                change = f"insert({self.rx(st.e)})" if st.op == "add" else f"remove(&({self.rx(st.e)}))"
+                v = f"{{ let mut set_ = {st.var}.{st.f}.clone(); set_.{change}; set_ }}"
+            elif st.guard is not None and st.guard[0] == "saturating":  # 範囲の端で止める。端の内側に収めてから物理数へ
                 lo, hi = iv_of(ft)
                 v = self.conv(ft, f"({self.rx(st.e)}).clamp({lo}i128, {hi}i128)", f"{d}.{st.f}", proven=True)
             elif st.guard is not None:  # 届かないと人が承知している。届いたら範囲の確認で異常にして止める

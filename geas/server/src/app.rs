@@ -59,7 +59,16 @@ pub fn fill_ctx(db: &Db, defs: &Value, refs: &[String], new_ids: &[String], inpu
 pub fn migrate(db: &Db, defs: &Value) -> R<()> {
     const KEY: &str = "schema_version";
     let current = defs["schema_version"].as_i64().unwrap_or(1);
-    let empty = db.is_empty()?;
+    // 行の無い DB か。名前を変える・消す実体の行は、今の定義に無い表に残っているので、それも見る
+    let mut empty = db.is_empty()?;
+    for m in defs["migrations"].as_array().map(|x| x.as_slice()).unwrap_or(&[]) {
+        for st in m["steps"].as_array().map(|x| x.as_slice()).unwrap_or(&[]) {
+            let en = st["entity"].as_str().unwrap_or("");
+            if empty && matches!(st["op"].as_str().unwrap_or(""), "rename_entity" | "drop_entity") && !db.has_entity(en) && !db.old_rows(en)?.is_empty() {
+                empty = false;
+            }
+        }
+    }
     let have = match db.kv(KEY)? {
         Some(v) => v,
         None if empty => current,
@@ -79,6 +88,21 @@ pub fn migrate(db: &Db, defs: &Value) -> R<()> {
             Ok(())
         })?;
         let empty_steps = Vec::new();
+        let pending = || {
+            defs["migrations"].as_array().unwrap_or(&empty_steps).iter().filter(move |m| m["version"].as_i64().unwrap_or(0) > have).flat_map(|m| m["steps"].as_array().unwrap_or(&empty_steps).iter())
+        };
+        // 名前を変える・消す実体の行は、今の定義に無い表に残っている。それも読み、表は消す（行は、手順を当てたあと新しい名前で書く）
+        let mut seen: Vec<String> = Vec::new();
+        for st in pending() {
+            let (op, en) = (st["op"].as_str().unwrap_or(""), st["entity"].as_str().unwrap_or(""));
+            if !matches!(op, "rename_entity" | "drop_entity") || db.has_entity(en) || seen.iter().any(|x| x == en) {
+                continue;
+            }
+            seen.push(en.to_string());
+            for (k, v) in db.old_rows(en)? {
+                rows.push((en.to_string(), k.clone(), serde_json::from_str(&v).map_err(|x| format!("保存の行 {}「{}」が読めません: {}", en, k, x))?));
+            }
+        }
         for m in defs["migrations"].as_array().unwrap_or(&empty_steps) {
             if m["version"].as_i64().unwrap_or(0) <= have {
                 continue;
@@ -86,6 +110,26 @@ pub fn migrate(db: &Db, defs: &Value) -> R<()> {
             for st in m["steps"].as_array().unwrap_or(&empty_steps) {
                 let (en, field) = (st["entity"].as_str().unwrap_or(""), st["field"].as_str().unwrap_or(""));
                 let (op, to) = (st["op"].as_str().unwrap_or(""), st["to"].as_str().unwrap_or(""));
+                match op {
+                    // 実体の名前を変える：行をそのまま、新しい名前の実体へ移す。新しい名前の側にもう行があれば、混ざるので止まる
+                    "rename_entity" => {
+                        if rows.iter().any(|(e, _, _)| e == to) {
+                            return Err(format!("実体「{}」を「{}」に変えますが、「{}」にもう行があります", en, to, to));
+                        }
+                        for r in rows.iter_mut().filter(|(e, _, _)| e == en) {
+                            r.0 = to.to_string();
+                        }
+                        db.retire_table(en, Some(to))?;
+                        continue;
+                    }
+                    // 実体を消す：行をすべて捨てる
+                    "drop_entity" => {
+                        rows.retain(|(e, _, _)| e != en);
+                        db.retire_table(en, None)?;
+                        continue;
+                    }
+                    _ => {}
+                }
                 for (_, k, row) in rows.iter_mut().filter(|(e, _, _)| e == en) {
                     let obj = match row.as_object_mut() {
                         Some(o) => o,

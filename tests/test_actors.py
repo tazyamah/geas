@@ -513,8 +513,10 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
     assert get("Customer", "c-1", path="/my_parcels_of_kinds/heavy")[:2] == (200, [])
     # 処理の 1 件引きも範囲を通す：自分の小包は書き換えられ、他人の小包は「無い」（404）。本人の ID が無ければ 401
     def relabel(pid, who, kind="mine"):
+        # PUT には、読んだときの行の版が要る（一覧の行の _etag を If-Match に載せる）
+        tag = next((f'"{x["_etag"]}"' for x in call(served, "GET", "/parcels")[1]["rows"] if x["parcel_id"] == pid), '"none"')
         req = urllib.request.Request(served + "/my_parcel_labels/" + pid, data=json.dumps({"kind": kind, "caller": "c-1"}).encode(), method="PUT",
-                                     headers={"Content-Type": "application/json", "X-Geas-Actor": "Customer", **({"X-Geas-Actor-Id": who} if who else {})})
+                                     headers={"Content-Type": "application/json", "X-Geas-Actor": "Customer", "If-Match": tag, **({"X-Geas-Actor-Id": who} if who else {})})
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read()).get("result")
@@ -522,7 +524,8 @@ def test_範囲つきの問い合わせは_本人の分だけを返し_並べた
             return e.code, json.loads(e.read()).get("result")
     assert relabel(a, "c-1") == (200, "Relabeled")
     assert relabel(b, "c-1") == (404, "NotMine")  # 本文に caller を書いても、ヘッダの本人で決まる
-    assert relabel(a, "c-2") == (404, "NotMine") and relabel("nope", "c-1") == (404, "NotMine")
+    # 本人の分だけを扱う URL では、無い行も「版が違う」（412）と答える（他人の行があるかどうかを、答えの違いで教えない）
+    assert relabel(a, "c-2") == (404, "NotMine") and relabel("nope", "c-1") == (412, None)
     assert relabel(a, None)[0] == 401
     kinds = {x["parcel_id"]: x["kind"] for x in call(served, "GET", "/parcels")[1]["rows"]}
     assert (kinds[a], kinds[b]) == ("mine", "light")

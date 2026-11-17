@@ -23,6 +23,11 @@ fn e(x: rusqlite::Error) -> String {
     format!("DB: {}", x)
 }
 
+/// 表の名前にしてよい実体の名前か（半角の英数字と _ だけ。geas の管理用の表は除く）
+fn old_table_name_ok(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with("geas_") && !name.starts_with("sqlite_") && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 impl Db {
     pub fn open(path: &str, entities: Vec<String>) -> R<Db> {
         let conn = Connection::open(path).map_err(e)?;
@@ -78,6 +83,39 @@ impl Db {
             }
         }
         Ok(())
+    }
+
+    /// 今の定義に無い、前の版の実体の表の行（保存の形の移行で、名前を変える・消す実体）。表が無ければ空
+    pub fn old_rows(&self, table: &str) -> R<Vec<(String, String)>> {
+        if !old_table_name_ok(table) {
+            return Err(format!("DB: 実体の名前「{}」は使えません", table));
+        }
+        let there: Option<i64> = self.conn.query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1", params![table], |r| r.get(0)).optional().map_err(e)?;
+        if there.is_none() {
+            return Ok(Vec::new());
+        }
+        let mut st = self.conn.prepare(&format!("SELECT k, v FROM \"{}\"", table)).map_err(e)?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(e)
+    }
+
+    /// 前の版の実体の表を、行ごと消す。採番の続きも消す（to があれば、新しい名前の実体へ引き継ぐ）
+    pub fn retire_table(&self, table: &str, to: Option<&str>) -> R<()> {
+        if !old_table_name_ok(table) {
+            return Err(format!("DB: 実体の名前「{}」は使えません", table));
+        }
+        if self.has_entity(table) {
+            self.conn.execute(&format!("DELETE FROM \"{}\"", table), []).map_err(e)?;
+        } else {
+            self.conn.execute_batch(&format!("DROP TABLE IF EXISTS \"{}\"", table)).map_err(e)?;
+        }
+        let old = format!("id:{}", table);
+        if let (Some(to), Some(n)) = (to, self.kv(&old)?) {
+            let new = format!("id:{}", to);
+            let have = self.kv(&new)?.unwrap_or(0);
+            self.set_kv(&new, have.max(n))?;
+        }
+        self.conn.execute("DELETE FROM geas_kv WHERE k = ?1", params![old]).map(|_| ()).map_err(e)
     }
 
     /// 1 行を書く。row が None なら、その行を消す

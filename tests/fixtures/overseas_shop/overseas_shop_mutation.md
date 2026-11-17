@@ -8,11 +8,11 @@
 
 | 行 | 崩し方 | 元の行 |
 |---|---|---|
-| 10 | 範囲の上限を狭める | `ltype Quantity = int 1..99` |
-| 14 | 範囲の上限を狭める | `ltype UnitPrice = money(currency) 0..10000000` |
-| 16 | 範囲の上限を狭める | `ltype ShippingFee = money(currency) 0..100000` |
-| 50 | required を外す | `name: ProductName required` |
-| 52 | required を外す | `jan: JanCode required` |
-| 56 | required を外す | `currency: currency required` |
-| 82 | required を外す | `currency: currency required` |
-| 256 | 確認を消す | `if short is nonempty { return OutOfStock(short) }` |
+| 12 | 範囲の上限を狭める | `ltype Quantity = int 1..99` |
+| 16 | 範囲の上限を狭める | `ltype UnitPrice = money(currency) 0..10000000` |
+| 18 | 範囲の上限を狭める | `ltype ShippingFee = money(currency) 0..100000` |
+| 52 | required を外す | `name: ProductName required` |
+| 54 | required を外す | `jan: JanCode required` |
+| 58 | required を外す | `currency: currency required` |
+| 84 | required を外す | `currency: currency required` |
+| 258 | 確認を消す | `if short is nonempty { return OutOfStock(short) }` |

@@ -41,11 +41,17 @@ BAD = """ltype Count = int 0..100
 ltype Small = int 0..9
 
 library good(x: Count) -> Count from rust "std" "" call "x / 2" guarantee result <= x trust check "半分にするだけ"
+example good(4) == 2
 library overflow(x: Count) -> Count from rust "std" "" call "x * 3" trust check "3 倍するだけ"
+example overflow(1) == 3
 library too_wide(x: Count) -> Small from rust "std" "" call "x / 2" trust check "半分にするだけ"
+example too_wide(4) == 2
 library broken_promise(x: Count) -> Count from rust "std" "" call "x / 2" guarantee result >= x trust check "半分にするだけ"
+example broken_promise(0) == 0
 library no_such(x: Count) -> Count from rust "std" "" call "x.no_such_method()" trust check "無い関数"
+example no_such(1) == 1
 library by_zero(x: Count, y: Count) -> Count from rust "std" "" call "x / y" trust check "割るだけ"
+example by_zero(4, 2) == 2
 """
 
 
@@ -93,6 +99,7 @@ result PutResult {
   Done(tray_id: id)
 }
 library half(x: Count) -> Count from rust "std" "" call "x / 2" guarantee result <= x trust check "半分にするだけ"
+example half(10) == 5
 deed put_tray {
   input n: Count required
   writes Tray
@@ -157,3 +164,65 @@ def test_標準部品の証明は_部品ごとに作られ_式は実在のメソ
     assert all(f"fn safe_{pt.name}()" in src for pt in parts)
     assert src.count("fn eq_") == sum(1 for pt in parts if pt.name.split("_", 2)[2] in std_proofs.SPEC)
     assert "fn eq_Num_i16_saturating_add()" in src and "(A + B).clamp(LO, HI)" in src
+
+
+# ---- 具体例（example）と、call の式に書けないもの ----
+LIB = 'ltype Count = int 0..100\nlibrary half(x: Count) -> Count from rust "std" "" call "{call}" trust check "半分にするだけ"\n'
+
+
+def errors(src):
+    return [d.msg for d in check(parse(src)).diags if d.level == "エラー"]
+
+
+def test_library_には具体例が要る():
+    assert any("library には具体例が要ります" in m for m in errors(LIB.format(call="x / 2")))
+    assert errors(LIB.format(call="x / 2") + "example half(10) == 5\n") == []
+
+
+def test_具体例の値は_宣言の型に合わせる():
+    base = LIB.format(call="x / 2")
+    assert any("引数は 2 個ですが、宣言は 1 個" in m for m in errors(base + "example half(10, 2) == 5\n"))
+    assert any("範囲" in m and "の外" in m for m in errors(base + "example half(200) == 5\n"))
+    assert any("数ではない型" in m or "文字列ではない型" in m for m in errors(base + 'example half(10) == "5"\n'))
+    with pytest.raises(Exception, match="library がありません"):
+        parse(base + "example nothing(1) == 1\n")
+    with pytest.raises(Exception, match="直に書いた値"):
+        parse(base + "example half(5 + 5) == 5\n")
+
+
+@pytest.mark.parametrize("call, word", [("{ let mut n = x; loop { n += 1; } }", "loop"), ("{ let mut n = x; while n > 0 { n -= 1; } n }", "while"),
+                                         ("{ let mut n = 0; for i in 0..x { n += i; } n }", "for"), ("(0..x).map(|i| i).sum()", "クロージャ"),
+                                         ("{ fn f(n: u8) -> u8 { f(n) } f(x) }", "fn")])
+def test_call_の式には_繰り返しを書けない(call, word):
+    msgs = errors(LIB.format(call=call) + "example half(10) == 5\n")
+    assert any("call の式に" in m and word in m and "書けません" in m for m in msgs), msgs
+
+
+def test_ビットの演算の縦棒は_クロージャと取り違えない():
+    assert errors(LIB.format(call="(x | 1) & 100") + "example half(10) == 11\n") == []
+
+
+def test_具体例と違う答えは_parts_が見つける(tmp_path):
+    src = LIB.format(call="x / 2") + "example half(10) == 5\nexample half(10) == 6\n"
+    rep = check_parts(check(parse(src)).p.parts, tmp_path)
+    assert [(f.part, f.kind) for f in rep.findings] == [("half", "具体例と違う")] and rep.examples == {"half": 1}
+    assert "half(10) = 5（具体例は 6）" in rep.findings[0].detail
+
+
+def test_文字列の部品は_具体例だけを確かめる(tmp_path):
+    src = ('ltype Word = text 0..10\nlibrary shout(x: Word) -> Word from rust "std" "" call "x.to_uppercase()" trust check "大文字にするだけ"\n'
+           'example shout("abc") == "ABC"\nexample shout("") == ""\n')
+    assert errors(src) == []
+    rep = check_parts(check(parse(src)).p.parts, tmp_path)
+    assert rep.ok and rep.examples == {"shout": 2} and "shout" in rep.skipped
+
+
+def test_台帳は_具体例を変えたら確かめ直しを求める(tmp_path):
+    src = tmp_path / "app.geas"
+    src.write_text(APP, encoding="utf-8")
+    row = lambda: next(ln for ln in geas("spec", str(src)).stdout.splitlines() if "ライブラリ half" in ln)
+    assert "具体例: half(10) == 5" in row()
+    assert geas("parts", str(src), "--record").returncode == 0
+    assert "具体例 1 件と一致" in row()
+    src.write_text(APP.replace("example half(10) == 5", "example half(10) == 5\nexample half(8) == 4"), encoding="utf-8")
+    assert "具体例は確かめ直していない" in row() and "宣言は端の値で 14 回呼んで確かめた" in row()

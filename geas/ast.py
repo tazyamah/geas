@@ -27,7 +27,6 @@ class Type:
     unit: Optional[str] = None
     optional: bool = False  # 無いかもしれない（Rust では Option）。問い合わせの入力の「任意」と、null になりうる項目
     chars: Optional[tuple] = None  # 文字列の使える文字。(下限, 上限) のコードポイントの組を、小さい順につないだもの
-    check: Optional[str] = None  # 文字列の検査数字の種類（gtin＝JAN/EAN/UPC のチェックディジット）
     fills: Optional[tuple] = None  # 変換の引数で、未指定の成分を補うルール。((成分名, 値), …)。補った成分は「指定されている」扱い
     maxn: Optional[int] = None  # 写像の要素数の上限（K → V max N）。sum の範囲を示すのに使う
     read: Optional[str] = None  # 論理型に結びつけた、raw から変換する convert の名前。この型の値は、境界でこの変換を通る（入力の選別を通す境界）
@@ -44,6 +43,7 @@ class Field:
     unique: bool = False
     required: bool = False
     line: int = field(default=0, compare=False, kw_only=True)  # 書いた行（検査の指摘に付ける）
+    expr: object = field(default=None, kw_only=True)  # 定義した項目（名前: 型 = 式）の式。保存せず、読むたびにほかの項目から決まる
 
 
 @dataclass
@@ -55,6 +55,7 @@ class Data:
     keep: bool = False  # 削除させない（keep）。書かなければ、削除されうるものとして扱う
     removable: list[str] = field(default_factory=list)  # 消してよい状態（removable in …）。状態を持つデータは、これか keep が要る
     on_delete: list[tuple[str, str, str]] = field(default_factory=list)  # 消したとき、参照元の扱い：(参照元のデータ, 項目, detach｜cascade｜leave)
+    derived: list = field(default_factory=list)  # 定義した項目（保存しない。同じ行の数の項目の足し算・引き算）。fields には入れない
 
 
 @dataclass
@@ -124,6 +125,7 @@ class Part:
     body: object = None  # convert（geas の式で書いた変換）のとき、その式。外の実装は無く、guarantee は無い
     defaults: dict = field(default_factory=dict)  # convert の引数のデフォルト値：引数名 → 式（呼ぶとき省ける）
     requires: list = field(default_factory=list)  # raw から変換する convert の拒否の条件：[(条件の式, 理由)]。成り立たなければ入力不正
+    examples: list = field(default_factory=list)  # library の具体例：[(引数の値の式の並び, 期待する値の式, 行)]。geas parts が実際に呼んで比べる
     lib: Optional[tuple] = None  # library のとき (クレート名, 版, 呼び出す Rust の式, 確認の段階 check|verify|assume, 人の保証の理由)。クレートが std なら依存は足さない
 
     @property
@@ -169,6 +171,7 @@ class ReplyDef:
 class Migration:
     """保存の形の版（migration N { … }）。前の版の DB を、起動時にこの版の形へ書き換える。消さずに積む。
     steps は (すること, 実体, 項目, 中身, 行)。すること は add（中身は値）・rename（中身は ("to", 新しい名前)）・drop（中身は None）。
+    実体ごとの手順は rename_entity（項目は None、中身は ("to", 新しい名前)）・drop_entity（項目も中身も None）。
     add の値は (種類, 中身)：("int", 数)・("str", 文字列)・("bool", 真偽)・("null", None)・("name", 状態の名前)・("ratio", "n/d")"""
     version: int
     steps: list
@@ -576,6 +579,7 @@ class Return:
     variant: str
     args: list
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -584,6 +588,7 @@ class Assign:
     e: object
     absent: Optional[Return] = None
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -592,6 +597,7 @@ class Create:
     data: str
     fields: list[tuple[str, object]]
     line: int = 0
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -636,8 +642,9 @@ class SetField:
     f: str
     e: object
     line: int = 0
-    op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印
+    op: str = "="  # "+=" "-=" は x.f = x.f + e に開いてある。並列の枝で重なってよい可換な更新かどうかの印。"add" "remove" は集合に 1 つ足す・外す（e は要素）
     guard: Optional[tuple] = None  # 範囲の確認を人が引き受ける印。("saturating"|"assume", 理由)。+= と -= だけ
+    calc: Optional[tuple] = None  # 途中の計算の trust：("prove"|"check"|"verify"|"assume", 理由)。文の末尾に書く
 
 
 @dataclass
@@ -680,7 +687,8 @@ def show_type(t: Type) -> str:
     if k in ("ID", "日時", "真偽"):
         return k
     if k == "文字列":
-        return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.check is None else f" 検査数字 {t.check}")
+        # read：外から入る所で通す変換（拒否の条件は、仕様書の部品の表に出る）
+        return "文字列" + show_range(t.range) + ("" if t.chars is None else f" 文字種 [{show_chars(t.chars)}]") + ("" if t.read is None else f" 変換 {t.read}")
     if k == "バイト列":
         return "バイト列" + show_range(t.range)
     if k == "生":
@@ -701,7 +709,7 @@ def show_type(t: Type) -> str:
     if k == "写像":
         return f"{t.key} → {show_type(t.value)}" + (f"（最大 {t.maxn} 件）" if t.maxn is not None else "")
     if k == "集合":
-        return f"{show_type(t.value)} の集合"
+        return f"{show_type(t.value)} の集合" + (f"（最大 {t.maxn} 件）" if t.maxn is not None else "")
     raise ValueError(k)
 
 

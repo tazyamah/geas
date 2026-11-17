@@ -28,7 +28,8 @@ needs_cargo = pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo �
 
 
 def chk(src):
-    return check(parse(src))
+    # お店アプリ（海外）は標準モジュール Gtin を use するので、その隣のファイルとして読む
+    return check(parse(src, str(Path(__file__).resolve().parent / "fixtures" / "overseas_shop" / "overseas_shop.geas") if 'use "gtin.geas"' in src else None))
 
 
 def msgs(ck, level):
@@ -339,9 +340,10 @@ def test_if_の中の確認は外へ持ち出さない():
     assert any("遷移" in d.code and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
-def test_if_の中に_let_は書けない():
+def test_if_の中に_let_を書ける():
+    # 2026-11-16 から：枝の中の let は書ける（名前は枝を抜けたら消える。試験は tests/test_reliability.py）
     ck = chk(mutate(CODE, GUARD, "  if order.status == Received {\n    let x = Order[order_id] else { return NoSuchOrder }\n  }\n"))
-    assert any("if の中" in m for m in msgs(ck, ERROR))
+    assert not any("if の中" in m for m in msgs(ck, ERROR))
 
 
 def test_条件つきの変更は_Rust_の_if_の中に出る():
@@ -412,7 +414,7 @@ def test_if_と_else_の両方で_return_すると_その後ろには届かな�
 
 def test_else_の中も書ける文は_if_の中と同じで_空の_else_は止まる():
     let_in = mutate(CODE, GUARD + TAIL, "  if order.total <= 0 {\n    return ZeroTotal\n  } else {\n    let x = Order[order_id] else { return NoSuchOrder }\n  }\n" + GUARD + TAIL)
-    assert any("else の中に書けるのは" in m for m in msgs(chk(let_in), ERROR))
+    assert not any("else の中" in m for m in msgs(chk(let_in), ERROR))  # 2026-11-16 から：枝の中にも let を書ける
     empty = mutate(CODE, TAIL, "  if order.total > 0 {\n    request Payment.charge(order_id, order.total, idempotency_key = order_id)\n  } else {\n  }\n  return Requested\n")
     assert any("else の中が空です" in m for m in msgs(chk(empty), ERROR))
 
@@ -648,9 +650,11 @@ def test_同じデータの別の束縛の確認も遷移で消える():
     assert any(d.code == "遷移" and "受付" in d.msg for d in ck.diags if d.level == ERROR)
 
 
-def test_書けない形の不変条件はエラーになる():
+def test_項目と定数を比べる不変条件は_減らすだけの処理なら示せる():
+    # 2026-11-16 から：同じ行の 2 項目（か項目と定数）の比較を、書き込みのたびに示す。前は「まだ検査できません」で止めていた形
     ck = chk(CODE + "\ninvariant Product: stock <= 100\n")
-    assert any("まだ検査できません" in m for m in msgs(ck, ERROR))
+    assert msgs(ck, ERROR) == []
+    assert dict(ck.invariant_status)["Product: stock <= 100"][0] == ("place_order", "証明済み（書く前に確かめている）")
 
 
 def test_項目の更新は型を確かめる():
@@ -1345,6 +1349,7 @@ result 置いた結果 {
   置いた(品ID: id)
 }
 library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"
+example 税込(100) == 110
 deed 置く {
   input 税抜: 税抜の限り required
   writes 品
@@ -1421,6 +1426,7 @@ result PutResult {
   Done(tray_id: id)
 }
 library triple(x: Count) -> Count from rust "std" "" call "x * 3" guarantee result >= x trust check "3 倍するだけ"
+example triple(1) == 3
 deed put_tray {
   input n: Count required
   writes Tray
@@ -1481,7 +1487,7 @@ fn main() { println!("{:?}", call(r#"{"name":"置く","ctx":{"new_品_id":"A"},"
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-2500:]
     assert r.stdout.startswith("Ok(") and '\\"価格\\":1100' in r.stdout, r.stdout
-    two = src + 'library other(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\n'
+    two = src + 'library other(x: 非負金額) -> 非負金額 from rust "serde_json" "1.0.0" call "x" guarantee result >= x trust check "そのまま返す"\nexample other(100) == 100\n'
     with pytest.raises(ValueError, match="版が2つ"):
         from geas.rustgen import library_deps
         library_deps(chk(two))
@@ -1912,7 +1918,7 @@ def test_vtimeはホストの境界で成分ごとに確かめ_未指定はnull(
     assert "未指定" in got[3] and "前半" in got[4] and "後半" in got[5], got[3:6]
 
 
-CONVERT = PART.replace('library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"', "convert 税込(x: 非負金額) -> 非負金額 = x + x")
+CONVERT = PART.replace('library 税込(x: 非負金額) -> 非負金額 from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけで、panic も繰り返しもしない"\nexample 税込(100) == 110', "convert 税込(x: 非負金額) -> 非負金額 = x + x")
 
 
 def test_convert_は式が定義で_外の部品も保証も要らない():
@@ -2730,7 +2736,8 @@ def test_海外店の例_つながりが戻ったら返事待ちの注文ごと�
     assert any("失敗の扱い" in m for m in msgs(chk(gone), ERROR)), msgs(chk(gone), ERROR)
 
 
-GTIN = """ltype Jan = text 13..13 of "0-9" check gtin
+GTIN = """use "gtin.geas"
+ltype Jan = Gtin.Gtin13
 ltype Plain = text 13..13 of "0-9"
 entity Item {
   item_id: id unique
@@ -2752,36 +2759,56 @@ result R {
   Missing
 }
 """
+GTIN_AT = str(EX.parent / "overseas_shop" / "gtin_demo.geas")  # 標準モジュール Gtin（gtin.geas）の隣にあるものとして読む
 
 
-def test_JANのチェックディジットは外から来る値を実行時に確かめ_確かめていない文字列は書けない():
-    ck = chk(GTIN)
+def gtin_chk(text):
+    return check(parse(text, GTIN_AT))
+
+
+def test_検査数字は標準モジュール_Gtin_の変換が境界で確かめ_確かめていない文字列は書けない():
+    ck = gtin_chk(GTIN)
     assert not msgs(ck, ERROR), msgs(ck, ERROR)
     rs = generate(ck)
-    assert 'check_gtin("jan"' in rs and "pub fn check_gtin" in rs
-    bad = chk(GTIN.replace("item.jan = jan", "item.jan = raw"))
-    assert any("検査数字" in m for m in msgs(bad, ERROR)), msgs(bad, ERROR)
+    assert "pub fn Gtin_read13(" in rs and "check_gtin" not in rs  # 確かめは geas の式から生成した変換で、組み込みの関数は無い
+    bad = gtin_chk(GTIN.replace("item.jan = jan", "item.jan = raw"))
+    assert any("変換" in m and "通った値と示せません" in m for m in msgs(bad, ERROR)), msgs(bad, ERROR)
 
 
-def test_check_gtin_は長さと文字種が合わないと書けない():
-    with pytest.raises(ParseError):
-        chk(GTIN.replace('ltype Jan = text 13..13 of "0-9" check gtin', 'ltype Jan = text 5..13 of "0-9" check gtin'))
-    with pytest.raises(ParseError):
-        chk(GTIN.replace('ltype Jan = text 13..13 of "0-9" check gtin', 'ltype Jan = text 13..13 check gtin'))
-    with pytest.raises(ParseError):
-        chk(GTIN.replace("check gtin", "check luhn"))
+def test_check_gtin_は言語から外れ_直し方が出る():
+    with pytest.raises(ParseError, match="標準モジュール Gtin"):
+        chk('ltype Jan = text 13..13 of "0-9" check gtin\n')
+
+
+def test_標準モジュールは_隣に置かなくても_同梱のものが使われる(tmp_path):
+    assert not msgs(chk(GTIN), ERROR)  # ファイルから読まなくても、同梱の標準モジュールは取り込める
+    f = tmp_path / "app.geas"
+    f.write_text(GTIN, encoding="utf-8")
+    assert not msgs(check(parse(GTIN, str(f))), ERROR)  # 隣に gtin.geas は無い
+    (tmp_path / "gtin.geas").write_text("module Gtin\nltype Other = int 0..1\n", encoding="utf-8")
+    with pytest.raises(Exception, match="Gtin13"):  # 隣に同じ名前のファイルがあれば、そちらが使われる
+        check(parse(GTIN, str(f)))
 
 
 @needs_cargo
-def test_check_gtin_は正しい13桁だけ通す(tmp_path):
-    ck = chk(OVERSEAS)
-    main = ('use geas_app::*;\nfn main() {\n'
-            '  assert!(check_gtin("j", "4901234567894").is_ok());\n'
-            '  assert!(check_gtin("j", "4901234567895").is_err());\n'
-            '  assert!(check_gtin("j", "490123456789a").is_err());\n}\n')
+def test_標準モジュール_Gtin_は_正しい検査数字だけ通す(tmp_path):
+    ck = gtin_chk(GTIN)
+    ok = {8: "49123456", 12: "012345678905", 13: "4901234567894", 14: "14901234567891"}
+    lines = []
+    for n, good in ok.items():
+        bad = good[:-1] + str((int(good[-1]) + 1) % 10)
+        lines += [f'  assert!(Gtin_read{n}("{good}").is_ok());', f'  assert!(Gtin_read{n}("{bad}").is_err());',
+                  f'  assert!(Gtin_read{n}("{good[:-1]}a").is_err());', f'  assert!(Gtin_read{n}("{good}0").is_err());']
+    main = "use geas_app::*;\nfn main() {\n" + "\n".join(lines) + "\n}\n"
     write_crate(ck, generate(ck), main, tmp_path)
     r = subprocess.run(["cargo", "run", "--quiet", "--offline"], cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+    # 検査器の側の評価（画面に直に書いた値の確かめ・拡張の事前の確かめが使う木）も、同じ判定をする
+    from geas.rawexpr import refusal, requires_tree
+    for n, good in ok.items():
+        req = requires_tree(ck.parts[f"Gtin_read{n}"])
+        assert refusal(req, good) is None and "検査数字" in refusal(req, good[:-1] + str((int(good[-1]) + 1) % 10))
+        assert "数字だけ" in refusal(req, good[:-1] + "a") and "桁" in refusal(req, good + "0")
 
 
 # ---- アプリ（サーバー・画面）向けの生成物 ----
@@ -3184,8 +3211,9 @@ def test_検査数字は_convert_の式で書け_型と引数の誤りは検査�
 
 
 @needs_cargo
-def test_convert_で書いた検査数字は組み込みの_check_gtin_と同じ判定をする(tmp_path):
-    from geas.check import valid_gtin
+def test_convert_で書いた検査数字は_手本と同じ判定をする(tmp_path):
+    def valid_gtin(s):  # 手本：右から 1 倍・3 倍・1 倍…の和が 10 の倍数
+        return sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(reversed(s))) % 10 == 0
 
     ck = chk(JAN_SRC)
     cases = ["4901234567894", "4901234567895", "4006381333931", "4006381333932", "0000000000000", "0000000000001",
@@ -3371,7 +3399,10 @@ def test_足し引きの範囲は_saturating_か_trust_assume_で人が引き受
     with pytest.raises(ParseError, match="理由"):
         parse(ACC_SRC.replace("c.hits += step", "c.hits += step saturating"))
     with pytest.raises(ParseError, match="assume"):
-        parse(ACC_SRC.replace("c.hits += step", 'c.hits += step trust verify "x"'))
+        parse(ACC_SRC.replace("c.hits += step", 'c.hits += step trust dangerous "x"'))
+    # 2026-11-16 から：prove・check・verify は「途中の計算」の trust として読む。項目の範囲の確認は外れず、計算が示せているなら要らないと言う
+    calc = msgs(chk(ACC_SRC.replace("c.hits += step", 'c.hits += step trust verify "x"')), ERROR)
+    assert any("収まると示せません" in m for m in calc) and any("trust verify は要りません" in m for m in calc)
     # 下限の 0 で止める -= も同じ形で書ける
     assert chk(ACC_SAT.replace("+=", "-=")).ready
     # 人の保証の一覧に、場所と理由つきで出る

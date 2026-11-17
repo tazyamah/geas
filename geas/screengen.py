@@ -47,7 +47,8 @@ def query_def(ck, q, show) -> dict:
         cols.append({"name": c.name, "label": show(c.name), **type_def(ck, column_type(ck, q, c), show)})
     if not cols:  # 列の指定が無い問い合わせは、IDの列だけ
         cols = [{"name": "id", "label": "ID", "kind": "id"}]
-    out = {"inputs": [{"name": n, **type_def(ck, t, show)} for n, t in q.inputs], "columns": cols}
+    # entity：行の実体。PUT・DELETE のとき、画面が見せている行の版（_etag）を、この名前で探す
+    out = {"inputs": [{"name": n, **type_def(ck, t, show)} for n, t in q.inputs], "columns": cols, "entity": q.target}
     choices = order_choices(q)
     if choices:  # 呼ぶ側が選べる並び（画面では、一覧の上の選ぶ欄になる。1 つ目が、選ばないときの並び）
         kinds = {f.name: f.type.kind for f in ck.data[q.target].fields} if q.target in ck.data else {}

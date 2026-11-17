@@ -60,14 +60,25 @@ class Server:
         self.proc.kill()
         self.proc.wait()
 
-    def call(self, method, path, body=None):
+    def call(self, method, path, body=None, if_match=None):
         req = urllib.request.Request(self.base + path, method=method, data=None if body is None else json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json"})
+                                     headers={"Content-Type": "application/json", **({"If-Match": if_match} if if_match else {})})
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
+                self.etag = r.headers.get("ETag")
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
+            self.etag = e.headers.get("ETag")
             return e.code, json.loads(e.read())
+
+    def tag(self, pid):
+        """一覧で読んだ、その小包の行の版（PUT・DELETE の If-Match に載せる値）。行が無ければ、どの行の版でもない値"""
+        row = self.parcels().get(pid)
+        return f'"{row["_etag"]}"' if row else '"none"'
+
+    def write(self, method, path, body=None):
+        """PUT・DELETE：一覧で読んだ行の版を If-Match に載せて呼ぶ"""
+        return self.call(method, path, body, if_match=self.tag(path.rsplit("/", 1)[1]))
 
     def mock(self, **replies):
         """模擬の返事の設定。返事までは 5 秒にして、時計を進めて返させる（待たない）"""
@@ -275,17 +286,41 @@ def test_update_destroy_入れ子は_宣言のURLと状態で動く(server):
     pid, _ = server.accept("light")
     server.advance(6)  # 返事がそろって発送済みになる
     assert server.parcels()[pid]["status"] == "Shipped"
-    assert server.call("PUT", f"/parcels/{pid}", {"kind": "heavy"})[0] == 200  # update：URL の ID が処理の ID の入力になる
+    assert server.write("PUT", f"/parcels/{pid}", {"kind": "heavy"})[0] == 200  # update：URL の ID が処理の ID の入力になる
     assert server.parcels()[pid]["kind"] == "heavy"
-    assert server.call("PUT", "/parcels/parcel-9999", {"kind": "heavy"})[0] == 404
-    assert server.call("PUT", f"/parcels/{pid}", {"kind": ""})[0] == 400
+    assert server.write("PUT", "/parcels/parcel-9999", {"kind": "heavy"})[0] == 404
+    assert server.write("PUT", f"/parcels/{pid}", {"kind": ""})[0] == 400
     code, j = server.call("GET", f"/parcels/{pid}/details")  # 入れ子：親の ID が問い合わせの入力になる
     assert code == 200 and [r["parcel_id"] for r in j["rows"]] == [pid]
     other, _ = server.accept("light")
-    assert server.call("DELETE", f"/parcels/{other}")[0] == 409  # 消してよい状態（発送済み）ではない
-    assert server.call("DELETE", "/parcels/parcel-9999")[0] == 404
-    assert server.call("DELETE", f"/parcels/{pid}")[0] == 200  # destroy
+    assert server.write("DELETE", f"/parcels/{other}")[0] == 409  # 消してよい状態（発送済み）ではない
+    assert server.write("DELETE", "/parcels/parcel-9999")[0] == 404
+    assert server.write("DELETE", f"/parcels/{pid}")[0] == 200  # destroy
     assert pid not in server.parcels() and other in server.parcels()
+
+
+def test_PUT_と_DELETE_は_読んだときの行の版が要る(server):
+    """書き込みの版の確認。If-Match が無ければ 428、今の版と違えば 412 で、どちらも処理を走らせない。版は、一覧の行の _etag"""
+    pid, _ = server.accept("light")
+    seen = server.tag(pid)
+    code, j = server.call("PUT", f"/parcels/{pid}", {"kind": "heavy"})
+    assert code == 428 and "If-Match" in j["error"] and server.etag is None  # 無い：断る。今の版は教えない（版は、その行を読めた人だけが持つ）
+    assert server.call("DELETE", f"/parcels/{pid}")[0] == 428 and server.parcels()[pid]["kind"] == "light"
+    assert server.call("PUT", "/parcels/parcel-9999", {"kind": "heavy"})[0] == 428  # 行が無くても、まず版を求める
+    assert server.call("PUT", f"/parcels/{pid}", {"kind": "heavy"}, if_match=seen)[0] == 200
+    after = server.etag
+    assert after and after != seen and after == server.tag(pid)  # 書き換えたあとの版を返す。一覧の版も変わる
+    # 前に読んだ版では、もう書けない（別の人が先に書き換えた、と同じ）
+    code, j = server.call("PUT", f"/parcels/{pid}", {"kind": "small"}, if_match=seen)
+    assert code == 412 and "変わっています" in j["error"] and server.parcels()[pid]["kind"] == "heavy"
+    assert server.call("DELETE", f"/parcels/{pid}", if_match=seen)[0] == 412 and pid in server.parcels()
+    assert server.call("PUT", f"/parcels/{pid}", {"kind": "small"}, if_match="*")[0] == 412  # どの版でもよい、は無い
+    assert server.call("PUT", f"/parcels/{pid}", {"kind": "small"}, if_match="W/" + after)[0] == 412
+    # 並べて書いた版のどれかが合えばよい。中身が元に戻れば、版も元に戻る（中身から作る値）
+    assert server.call("PUT", f"/parcels/{pid}", {"kind": "light"}, if_match=f'"r0", {after}')[0] == 200
+    assert server.tag(pid) == seen
+    # POST の命令（作成）には要らない
+    assert server.accept("light")[0] != pid
 
 
 def test_どれか1つの返事で進むトリガは_1つ届けば進み_届かなければ期限で進む(server):
@@ -568,7 +603,7 @@ def test_保存はメモリに持つが_別のサーバーやDBを直接書き�
     try:
         pid, _ = server.accept("light")
         assert other.parcels()[pid]["kind"] == "light"  # 別のサーバーが作った行が見える
-        assert other.call("PUT", f"/parcels/{pid}", {"kind": "heavy"})[0] == 200
+        assert other.write("PUT", f"/parcels/{pid}", {"kind": "heavy"})[0] == 200
         assert server.parcels()[pid]["kind"] == "heavy"  # 別のサーバーが書き換えた行が見える
         db = sqlite3.connect(server.db)
         row = json.loads(db.execute("SELECT v FROM Parcel WHERE k = ?", (pid,)).fetchone()[0])
@@ -576,7 +611,7 @@ def test_保存はメモリに持つが_別のサーバーやDBを直接書き�
         db.commit()
         db.close()
         assert server.parcels()[pid]["kind"] == "medium"  # DB を直接書き換えても見える
-        assert server.call("PUT", f"/parcels/{pid}", {"kind": "small"})[0] == 200
+        assert server.write("PUT", f"/parcels/{pid}", {"kind": "small"})[0] == 200
         got = other.parcels()[pid]
         assert (got["kind"], got["fee"]) == ("small", row["fee"])
         # DB にも、処理が変えた行の新しい内容が書かれている

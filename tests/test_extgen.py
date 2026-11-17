@@ -14,7 +14,7 @@ CODE = (DIR / "overseas_shop.geas").read_text()
 
 
 def chk(src):
-    return check(parse(src))
+    return check(parse(src, str(Path(__file__).resolve().parent / "fixtures" / "overseas_shop" / "overseas_shop.geas")))  # 標準モジュール Gtin（use "gtin.geas"）の隣のファイルとして読む
 
 
 def test_pageを持つ画面は拡張として生成される(tmp_path):
@@ -54,7 +54,7 @@ def test_汎用の_reader_が生成物に入り_読み方は_defs_に出る(tmp_
     write_ext(ck, tmp_path)
     assert (tmp_path / "ext" / "reader.js").read_text().startswith("// ページから値を読む（汎用）")
     d = json.loads((tmp_path / "ext" / "defs.js").read_text().split("=", 1)[1].rstrip().rstrip(";"))
-    assert d["read"]["subject"] == "ASIN" and d["read"]["rows"] == ["JAN", "EAN", "GTIN"] and d["input"]["check"] == "gtin"
+    assert d["read"]["subject"] == "ASIN" and d["read"]["rows"] == ["JAN", "EAN", "GTIN"] and len(d["input"]["requires"]) == 3  # 入力の型（標準モジュール Gtin）の変換の、拒否の条件（桁数・数字だけ・検査数字）
     assert d["read"]["lookup"]["B0SHOPTEA1"] == "4901234567894"
 
 

@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 
 from .ast import *  # noqa: F401,F403
-from .rest import first_by_name, internal_targets, path_inputs, post_queries, q_inputs, q_types, routes as rest_routes
+from .rest import first_by_name, internal_targets, path_inputs, post_queries, q_inputs, q_types, routes as rest_routes, versioned
 
 
 def class_of(chars: tuple) -> str:
@@ -114,6 +114,10 @@ def tool_defs(ck) -> list[dict]:
                     props[n] = {**type_schema(ck, replace_opt(t)), "description": show(n)}
                     if not t.optional:
                         required.append(n)
+        rows = versioned(p)
+        if kind in ("update", "destroy") and res in rows:  # 書き込みの版の確認：読んだときの行の版を渡す（サーバーが If-Match で受ける）
+            props["if_match"] = {"type": "string", "description": "読んだときの行の版。一覧の行の _etag か、1 件の読み出しの答えの ETag。読んだあとに行が変わっていたら、書き込まずに 412 を返す"}
+            required.append("if_match")
         desc = f"{show(target)}（{method} {path}）"
         if statuses:
             desc += "。結果：" + "、".join(f"{show(k)}→{v}" for k, v in dict(statuses).items())
@@ -123,7 +127,8 @@ def tool_defs(ck) -> list[dict]:
             "description": desc,
             "inputSchema": {"type": "object", "properties": props, "required": required},
             "annotations": {"readOnlyHint": method == "GET" or (kind == "index" and target in posts), "destructiveHint": method == "DELETE", "idempotentHint": method in ("GET", "PUT", "DELETE")},
-            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps] if method != "GET" else [], **({"q": q_names} if q_names else {}), **({"post_q": True} if kind == "index" and target in posts else {})},
+            "geas": {"method": method, "path": path, "body": [n for n in props if n not in caps and n != "if_match"] if method != "GET" else [],
+                     **({"if_match": True} if "if_match" in props else {}), **({"etag": True} if kind == "show" and res in rows else {}), **({"q": q_names} if q_names else {}), **({"post_q": True} if kind == "index" and target in posts else {})},
         })
     names = [t["name"] for t in out]
     if len(set(names)) != len(names):

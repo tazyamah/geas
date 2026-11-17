@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """コードから「検査可能な仕様書」（③）を生成する。突合では構造のまま使い、人向けには Markdown にする。"""
-from .rest import screen_url
+from .rest import IF_MATCH_NOTE, screen_url
 from .ast import *  # noqa: F401,F403
 from .check import Checker, VERIFIED_STORES, phys, tok_of
 
@@ -172,7 +172,9 @@ def step_lines(body, depth: int = 0) -> list[str]:
                     out.append(pad + "そうでなければ：")
                     out += step_lines(st.els, depth + 1)
         elif isinstance(st, SetField):
-            if st.op in ("+=", "-=") and isinstance(st.e, Bin):
+            if st.op in ("add", "remove"):
+                text = f"{st.var}.{st.f} {'に 1 つ足す' if st.op == 'add' else 'から 1 つ外す'}： {tell(st.e)}"
+            elif st.op in ("+=", "-=") and isinstance(st.e, Bin):
                 text = f"{st.var}.{st.f} {'に足す' if st.op == '+=' else 'から引く'}： {tell(st.e.r)}"
             else:
                 text = f"{st.var}.{st.f} = {tell(st.e)}"
@@ -254,6 +256,11 @@ def actor_rows(p, route_rows) -> list[tuple]:
     return out + [("誰でも", "（要らない）", "、".join(u for u, w in urls if w == [ANYONE]) or "なし")]
 
 
+# 処理が必ず止まること（仕様書に 1 回だけ書く）
+STOPS_NOTE = ("処理は必ず止まります。繰り返しは、件数の上限がある集まりを回すものだけです。"
+              "止まらないことがありうるのは、「人の保証」に出ている根の言語のライブラリ（library）の中だけです。")
+
+
 def build(ck: Checker) -> dict:
     from .rest import INTERNAL, OPEN, actors_text, internal_targets, post_queries, routes, shown_path
     spec = build_raw(ck)
@@ -281,6 +288,10 @@ def build_raw(ck: Checker) -> dict:
         (d.name, f.name, show_type(f.type), "" if f.type.optional else "○", "○" if f.unique else "")
         for d in p.data
         for f in d.fields
+    ] + [  # 定義した項目：保存せず、読むたびに同じ行のほかの項目から決まる
+        (d.name, f.name, f"{show_type(f.type)}（保存しない。= {show(f.expr)}）", "○", "")
+        for d in p.data
+        for f in d.derived
     ]
     states, trans, rejects = [], [], []
     for d in p.data:
@@ -365,6 +376,10 @@ def build_raw(ck: Checker) -> dict:
     spec["人の保証"] = [(x.name, n, show_type(t), {"verify": "検証ビルドだけ確かめる", "assume": "確かめない", "dangerous": "確かめない（危険：未検査の raw も受ける）"}[t.trust[0]], t.trust[1])
                     for x in [*p.processes, *p.queries] for n, t in x.inputs if t.trust]
     def migration_row(version, op, dn, fn, arg):
+        if op == "rename_entity":
+            return (f"版 {version}", "実体の名前を変える", dn, f"行はそのまま、実体 {arg[1]} に移る")
+        if op == "drop_entity":
+            return (f"版 {version}", "実体を消す", dn, "行はすべて捨てる")
         if op == "rename":
             return (f"版 {version}", "名前を変える", f"{dn}.{fn}", f"値はそのまま、項目 {arg[1]} に移る")
         if op == "drop":
@@ -387,11 +402,17 @@ def build_raw(ck: Checker) -> dict:
             ft = next(y.type for y in ck.data[d].fields if y.name == f)
             spec["人の保証"].append((x.name, f"{target} {op}", show_type(ft),
                                   "範囲の端で止まる" if mode == "saturating" else "確かめない（届くと異常で止まる）", why))
+        for expr, level, why in ck.infos[x.name].calc_trusts:  # 途中の計算が収まると示せず、人が引き受けた文
+            spec["人の保証"].append((x.name, f"途中の計算 {expr}", "収まると示せていない",
+                                  {"check": "毎回確かめる（溢れたら異常で止まる）", "verify": "検証ビルドだけ確かめる（通常ビルドでは溢れた値がそのまま使われる）",
+                                   "assume": "確かめない（溢れた値がそのまま使われる）"}[level], why))
     spec["拡張"] = [(sc.name, ", ".join(sc.pages), ", ".join(sc.shows), ", ".join(n for n, _ in ck.queries[sc.shows[0]].inputs), read_text(sc.read)) for sc in p.screens if sc.pages and sc.shows and sc.shows[0] in ck.queries]
     spec["画面デザイン"] = [(sc.name, k, v) for sc in p.screens for k, v in sc.design.items()]
     spec["不変条件"] = [text for text, _ in ck.invariant_status]
     spec["部品"] = [(pt.name, ", ".join(f"{n}: {show_type(t)}" for n, t in pt.params), show_type(pt.ret),
-                   "= " + show(pt.body) if pt.body is not None else (show(pt.guarantee) if pt.guarantee is not None else "戻り値の範囲"))
+                   # raw から変換する convert は、断る条件（成り立たなければ入力不正にする条件と、その理由）も出す
+                   "".join(f"{show(c)} でなければ断る（{why}）。 " for c, why in pt.requires) + "= " + show(pt.body) if pt.body is not None
+                   else (show(pt.guarantee) if pt.guarantee is not None else "戻り値の範囲"))
                   for pt in p.parts if not pt.external or pt.name in ck.used_libs]
     from .partcheck import load_ledger, status_text
     ledger = load_ledger(getattr(ck, "code_path", None))  # 部品の境界値の検査（geas parts --record）の結果。宣言を実際に呼んで確かめたかを添える
@@ -399,7 +420,7 @@ def build_raw(ck: Checker) -> dict:
         if pt.external and pt.name in ck.used_libs:
             crate, version, expr, level, why = pt.lib
             where = crate if crate == "std" else f"{crate} {version}"
-            spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}", show_type(pt.ret),
+            spec["人の保証"].append((f"（ライブラリ {pt.name}）", f"Rust の {where} を呼ぶ: {expr}。具体例: " + "、".join(f"{pt.name}({', '.join(show(a) for a in args)}) == {show(want)}" for args, want, _ in pt.examples), show_type(pt.ret),
                                   {"check": "戻り値を毎回確かめる", "verify": "戻り値を検証ビルドだけ確かめる", "assume": "戻り値を確かめない"}[level]
                                   + "（panic は異常で止まる。無限ループ・メモリ枯渇は防げない）。" + status_text(pt, ledger), why))
     spec["保証の強さ"] = guarantee_levels(ck, spec)
@@ -502,6 +523,7 @@ def render(ck: Checker, spec: dict, name="") -> str:
         rs = " / ".join(f"{v}→{d}" for v, d in x["結果"])
         out.append(f"| {x['処理']} | {', '.join(x['入力'])} | {', '.join(x['読む'])} | {', '.join(x['書く'])} | {rs} | {', '.join(x['外部']) or 'なし'} |")
     out += ["", "## 処理の中身（上から順に進む。「結果」に着いたら、そこで終わる）"]
+    out += ["", STOPS_NOTE]
     for x in spec["処理"]:
         out += ["", f"### {x['処理']}", ""]
         if x["参照"]:
@@ -575,6 +597,8 @@ def render(ck: Checker, spec: dict, name="") -> str:
         out += ["", "## ルート（URL。結果の種類ごとの HTTP の状態つき。「内部」は流れの途中の処理で、サーバーは外に出さない）", "",
                 "| メソッド | 経路 | 動作 | 呼ぶもの | 結果→状態 | 外から |" + (" 呼べる人 |" if spec.get("役割") else ""), "|---|---|---|---|---|---|" + ("---|" if spec.get("役割") else "")]
         out += [f"| {a} | {b} | {c} | {d} | {e} | {f} |" + (f" {g} |" if spec.get("役割") else "") for a, b, c, d, e, f, g in spec["ルート"]]
+        if any(a in ("PUT", "DELETE") for a, *_ in spec["ルート"]):
+            out += ["", IF_MATCH_NOTE + "。"]
     if spec.get("POSTの問い合わせ"):
         out += ["", f"## POST で受ける問い合わせ（{POST_NOTE}）", "", "| URL | 問い合わせ | POST で受ける理由 |", "|---|---|---|"]
         out += [f"| POST {a} | {b} | {c} |" for a, b, c in spec["POSTの問い合わせ"]]

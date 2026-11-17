@@ -158,10 +158,11 @@ def test_倉庫が在庫不足を返すと返金して取り消し_決済が拒�
 
 def test_外から来る値は境界で確かめる(server):
     b = server["base"]
-    assert call(b, "GET", "queries/price_by_jan?jan=4901234567894")[1]["rows"] == [
+    # 商品は PUT・DELETE で書き換える実体なので、各行に行の版（_etag）が付く。ここでは列の値だけを比べる
+    assert [{k: v for k, v in r.items() if k != "_etag"} for r in call(b, "GET", "queries/price_by_jan?jan=4901234567894")[1]["rows"]] == [
         {"currency": "JPY", "price": 680, "product_id": "tea-jp"}, {"currency": "USD", "price": 699, "product_id": "tea-us"}]
     code, j = call(b, "GET", "queries/price_by_jan?jan=4901234567895")
-    assert code == 400 and "チェックディジット" in j["error"]
+    assert code == 400 and "検査数字" in j["error"]
     assert call(b, "GET", "queries/price_by_jan?jan=12345")[0] == 400
     assert order(b, "c-999", {"tea-jp": 1})["result"] == "NoSuchCustomer"
     code, j = call(b, "POST", "deeds/place_order", {"input": {"customer_id": "c-001", "items": {"tea-jp": 0}, "ship_to": {"country": "JP", "postal_code": "1", "line": "x"}}, "slots": {"currency": "JPY"}})

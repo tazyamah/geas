@@ -13,13 +13,6 @@ from .names import label_gaps, name_problems
 from .parser import parse_chars
 
 
-def valid_gtin(s: str) -> bool:
-    """JAN・EAN・UPC の検査数字（右から2桁目を3倍、次を1倍…の合計が10の倍数）。長さは 8・12・13・14"""
-    if not s.isdigit() or len(s) not in (8, 12, 13, 14):
-        return False
-    return sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(reversed(s))) % 10 == 0
-
-
 ERROR, WARN, QUESTION = "エラー", "警告", "問い"
 METHODS = ("floor", "ceil", "half_up")
 
@@ -134,6 +127,7 @@ def phys(t: Type) -> str:
 @dataclass
 class ProcInfo:
     name: str
+    derived: dict = field(default_factory=dict)  # id(定義した項目を読む式) → 開いた式（x.held → x.stock + x.reserved）。生成はこちらを出す
     field_reads: set = field(default_factory=set)
     exist_reads: set = field(default_factory=set)
     writes: set = field(default_factory=set)
@@ -149,6 +143,8 @@ class ProcInfo:
     scopes: list = field(default_factory=list)  # 1 件引きで通した範囲の名前（書いた順、重なりなし）
     caller: bool = False  # 本人で絞る範囲を通す（サーバーが、呼んだ本人の ID を入力 caller に入れる）
     guards: list = field(default_factory=list)  # 足し引きの範囲を人が引き受けた文：("データ.項目", 書き方, "saturating"|"assume", 理由)
+    calc: dict = field(default_factory=dict)  # id(足す・引く・掛ける式) → "prove"（収まると示した）|"check"|"verify"|"assume"（人が引き受けた段階）
+    calc_trusts: list = field(default_factory=list)  # 途中の計算を人が引き受けた文：(式, "check"|"verify"|"assume", 理由)
 
     @property
     def reads(self) -> set:
@@ -222,6 +218,8 @@ class Checker:
             for f in d.fields:
                 f.type.optional = not (f.required or (f.type.kind == "ID" and f.unique) or f.type.kind == "名前")
         self.inv_rows: dict[int, dict[str, list[tuple[bool, str]]]] = {}  # 不変条件 → 処理 → (示せたか, 理由)
+        self.rel_invs: list[dict] = []  # 項目どうしを比べる不変条件と、定義した項目の範囲：{i, data, when, cons, text}。cons は「式 <= 0」の並び
+        self.collect_rel_invs()
         self._def_lines = None  # (種類, 名前) → 定義の行。指摘に行番号を付けるため（line_of で初めて作る）
 
     def d(self, level, code, where, msg, line=0):
@@ -294,6 +292,93 @@ class Checker:
         if used:
             self.d(ERROR, "モジュール", proc.name, f"モジュールの処理は、入力から結果を返すだけです（{'・'.join(used)}ことはできません）")
 
+    # ---- 項目どうしを比べる不変条件と、定義した項目 ----
+    def flin(self, data: str, e):
+        """同じ行の数の項目の、足し算・引き算の式を（項目 → 係数, 定数）にする。定義した項目は、その式に開く。書けない形は None"""
+        d = self.data.get(data)
+        if d is None:
+            return None
+        if isinstance(e, Num):
+            return {}, e.v
+        if isinstance(e, Name):
+            if any(f.name == e.n for f in d.fields):
+                return {e.n: 1}, 0
+            dv = next((f for f in d.derived if f.name == e.n), None)
+            return None if dv is None else self.flin_stored(d, dv.expr)
+        if isinstance(e, Bin) and e.op in ("+", "-"):
+            a, b = self.flin(data, e.l), self.flin(data, e.r)
+            return None if a is None or b is None else lin_add(a, b, 1 if e.op == "+" else -1)
+        return None
+
+    def flin_stored(self, d, e):
+        """定義した項目の式：保存する項目と数だけ（定義した項目は使えない＝入れ子にしない）"""
+        if isinstance(e, Num):
+            return {}, e.v
+        if isinstance(e, Name):
+            return ({e.n: 1}, 0) if any(f.name == e.n for f in d.fields) else None
+        if isinstance(e, Bin) and e.op in ("+", "-"):
+            a, b = self.flin_stored(d, e.l), self.flin_stored(d, e.r)
+            return None if a is None or b is None else lin_add(a, b, 1 if e.op == "+" else -1)
+        return None
+
+    def collect_rel_invs(self):
+        for i, inv in enumerate(self.p.invariants):
+            if self.inv_forms[i] is not None or inv.data not in self.data:
+                continue
+            c, when = inv.cond, None
+            if isinstance(c, Implies) and isinstance(c.l, Bin) and c.l.op == "==" and isinstance(c.l.l, Name) and isinstance(c.l.r, Name):
+                when, c = (c.l.l.n, c.l.r.n), c.r
+            if not (isinstance(c, Bin) and c.op in ("<=", "<", ">=", ">", "==")):
+                continue
+            a, b = self.flin(inv.data, c.l), self.flin(inv.data, c.r)
+            if a is None or b is None:
+                continue
+            le, ge = lin_add(a, b, -1), lin_add(b, a, -1)  # 左 - 右、右 - 左
+            cons = {"<=": [le], "<": [(le[0], le[1] + 1)], ">=": [ge], ">": [(ge[0], ge[1] + 1)], "==": [le, ge]}[c.op]
+            self.rel_invs.append({"i": i, "data": inv.data, "when": when, "cons": cons, "text": f"{inv.data}: {show(inv.cond)}"})
+        for d in self.p.data:  # 定義した項目の型の範囲も、いつも成り立つ約束（元の項目の範囲だけで言えるなら、確かめは要らない）
+            for f in d.derived:
+                form = self.flin_stored(d, f.expr)
+                if form is None or f.type.kind not in ("整数", "金額"):
+                    continue
+                lo, hi = iv_of(f.type) if f.type.range is not None else (None, None)
+                ivs = {x.name: iv_of(x.type) for x in d.fields if x.name in form[0]}
+                elo, ehi = lin_bounds(form, ivs)
+                cons = []
+                if hi is not None and (ehi is None or ehi > hi):
+                    cons.append((form[0], form[1] - hi))
+                if lo is not None and (elo is None or elo < lo):
+                    cons.append(({k: -v for k, v in form[0].items()}, lo - form[1]))
+                if cons:
+                    self.rel_invs.append({"i": None, "data": d.name, "when": None, "cons": cons,
+                                          "text": f"{d.name}: {f.name}（= {show(f.expr)}）が範囲{show_range(f.type.range)}に収まる"})
+
+    def check_derived(self):
+        """定義した項目（名前: 型 = 式）：同じ行の、必須の数の項目の足し算・引き算だけ。定義した項目を別の定義には使えない"""
+        for d in self.p.data:
+            names = [f.name for f in d.fields]
+            for f in d.derived:
+                where = f"データ {d.name}"
+                if f.name in names or sum(1 for x in d.derived if x.name == f.name) > 1:
+                    self.d(ERROR, "名前", where, f"項目「{f.name}」が2つあります", f.line)
+                if f.unique or f.required:
+                    self.d(ERROR, "項目", where, f"定義した項目「{f.name}」に unique・required は付けられません（保存せず、いつも式から決まります）", f.line)
+                if f.type.kind not in ("整数", "金額"):
+                    self.d(ERROR, "型", where, f"定義した項目「{f.name}」の型は、整数か金額です", f.line)
+                    continue
+                used = names_in(f.expr)
+                nested = sorted(n for n in used if any(x.name == n for x in d.derived))
+                if nested:
+                    self.d(ERROR, "項目", where, f"定義した項目「{f.name}」の式に、定義した項目「{nested[0]}」は使えません（入れ子にはしません。保存する項目で書いてください）", f.line)
+                    continue
+                if self.flin_stored(d, f.expr) is None:
+                    self.d(ERROR, "項目", where, f"定義した項目「{f.name}」の式に書けるのは、同じ行の数の項目と数の、足し算と引き算だけです（{show(f.expr)}）", f.line)
+                    continue
+                for n in sorted(used):
+                    x = next(x for x in d.fields if x.name == n)
+                    if x.type.kind != f.type.kind or x.type.optional or (x.type.kind == "金額" and x.type.unit != f.type.unit):
+                        self.d(ERROR, "型", where, f"定義した項目「{f.name}」の式の「{n}」は、必須（required）で、同じ種類（{'金額は同じ通貨' if f.type.kind == '金額' else '整数'}）の項目にしてください", f.line)
+
     # ---- 全体 ----
     def run(self):
         if self.strict_names:
@@ -305,6 +390,7 @@ class Checker:
                 self.diags.append(Diag(WARN, "表示名", where, f"「{self.p.origin.get(n, (None, n))[1]}」に表示名（直前の /// ）がありません。仕様書には名前のまま出ます",
                                        self.name_line(where, n)))
         self.check_defs()
+        self.check_derived()
         for proc in self.p.processes:
             self.infos[proc.name] = ProcChecker(self, proc).run()
             self.check_module_deed(proc, self.infos[proc.name])
@@ -378,6 +464,22 @@ class Checker:
         for n in dict.fromkeys(n for n in names if names.count(n) > 1):
             self.d(ERROR, "名前", where, f"{what}「{n}」が2つ以上あります")
 
+    def check_examples(self, pt, where):
+        """library の具体例：1 つは必須。引数の数と、値の種類・範囲が宣言に合うこと（合っているかを実際に呼んで比べるのは geas parts）"""
+        if not pt.examples:
+            self.d(ERROR, "保証", where, f"library には具体例が要ります（example {pt.name}(値, …) == 期待する値 を 1 行以上。"
+                   "geas parts が実際に呼んで比べ、仕様書の「人の保証」に出ます）")
+            return
+        for args, want, ln in pt.examples:
+            call = f"{pt.name}({', '.join(show(a) for a in args)})"
+            if len(args) != len(pt.params):
+                self.d(ERROR, "保証", where, f"具体例 {call} の引数は {len(args)} 個ですが、宣言は {len(pt.params)} 個です", ln)
+                continue
+            for (n, t), v in [*zip(pt.params, args), (("戻り値", pt.ret), want)]:
+                why = example_mismatch(t, v)
+                if why:
+                    self.d(ERROR, "保証", where, f"具体例 {call} の {n}（{show(v)}）が、型 {show_type(t)} に合いません（{why}）", ln)
+
     def check_part(self, pt: Part):
         """部品の宣言。保証の式は、引数と result だけを使う、真偽の式"""
         where = f"部品 {pt.name}"
@@ -428,7 +530,7 @@ class Checker:
                 if (r.lo is not None and (lo is None or lo < r.lo)) or (r.hi is not None and (hi is None or hi > r.hi)):
                     self.d(ERROR, "範囲", where, f"変換の結果が戻り値の範囲{show_range(r)}に収まると示せません"
                            f"（式の範囲 {iv_show((lo, hi))}）。引数の型か式を見直してください")
-            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None or pt.ret.check is not None):
+            elif pt.ret.kind == "文字列" and (pt.ret.range is not None or pt.ret.chars is not None):
                 self.d(ERROR, "範囲", where, "長さや文字種が決まっている文字列を返す変換は、まだ静的に示せません")
             self.part_types.update(pc.info.types)
             return
@@ -439,6 +541,11 @@ class Checker:
             self.d(ERROR, "名前", where, f"クレート {crate} の版「{version}」が読めません（例：\"0.10\"。版は固定します）")
         if "unsafe" in re.findall(r"[A-Za-z_]+", expr):
             self.d(ERROR, "保証", where, "call の式に unsafe は書けません（生成物は unsafe を許していません）")
+        loops = sorted(set(re.findall(r"[A-Za-z_]+", expr)) & {"loop", "while", "for", "fn"})
+        if loops or re.search(r"(^|[(,=])\s*(move\s+)?\|", expr):
+            self.d(ERROR, "保証", where, f"call の式に{'・'.join(loops) or 'クロージャ'}は書けません（部品の包みの側では、引数を渡してライブラリを呼ぶだけにします。"
+                   "繰り返しは、geas の側で上限つきの集まりを回す for や sum で書きます）")
+        self.check_examples(pt, where)
         if pt.guarantee is None:
             if pt.ret.kind in ("整数", "金額") and pt.ret.range is None or pt.ret.kind == "文字列" and pt.ret.range is None and pt.ret.chars is None and not pt.ret.read:
                 self.d(ERROR, "保証", where, "戻り値の範囲（型の範囲・文字種）か guarantee のどちらかで、戻り値を確かめられるようにしてください")
@@ -587,6 +694,24 @@ class Checker:
                 name = arg2[1]
         return name
 
+    def migration_norm(self) -> list:
+        """migration_steps と同じ並びで、項目の手順の実体を「最後の名前」に直したもの（実体ごと消えるなら None）。実体の手順は、実体を None にする"""
+        steps = self.migration_steps()
+        return [(v, op, None if op in ("rename_entity", "drop_entity") else self.entity_final(steps, i, dn), fn, arg, line)
+                for i, (v, op, dn, fn, arg, line) in enumerate(steps)]
+
+    @staticmethod
+    def entity_final(steps: list, i: int, dn: str):
+        """i 番目の手順の時点での実体の名前 dn の、最後の名前。あとの手順で実体の名前が変われば追い、実体ごと消されたら None"""
+        for _, op2, dn2, _, arg2, _ in steps[i + 1:]:
+            if dn2 != dn:
+                continue
+            if op2 == "drop_entity":
+                return None
+            if op2 == "rename_entity":
+                dn = arg2[1]
+        return dn
+
     def check_migrations(self):
         """migration：版は 2 から 1 ずつ増える。手順を上から順に当てた結果が、今の実体の項目と合っていること。
         add の値は、その項目（あとで名前が変わるなら、変わった先）の型と範囲に入っていること"""
@@ -596,15 +721,35 @@ class Checker:
                 self.d(ERROR, "移行", where, f"版は 2 から 1 ずつ増やします（ここは {i + 2} のはずです）。前の migration は消さずに残します", m.line)
             if not m.steps:
                 self.d(ERROR, "移行", where, "中身がありません（add 実体.項目 = 値、rename 実体.項目 to 新しい名前、drop 実体.項目）", m.line)
-        steps = self.migration_steps()
+        raw = self.migration_steps()
+        norm = self.migration_norm()
         live: set = set()  # migration が作って、まだ消えていない項目
-        for i, (version, op, dn, fn, arg, line) in enumerate(steps):
+        for i, (version, op, dn, fn, arg, line) in enumerate(raw):
+            steps = raw
             where = f"migration {version}"
+            if op in ("rename_entity", "drop_entity"):
+                # あとの手順が、同じ名前の実体をもう一度作るか（rename entity の先）
+                again = any(op2 == "rename_entity" and arg2[1] == dn for _, op2, _, _, arg2, _ in steps[i + 1:])
+                if dn in self.data and not again:
+                    self.d(ERROR, "移行", where, f"実体「{dn}」は、今も定義にあります。" + (f"名前を変えたなら、実体の定義も「{arg[1]}」にしてください" if op == "rename_entity" else "消すなら、実体の定義も消してください"), line)
+                live = {x for x in live if x[0] != dn} | ({(arg[1], f) for d0, f in live if d0 == dn} if op == "rename_entity" else set())
+                if op == "rename_entity":
+                    if arg[1] == dn:
+                        self.d(ERROR, "移行", where, f"実体「{dn}」の新しい名前が、前と同じです", line)
+                        continue
+                    final = self.entity_final(steps, i, arg[1])
+                    if final is not None and final not in self.data:
+                        self.d(ERROR, "移行", where, f"実体「{final}」が、今の定義にありません" + near(final, self.data), line)
+                continue
+            dn = norm[i][2]  # 項目の手順は、実体の最後の名前でそろえて見る（手順に書くのは、その版の時点の名前）
+            if dn is None:
+                continue  # あとで実体ごと消える。今の定義に無くてよい
             d = self.data.get(dn)
             if d is None:
                 self.d(ERROR, "移行", where, f"実体「{dn}」がありません" + near(dn, self.data), line)
                 continue
             now = [x.name for x in d.fields]
+            steps = norm
             # あとの手順が、同じ名前の項目をもう一度作るか（作るなら、ここで消えた名前が今の項目にあってよい）
             back = lambda n: any(dn2 == dn and ((op2 == "add" and fn2 == n) or (op2 == "rename" and arg2[1] == n)) for _, op2, dn2, fn2, arg2, _ in steps[i + 1:])
             if op in ("rename", "drop"):
@@ -667,12 +812,20 @@ class Checker:
         """前の版と比べて、保存の形の変更に migration があるかを見る（前の版の DB が、今の版で正しく開けるか）。
         前の版にもある実体で、増えた項目には add か rename の先が、減った項目には drop か rename の元が、前の版より新しい migration に要る。
         減った項目を書かずに済ませると、行に古い値が残り、同じ名前の項目をあとで足したときに、その値が生き返る"""
-        steps = [s for s in self.migration_steps() if s[0] > base.schema_version]
+        steps = [s for s in self.migration_norm() if s[0] > base.schema_version]
         made = {(dn, arg[1] if op == "rename" else fn) for _, op, dn, fn, arg, _ in steps if op in ("add", "rename")}
         gone = {(dn, fn) for _, op, dn, fn, _, _ in steps if op in ("rename", "drop")}
         nxt = self.schema_version if self.schema_version > base.schema_version else base.schema_version + 1
+        # 前の版の実体の名前 → 今の名前（前の版より新しい migration の rename entity を追う。drop entity なら None）
+        newer = [s for s in self.migration_steps() if s[0] > base.schema_version]
+        now_name = {dn: self.entity_final(newer, -1, dn) for dn in base.data}
+        for dn in base.data:
+            if now_name[dn] == dn and dn not in self.data:
+                self.d(ERROR, "移行", f"データ {dn}", f"前の版にあった実体「{dn}」がありませんが、migration に書いてありません。前の版の DB に、この実体の行が残ります"
+                       f"（migration {nxt} {{ drop entity {dn} }}。名前を変えたのなら rename entity {dn} to 新しい名前）")
+        before = {new: old for old, new in now_name.items() if new is not None}
         for dn, d in self.data.items():
-            old = base.data.get(dn)
+            old = base.data.get(before.get(dn))
             if old is None:
                 continue
             was, now = [f.name for f in old.fields], [f.name for f in d.fields]
@@ -1222,10 +1375,13 @@ class Checker:
             if need_group and rx.groups < 1:
                 self.d(ERROR, "画面", where, f"read の url の正規表現「{pat}」には、値を取り出す ( ) が要ります")
         ty = self.queries[sc.shows[0]].inputs[0][1]
-        if ty.check == "gtin":
-            for k, v in rd.lookup.items():
-                if not valid_gtin(v):
-                    self.d(ERROR, "画面", where, f"read の lookup「{k}」の値「{v}」は、検査数字（gtin）が合っていません")
+        # 直に書いた値（lookup）は、入力の型に結んだ変換（read）の拒否の条件で確かめる（サーバーが境界で断る値を、定義に残さない）
+        from .rawexpr import refusal, requires_tree
+        req = requires_tree(self.parts.get(ty.read)) if ty.read else None
+        for k, v in (rd.lookup.items() if req else []):
+            why = refusal(req, v)
+            if why is not None:
+                self.d(ERROR, "画面", where, f"read の lookup「{k}」の値「{v}」は、入力の型の変換 {self.p.show_names(ty.read)} が断ります（{why}）")
 
     def check_slot_rules(self):
         """slot の値の決め方（rule）。決める slot が処理にあり、条件の名前が使え、最後が default で、値の種類が合うこと"""
@@ -1571,7 +1727,7 @@ class Checker:
     def check_resources(self):
         """リソースの検査。親と対象が実在し、動作の種類と対象（処理か問い合わせ）が合い、URL にクエリ文字列を使わず（問い合わせの入力はパスのキーか親のIDで埋まる）、
         処理の結果の種類ごとに HTTP の状態が決まっていること。同じ URL・同じ処理や問い合わせを2度書けない。リソースがあるのに行き先の無い処理・問い合わせは警告。"""
-        from .rest import METHOD, PATH_INT, PATH_TEXT, routes
+        from .rest import METHOD, PATH_INT, PATH_TEXT, routes, row_entity
         p = self.p
         if not p.resources:
             return
@@ -1619,6 +1775,10 @@ class Checker:
                         self.d(ERROR, "リソース", w, f"{a.kind} は 1 つの ID で対象を決めるので、キーが複数のリソース（key {', '.join(res.keys)}）には書けません（別のリソースに分けます）")
                     if a.kind in ("update", "destroy") and not any(t.kind == "ID" for _, t in tgt.inputs):
                         self.d(ERROR, "リソース", w, f"{a.kind} は /…/:id の ID で対象を決めるので、処理に ID の入力が要ります")
+                    elif a.kind in ("update", "destroy") and not row_entity(self.p, tgt.name):
+                        idn = next(n for n, t in tgt.inputs if t.kind == "ID")
+                        self.d(ERROR, "リソース", w, f"{a.kind} の処理は、ID の入力で 1 行を引きます（let x = 実体[{idn}] else {{ … }}）。"
+                               "サーバーは、その行の版を If-Match と比べてから処理を走らせます（どの行を書き換えるのかが、処理から分かる必要があります）")
                     rdef = self.results.get(tgt.result)
                     variants = [v for v, _ in rdef.variants] if rdef else []
                     given = [v for v, _ in a.statuses]
@@ -1886,9 +2046,19 @@ class Checker:
             if inv.data not in self.data:
                 self.d(ERROR, "名前", where, f"データ「{inv.data}」が未定義です" + near(inv.data, self.data))
                 continue
+            rel = next((r for r in self.rel_invs if r["i"] == i), None)
+            if form is None and rel is not None:
+                dt = self.data[inv.data]
+                bad = self.rel_problem(dt, rel)
+                if bad:
+                    self.d(ERROR, "不変条件", where, bad)
+                    continue
+                self.invariant_status.append((text, self.inv_status_rows(i)))
+                continue
             if form is None:
                 self.d(ERROR, "不変条件", where, "この形の不変条件は、まだ検査できません"
-                       "（「項目 >= 数」と「状態の項目 == 状態 implies 項目 > 数」だけ）。検査できない約束は書けません")
+                       "（「項目 >= 数」「状態の項目 == 状態 implies 項目 > 数」と、同じ行の 2 つの数の項目の比較「項目 <= 項目」だけ。"
+                       "足し算・引き算の式は、項目として定義してから比べます：held: Quantity = stock + reserved）。検査できない約束は書けません")
                 continue
             fields = {f.name: f for f in self.data[inv.data].fields}
             names = [form[2]] + ([form[4]] if form[0] == "ならば" else [])
@@ -1901,17 +2071,42 @@ class Checker:
                 if st is None or form[3] not in [st.initial, *st.middle, *st.final]:
                     self.d(ERROR, "名前", where, f"「{form[3]}」は項目 {form[2]} の状態ではありません")
                     continue
-            rows = []
-            for proc in self.p.processes:
-                got = self.inv_rows.get(i, {}).get(proc.name)
-                if not got:
-                    rows.append((proc.name, "対象外"))
-                elif all(ok for ok, _ in got):
-                    notes = list(dict.fromkeys(n for _, n in got))
-                    rows.append((proc.name, "証明済み（" + " ／ ".join(notes) + "）"))
-                else:
-                    rows.append((proc.name, "証明できない"))
-            self.invariant_status.append((text, rows))
+            self.invariant_status.append((text, self.inv_status_rows(i)))
+        for k, rel in enumerate(self.rel_invs):  # 定義した項目の範囲（不変条件として書いていないが、同じく書き込みのたびに示す）
+            if rel["i"] is None:
+                self.invariant_status.append((rel["text"], self.inv_status_rows(("定義", k))))
+
+    def inv_status_rows(self, i) -> list:
+        rows = []
+        for proc in self.p.processes:
+            got = self.inv_rows.get(i, {}).get(proc.name)
+            if not got:
+                rows.append((proc.name, "対象外"))
+            elif all(ok for ok, _ in got):
+                notes = list(dict.fromkeys(n for _, n in got))
+                rows.append((proc.name, "証明済み（" + " ／ ".join(notes) + "）"))
+            else:
+                rows.append((proc.name, "証明できない"))
+        return rows
+
+    def rel_problem(self, dt, rel) -> str:
+        """項目どうしを比べる不変条件に書けない形なら、その理由"""
+        c = self.p.invariants[rel["i"]].cond
+        c = c.r if isinstance(c, Implies) else c
+        if not (isinstance(c.l, Name) and isinstance(c.r, (Name, Num))):
+            return ("不変条件に、足し算・引き算の式は直に書けません。式は項目として定義してから比べます"
+                    "（例：held: Quantity = stock + reserved と定義して、invariant … : held <= cap）")
+        for f, _ in [(n, 0) for con in rel["cons"] for n in con[0]]:
+            x = next(x for x in dt.fields if x.name == f)
+            if x.type.kind not in ("整数", "金額") or x.type.optional:
+                return f"項目どうしを比べる不変条件の「{f}」は、必須（required）の数の項目にしてください"
+        if rel["when"] is not None:
+            sf, sv = rel["when"]
+            fld = next((x for x in dt.fields if x.name == sf), None)
+            st = self.states.get(fld.type.target) if fld is not None else None
+            if st is None or sv not in [st.initial, *st.middle, *st.final]:
+                return f"「{sv}」は項目 {sf} の状態ではありません"
+        return ""
 
 
 def names_in(e) -> set:
@@ -1933,6 +2128,27 @@ def names_in(e) -> set:
     if isinstance(e, Make):
         return set().union(*(names_in(x) for _, x in e.fields)) if e.fields else set()
     return set()
+
+
+# ---- 1 次の式（名前 → 係数, 定数）。項目どうしを比べる不変条件を示すのに使う ----
+def lin_add(a, b, k: int = 1):
+    """a + k * b"""
+    out = dict(a[0])
+    for x, c in b[0].items():
+        out[x] = out.get(x, 0) + k * c
+    return {x: c for x, c in out.items() if c != 0}, a[1] + k * b[1]
+
+
+def lin_bounds(form, ivs: dict):
+    """1 次の式の値の範囲。ivs は 名前 → (下限, 上限)"""
+    lo = hi = form[1]
+    for x, c in form[0].items():
+        a, b = ivs.get(x, (None, None))
+        if c < 0:
+            a, b = b, a
+        lo = None if lo is None or a is None else lo + c * a
+        hi = None if hi is None or b is None else hi + c * b
+    return lo, hi
 
 
 # ---- 値の範囲（区間）。None は「限りなし」 ----
@@ -1982,6 +2198,8 @@ def iv_show(a):
 TIME_LIMIT = 10**15  # 外から来る時刻の絶対値の上限（秒）。足し引きであふれないため境界で確かめる
 UP = "#上"  # facts のキーの先頭がこれなら、値は「上限」（それ以外は下限）
 VERIFIED_STORES = ("sqlite",)  # サーバー実行部が持つ保存先の種類のうち、契約の試験（同時リクエストが直列と同じ結果になる）で確かめてあるもの
+TEXT_LIMIT = 1_048_576  # 長さを書いていない文字列の既定の上限（生成物の TEXT_LIMIT と同じ）
+LEN = "#件数:"  # facts の項目名の先頭がこれなら、集合の項目の件数（len(x.項目)）の範囲
 NAMED = "#名"  # facts のキーの先頭がこれなら、束縛でなく入力や let の変数の範囲
 
 
@@ -2002,6 +2220,10 @@ class ProcChecker:
         self.env: dict[str, str] = {}
         self.where = f"処理 {proc.name}"
         self.exist_sets: dict[str, tuple[str, str]] = {}  # 集合の変数 → (データ, 回した元)
+        self.var_text: dict[str, tuple] = {}  # 文字列をつないで作った let の変数 → (最短, 最長, 使える文字)
+        self.rel: set = set()  # その道で分かっている、数どうしの関係。(1 次の式の項の frozenset, 定数) で「式 <= 0」
+        self.var_lin: dict[str, tuple] = {}  # let の変数 → その値の 1 次の式（項目と入力で表せるもの）
+        self.bind_names: dict[str, str] = {}  # 束縛 → 変数名
         # 確認はデータ名でなく「どのキーで引いたものか」に効く。別のキーで引いたものには効かない
         self.guarded: set[tuple[str, str]] = set()  # 存在を確かめた (データ, キーの式) か (データ, "∈" + 回した元)
         self.scoped_ok: set[int] = set()  # 範囲を通す 1 件引きのうち、書ける形（let … else）のもの（id(式)）
@@ -2024,6 +2246,9 @@ class ProcChecker:
         self.pos = 0
         self.lookup_data: dict[str, str] = self.info.lookup_vars
         self.cur_line = 0  # いま検査している文の行（指摘に行を書かなかったときに使う）
+        self.cur_calc = None  # いまの文の末尾に書いた、途中の計算の trust
+        self.calc_hits = 0  # いまの文で、trust に頼った計算の数
+        self.calc_on = False  # 処理の文を見ているあいだだけ、途中の計算が収まるかを確かめる
         self.path_writes: Counter = Counter()  # いまの道で書いた項目と回数（if と else で書き分けた項目は、別の道なので数えない）
         self.dup_writes: set[str] = set()  # 2回書いたと指摘した項目
 
@@ -2091,6 +2316,8 @@ class ProcChecker:
                 return "?"
             dname = bt[4:]
             fld = next((f for f in ck.data[dname].fields if f.name == e.n), None)
+            if fld is None and any(f.name == e.n for f in ck.data[dname].derived):
+                return self.ty(self.open_derived(e, dname), env)  # 定義した項目は、式に開いて読む（元の項目を読んだことになる）
             if fld is None:
                 self.d(ERROR, "名前", f"データ {dname} に項目「{e.n}」がありません" + near(e.n, [f.name for f in ck.data[dname].fields]))
                 return "?"
@@ -2252,11 +2479,13 @@ class ProcChecker:
         """診断を増やさずに式の型を見る（調べるだけ）"""
         n = len(self.ck.diags)
         saved_types = dict(self.info.types)
+        saved_calc = (dict(self.info.calc), list(self.info.calc_trusts), self.calc_hits)
         try:
             return self._ty(e, env)
         finally:
             del self.ck.diags[n:]
             self.info.types = saved_types
+            self.info.calc, self.info.calc_trusts, self.calc_hits = saved_calc
 
     def make(self, e: Make, env) -> str:
         """合成型の値を作る式。成分はすべて、過不足なく、型と範囲が合う値で書く"""
@@ -2347,6 +2576,7 @@ class ProcChecker:
     def bind_var(self, name: str) -> str:
         self.bind_count = getattr(self, "bind_count", 0) + 1
         self.bindings[name] = f"{name}#{self.bind_count}"
+        self.bind_names[self.bindings[name]] = name
         self.binding_data[self.bindings[name]] = self.lookup_data.get(name)
         return self.bindings[name]
 
@@ -2547,6 +2777,11 @@ class ProcChecker:
             if data not in self.ck.data:  # 合成型の成分：宣言の範囲
                 t = self.decl_type(e, env)
                 return (None, None) if t is None else iv_of(t)
+            dv = next((f for f in self.ck.data[data].derived if f.name == e.n), None)
+            if dv is not None:  # 定義した項目：開いた式の範囲に、型の範囲（書き込みのたびに守ると示してある）を重ねる
+                lo, hi = self.interval(self.open_derived(e, data), env)
+                tlo, thi = iv_of(dv.type) if dv.type.range is not None else (None, None)
+                return (tlo if lo is None else lo if tlo is None else max(lo, tlo), thi if hi is None else hi if thi is None else min(hi, thi))
             lo, hi = self.field_iv(data, e.n)
             if isinstance(e.e, Name) and e.e.n in self.bindings:
                 known = self.facts.get((self.bindings[e.e.n], e.n))
@@ -2720,7 +2955,11 @@ class ProcChecker:
         return next(iter(kinds))
 
     def binop(self, e: Bin, env) -> str:
+        if isinstance(e.l, StrLit) or isinstance(e.r, StrLit):
+            return self.text_binop(e, env)
         a, b = self.ty(e.l, env), self.ty(e.r, env)
+        if e.op == "+" and a == b == "Str":  # 文字列をつなぐ。長さの上限は両側の足し算（入れ先で確かめる）
+            return "Str"
         if "?" in (a, b):
             return "?"
         num = ("Int", "Money")
@@ -2775,6 +3014,7 @@ class ProcChecker:
                        "指定されていません。端数をどう丸めますか")
                 return "Money"
             if a in num and b in num and not mixed:
+                self.check_calc(e, env)
                 return a
             self.d(ERROR, "型", f"「{show(e)}」: 同じ種類の数どうしで計算してください"
                    + ("（整数と金額は、そのままでは足し引きできません）" if mixed else ""))
@@ -2791,6 +3031,7 @@ class ProcChecker:
                 self.d(ERROR, "型", f"「{show(e)}」: 金額どうしは掛けられません（金額 × 整数 か 金額 × 割合 にしてください）")
                 return "?"
             if a in num and b in num:  # 金額 × 整数（数量ぶん）は金額
+                self.check_calc(e, env)
                 return "Money" if "Money" in (a, b) else "Int"
             frac = ("Ratio", "Rational")
             if {a, b} <= {"Ratio", "Rational", "Int", "Money"} and (a in frac or b in frac):
@@ -2799,6 +3040,60 @@ class ProcChecker:
             self.d(ERROR, "型", f"「{show(e)}」: 掛けられない組み合わせです")
             return "?"
         raise ValueError(e.op)
+
+    def text_binop(self, e: Bin, env) -> str:
+        """片側か両側が "…" と直に書いた文字列の式。書けるのは、文字列との == ・!= と、文字列どうしの + だけ"""
+        def side(x):
+            if isinstance(x, StrLit):
+                self.info.types[id(x)] = "Str"
+                return "Str"
+            return self.ty(x, env)
+        a, b = side(e.l), side(e.r)
+        if "?" in (a, b):
+            return "?"
+        if e.op not in ("==", "!=", "+"):
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列は、文字列との == ・!= と、文字列をつなぐ + にだけ使えます（大小は比べられません）")
+            return "?"
+        if a != "Str" or b != "Str":
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列と{'比べ' if e.op != '+' else 'つなげ'}られるのは文字列だけです（{b if a == 'Str' else a}）。"
+                   "数を文字にするには convert を通します")
+            return "?"
+        if e.op == "+":
+            return "Str"
+        lit, other = (e.l, e.r) if isinstance(e.l, StrLit) else (e.r, e.l)
+        if isinstance(other, StrLit):
+            self.d(ERROR, "型", f"「{show(e)}」: 直に書いた文字列どうしの比較は、いつも同じ結果です")
+            return "Bool"
+        sh = self.text_shape(other, env)
+        if sh is not None:  # 型に合わない定数との比較は、決して成り立たない（書き間違い）
+            lo, hi, chars = sh
+            n = len(lit.s)
+            if not lo <= n <= hi:
+                self.d(ERROR, "範囲", f"「{show(e)}」: {show(other)} の長さは {lo}..{hi} なので、{n} 文字の {show(lit)} と同じになることはありません")
+            elif chars is not None:
+                bad = sorted({c for c in lit.s if not any(x <= ord(c) <= y for x, y in chars)})
+                if bad:
+                    self.d(ERROR, "文字種", f"「{show(e)}」: {show(other)} に使える文字は [{show_chars(chars)}] なので、"
+                           f"「{''.join(bad)}」を含む {show(lit)} と同じになることはありません")
+        return "Bool"
+
+    def text_shape(self, e, env=None):
+        """文字列の式の (最短の長さ, 最長の長さ, 使える文字)。使える文字は範囲の並びで、制限なしは None。形が分からなければ None"""
+        env = self.env if env is None else env
+        if isinstance(e, StrLit):
+            return len(e.s), len(e.s), tuple(sorted({(ord(c), ord(c)) for c in e.s}))
+        if isinstance(e, Bin) and e.op == "+":
+            a, b = self.text_shape(e.l, env), self.text_shape(e.r, env)
+            if a is None or b is None:
+                return None
+            return a[0] + b[0], a[1] + b[1], None if a[2] is None or b[2] is None else tuple(sorted(set(a[2]) | set(b[2])))
+        if isinstance(e, Name) and e.n in self.var_text:
+            return self.var_text[e.n]
+        t = self.ck.parts[e.n].ret if isinstance(e, Call) and e.n in self.ck.parts else self.decl_type(e, env)
+        if t is None or t.kind != "文字列":
+            return None
+        r = t.range or Range()
+        return r.lo or 0, TEXT_LIMIT if r.hi is None else r.hi, t.chars
 
     # ---- 文 ----
     def check_return(self, r: Return):
@@ -2850,23 +3145,23 @@ class ProcChecker:
     def snapshot(self) -> tuple:
         """道ごとに変わる「分かっていること」と、その道で書いた項目の写し"""
         return (set(self.state_guards), dict(self.facts), set(self.guarded), set(self.present),
-                dict(self.cur_ok), dict(self.cur_sets), dict(self.shortage_sets), Counter(self.path_writes))
+                dict(self.cur_ok), dict(self.cur_sets), dict(self.shortage_sets), Counter(self.path_writes), set(self.rel))
 
     def restore(self, snap: tuple):
         (self.state_guards, self.facts, self.guarded, self.present,
-         self.cur_ok, self.cur_sets, self.shortage_sets, self.path_writes) = self.copy_of(snap)
+         self.cur_ok, self.cur_sets, self.shortage_sets, self.path_writes, self.rel) = self.copy_of(snap)
 
     @staticmethod
     def copy_of(snap: tuple) -> tuple:
-        sg, facts, guarded, present, cur_ok, cur_sets, shortage, writes = snap
-        return set(sg), dict(facts), set(guarded), set(present), dict(cur_ok), dict(cur_sets), dict(shortage), Counter(writes)
+        sg, facts, guarded, present, cur_ok, cur_sets, shortage, writes, rel = snap
+        return set(sg), dict(facts), set(guarded), set(present), dict(cur_ok), dict(cur_sets), dict(shortage), Counter(writes), set(rel)
 
     @staticmethod
     def join(a: tuple, b: tuple) -> tuple:
         """2つの道の合流。両方で分かっていることだけが残り、書いた回数は多いほう"""
         same = lambda x, y: {k: v for k, v in x.items() if k in y and y[k] == v}
         return (a[0] & b[0], iv_join(a[1], b[1]), a[2] & b[2], a[3] & b[3],
-                same(a[4], b[4]), same(a[5], b[5]), same(a[6], b[6]), a[7] | b[7])
+                same(a[4], b[4]), same(a[5], b[5]), same(a[6], b[6]), a[7] | b[7], a[8] & b[8])
 
     def note_write(self, w: str):
         """項目へ書いた。同じ道で同じ項目へ2回書くと、残る値が書き込みの順に頼るのでエラー（if と else のような別の道は数えない）"""
@@ -2879,15 +3174,33 @@ class ProcChecker:
 
     def block(self, stmts: list, pos: int, what: str = ""):
         """文の並び。what は if・else の中（書ける文が限られる）。return した後ろの文には届かない"""
+        before = set(self.env)
         for k, inner in enumerate(stmts):
             if k and always_returns(stmts[:k]):
                 self.d(ERROR, "結果", "この文には届きません（前の文が、どの道でも return しています）", getattr(inner, "line", 0))
                 return
-            if what and not isinstance(inner, (Return, If, SetField, Update, Request)):
-                self.d(ERROR, "型", f"{what} の中に書けるのは、return・項目の更新・update・request・if だけです（let は if の前に書いてください）",
+            if what and not isinstance(inner, (Return, If, SetField, Update, Request, Assign, Create, ForEach)):
+                self.d(ERROR, "型", f"{what} の中に書けるのは、return・let・create・項目の更新・update・request・if・for だけです",
                        getattr(inner, "line", 0))
                 continue
             self.stmt(inner, pos)
+        if what:  # if・else の中で let した名前は、その枝を抜けたら消える（重ならない別の枝でなら、同じ名前をまた使える）
+            self.forget_names(set(self.env) - before)
+
+    def forget_names(self, names: set):
+        """名前と、その名前について分かっていたこと（型・範囲・null でない・引いた 1 件）を消す。
+        残すと、あとで同じ名前を別の値に付けたときに、前の値について確かめたことが新しい値に効いてしまう"""
+        for n in names:
+            for d in (self.env, self.lookup_data, self.bindings, self.var_iv, self.var_unit, self.shortage_sets, self.exist_sets, self.cur_sets, self.var_text):
+                d.pop(n, None)
+            self.loop_deps.discard(n)
+            self.present.discard(("#入力", n))
+        self.facts = {k: v for k, v in self.facts.items() if not any(k[-2:] == (NAMED, n) for n in names)}
+        for n in names:
+            self.var_lin.pop(n, None)
+        gone = {("v", n) for n in names}
+        self.rel = {r for r in self.rel if not any(a in gone for a, _ in r[0])}
+        self.var_lin = {n: f for n, f in self.var_lin.items() if not (set(f[0]) & gone)}
 
     def scoped_lookup(self, st, info):
         """let 名前 = データ.範囲1.範囲2[ID] else { return … }：範囲の外の行は「無い」として扱う。
@@ -2932,11 +3245,13 @@ class ProcChecker:
         if state_cmp and c.op == "==":
             self.state_guards.add(fact)
         self.facts = self.add_facts(self.facts, self.cond_facts(c, True))
+        self.rel |= self.cond_rel(c, True)
         self.block(st.body, pos, "if")
         then_end = self.snapshot()
         # 成り立たない道（else の中、else が無ければ if の後ろ）で分かること
         self.restore(outer)
         self.facts = self.add_facts(self.facts, self.cond_facts(c, False))
+        self.rel |= self.cond_rel(c, False)
         self.negated_facts(c, state_cmp, fact)
         if st.els is not None:
             self.block(st.els, pos, "else")
@@ -2977,12 +3292,46 @@ class ProcChecker:
             self.d(ERROR, "名前", f"「{name}」は、すでにある名前です（入力・slot・前の let）。let で同じ名前は付け直せません。別の名前にしてください", line)
 
     def stmt(self, st, pos):
-        saved = self.cur_line
-        self.cur_line = getattr(st, "line", 0) or saved
+        saved = self.cur_line, self.cur_calc, self.calc_hits
+        self.cur_line = getattr(st, "line", 0) or saved[0]
+        # 文の末尾の trust（途中の計算）。+= の trust assume（項目の範囲を引き受ける）は、途中の計算も引き受ける
+        calc = getattr(st, "calc", None)
+        guard = getattr(st, "guard", None)
+        self.cur_calc = calc if calc is not None else guard if guard is not None and guard[0] == "assume" else None
+        self.calc_hits = 0
+        self.calc_on = True
         try:
             self._stmt(st, pos)
+            if calc is not None and calc[0] != "prove" and self.calc_hits == 0:
+                self.d(ERROR, "計算", f"trust {calc[0]} は要りません。この文の計算は、どれも収まると示せています（trust を消すか、名前を残すなら trust prove と書きます）", self.cur_line)
         finally:
-            self.cur_line = saved
+            self.cur_line, self.cur_calc, self.calc_hits = saved
+
+    CALC_LIMIT = (-2**127, 2**127 - 1)  # 整数と金額は、生成物の中では i128 で計算する
+
+    def check_calc(self, e: Bin, env):
+        """足す・引く・掛けるの結果が、計算に使う幅に収まると示す。示せなければエラー（文の末尾の trust で、人が引き受けられる）"""
+        if not self.calc_on:
+            return
+        lo, hi = self.interval(e, env)
+        if lo is not None and hi is not None and lo >= self.CALC_LIMIT[0] and hi <= self.CALC_LIMIT[1]:
+            self.info.calc.setdefault(id(e), "prove")
+            return
+        t = self.cur_calc
+        if t is None or t[0] == "prove":
+            self.info.calc[id(e)] = "check"
+            self.d(ERROR, "計算", f"「{show(e)}」: 途中の計算が収まると示せません（値の範囲は {iv_show((lo, hi))}）。"
+                   "掛ける数・足す数の型に範囲を書くか、先に if で大きさを確かめます。"
+                   '人が引き受けるなら、文の末尾に trust check "理由"（警告を出し、溢れたら異常で止める）、'
+                   'trust verify "理由"（検証ビルドだけ確かめる）、trust assume "理由"（確かめない）のどれかを書きます', self.cur_line)
+            return
+        self.calc_hits += 1
+        self.info.calc[id(e)] = t[0]
+        row = (show(e), t[0], t[1])
+        if row not in self.info.calc_trusts:
+            self.info.calc_trusts.append(row)
+            if t[0] == "check":
+                self.d(WARN, "計算", f"「{show(e)}」: 途中の計算が収まると示せていません（trust check。溢れたら異常で止まります）", self.cur_line)
 
     def _stmt(self, st, pos):
         info = self.info
@@ -3046,6 +3395,16 @@ class ProcChecker:
                 self._last_exist = None
                 t = self.ty(st.e)
                 self.env[st.name] = t
+                self.var_lin.pop(st.name, None)
+                if t in ("Int", "Money"):
+                    f = self.lin(st.e)
+                    if f is not None:
+                        self.var_lin[st.name] = f
+                self.var_text.pop(st.name, None)
+                if t == "Str" and self.decl_type(st.e, self.env) is None:
+                    sh = self.text_shape(st.e)
+                    if sh is not None:
+                        self.var_text[st.name] = sh
                 self.lookup_data.pop(st.name, None)
                 self.bindings.pop(st.name, None)
                 self.var_iv[st.name] = self.interval(st.e)
@@ -3104,6 +3463,13 @@ class ProcChecker:
             if fld is None:
                 self.d(ERROR, "名前", f"データ {data} に項目「{st.f}」がありません" + near(st.f, [f.name for f in self.ck.data[data].fields]), st.line)
                 return
+            if st.op in ("add", "remove"):
+                self.set_change(st, data, fld)
+                return
+            if fld.type.kind == "集合" and st.op in ("+=", "-="):
+                word = "add" if st.op == "+=" else "remove"
+                self.d(ERROR, "型", f"集合に {st.op} は使えません。{word} 要素 {'to' if word == 'add' else 'from'} {st.var}.{st.f} と書きます", st.line)
+                return
             passing = self.pass_null(st.e, fld.type)
             self.writing, saved = passing, self.writing
             vt = self.ty(st.e)
@@ -3126,6 +3492,8 @@ class ProcChecker:
                   and not (isinstance(st.e, Num) and tok_of(fld.type) in ("Int", "Money"))):
                 self.d(ERROR, "型", f"{data}.{st.f} に型の違う値（{vt}）を入れています", st.line)
                 return
+            if fld.type.kind == "集合":
+                self.forget(data, LEN + st.f)  # 集合を丸ごと書き換えた。件数について分かっていたことは消える
             self.fit_unit(st.e, fld.type, f"{data}.{st.f}", st.line, base=Name(st.var))
             self.check_range_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
             self.check_text_fit(st.e, fld.type, f"{data}.{st.f}", st.line)
@@ -3144,7 +3512,9 @@ class ProcChecker:
                         lo, hi = iv_of(fld.type)
                         iv = (lo if iv[0] is None else max(iv[0], lo), hi if iv[1] is None else min(iv[1], hi))
                         info.guards.append((f"{data}.{st.f}", st.op, *st.guard))
-                self.check_write(data, st.f, iv, st.line, bind=b, fix=self.step_fix(st, fld) if st.op in ("+=", "-=") and st.guard is None else None)
+                self.check_write(data, st.f, iv, st.line, bind=b, fix=self.step_fix(st, fld) if st.op in ("+=", "-=") and st.guard is None else None,
+                                 form=self.lin(st.e) if st.guard is None else None)
+                self.rel_check(data, {st.f: self.lin(st.e)}, b, st.line)
                 self.forget(data, st.f)
                 if iv[0] is not None:
                     self.facts[(b, st.f)] = iv[0]
@@ -3182,6 +3552,178 @@ class ProcChecker:
             self.env = saved
             self.loop_deps = set()
 
+    # ---- 定義した項目と、項目どうしの関係 ----
+    def open_derived(self, e: Attr, dname: str):
+        """定義した項目を読む式 x.held を、定義の式 x.stock + x.reserved に開く（同じ式には、同じ開いた式を返す）"""
+        if id(e) not in self.info.derived:
+            dv = next(f for f in self.ck.data[dname].derived if f.name == e.n)
+
+            def sub(x):
+                if isinstance(x, Name):
+                    return Attr(e.e, x.n)
+                if isinstance(x, Bin):
+                    return Bin(x.op, sub(x.l), sub(x.r))
+                return x
+            self.info.derived[id(e)] = (e, sub(dv.expr))  # 元の式も持っておく（id が使い回されないように）
+        return self.info.derived[id(e)][1]
+
+    def lin(self, e, env=None):
+        """数の式を、項目（その 1 件の今の値）と変数の 1 次の式にする。表せなければ None"""
+        env = self.env if env is None else env
+        if isinstance(e, Num):
+            return {}, e.v
+        if isinstance(e, Name):
+            if e.n in self.var_lin and env is self.env:
+                return self.var_lin[e.n]
+            return ({("v", e.n): 1}, 0) if self.ty_quiet(e, env) in ("Int", "Money") else None
+        if isinstance(e, Attr) and isinstance(e.e, Name) and e.e.n in self.bindings:
+            data = self.lookup_data.get(e.e.n)
+            dt = self.ck.data.get(data)
+            if dt is None:
+                return None
+            if any(f.name == e.n for f in dt.derived):
+                return self.lin(self.open_derived(e, data), env)
+            fld = next((f for f in dt.fields if f.name == e.n), None)
+            if fld is None or fld.type.kind not in ("整数", "金額") or fld.type.optional:
+                return None
+            return {("f", self.bindings[e.e.n], e.n): 1}, 0
+        if isinstance(e, Bin) and e.op in ("+", "-"):
+            a, b = self.lin(e.l, env), self.lin(e.r, env)
+            return None if a is None or b is None else lin_add(a, b, 1 if e.op == "+" else -1)
+        if isinstance(e, Bin) and e.op == "*" and (isinstance(e.l, Num) or isinstance(e.r, Num)):
+            k, x = (e.l.v, e.r) if isinstance(e.l, Num) else (e.r.v, e.l)
+            a = self.lin(x, env)
+            return None if a is None else ({n: c * k for n, c in a[0].items() if c * k != 0}, a[1] * k)
+        if isinstance(e, Call) and e.n in CONVERSIONS and len(e.args) == 1:
+            return self.lin(e.args[0], env)
+        return None
+
+    def atom_iv(self, a, env=None):
+        """1 次の式の項（変数か、ある 1 件の項目）の値の範囲"""
+        if a[0] == "v":
+            return self.interval(Name(a[1]), env)
+        _, b, f = a
+        var = self.bind_names.get(b)
+        if var is not None and self.bindings.get(var) == b:
+            return self.interval(Attr(Name(var), f))
+        data = self.binding_data.get(b, b[1] if isinstance(b, tuple) else None)
+        return self.field_iv(data, f)
+
+    def cond_rel(self, c, holds: bool) -> set:
+        """条件 c が成り立つ／成り立たないときに分かる、数どうしの関係（式 <= 0 の集まり）。組み合わせ方は cond_facts と同じ"""
+        if isinstance(c, Not):
+            return self.cond_rel(c.e, not holds)
+        if isinstance(c, Bin) and c.op == ("かつ" if holds else "または"):
+            return self.cond_rel(c.l, holds) | self.cond_rel(c.r, holds)
+        if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==", "!=")):
+            return set()
+        if self.ty_quiet(c.l, self.env) not in ("Int", "Money") or self.ty_quiet(c.r, self.env) not in ("Int", "Money"):
+            return set()
+        a, b = self.lin(c.l), self.lin(c.r)
+        if a is None or b is None:
+            return set()
+        op = c.op if holds else {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!=", "!=": "=="}[c.op]
+        le, ge = lin_add(a, b, -1), lin_add(b, a, -1)
+        forms = {"<=": [le], "<": [(le[0], le[1] + 1)], ">=": [ge], ">": [(ge[0], ge[1] + 1)], "==": [le, ge], "!=": []}[op]
+        return {(frozenset(f[0].items()), f[1]) for f in forms}
+
+    def prove_le0(self, t, env=None) -> bool:
+        """1 次の式 t が 0 以下と示せるか。値の範囲だけで言えるか、分かっている関係（確かめた条件・その 1 件の不変条件）を
+        1 つか 2 つ引いた残りが、値の範囲から 0 以下と言えるか"""
+        def upper(form):
+            return lin_bounds(form, {a: self.atom_iv(a, env) for a in form[0]})[1]
+        known = [(dict(items), c) for items, c in self.rel]
+        for b in {a[1] for a in t[0] if a[0] == "f"}:  # 式に出てくる 1 件ごとに、その行でいつも成り立つ約束
+            data = self.binding_data.get(b, b[1] if isinstance(b, tuple) else None)
+            for r in self.ck.rel_invs:
+                if r["data"] == data and (r["when"] is None or (b, r["when"][0], r["when"][1]) in self.state_guards):
+                    known += [({("f", b, f): c for f, c in con[0].items()}, con[1]) for con in r["cons"]]
+        cands = [({}, 0)] + known + [lin_add(x, y) for i, x in enumerate(known) for y in known[i + 1:]]
+        for k in cands:
+            hi = upper(lin_add(t, k, -1))
+            if hi is not None and hi <= 0:
+                return True
+        return False
+
+    def rel_check(self, data, changed: dict, bind, line, new_state=None, creating=False, env=None, force_state=None):
+        """data の 1 件の項目を書く（changed：項目 → 新しい値の 1 次の式。表せなければ None）とき、
+        項目どうしを比べる不変条件と、定義した項目の範囲が守れるか。force_state は、状態をその値にする書き込み"""
+        for k, r in enumerate(self.ck.rel_invs):
+            if r["data"] != data:
+                continue
+            touched = any(f in changed for con in r["cons"] for f in con[0])
+            if force_state is not None:
+                if r["when"] is None or r["when"] != force_state:
+                    continue
+            elif not touched:
+                continue
+            key = r["i"] if r["i"] is not None else ("定義", k)
+            if r["when"] is not None and force_state is None:
+                sf, sv = r["when"]
+                if creating and (new_state or {}).get(sf) != sv:
+                    self.inv_row(key, True, f"新規作成は{sv}以外")
+                    continue
+                if not creating and bind is not None and any(x[0] == bind and x[1] == sf and x[2] != sv for x in self.state_guards):
+                    self.inv_row(key, True, f"{sv}でないことを確認している")
+                    continue
+            ok = True
+            for fd, c in r["cons"]:
+                t = ({}, c)
+                for f, coef in fd.items():
+                    if f in changed:
+                        v = changed[f]
+                    elif creating:
+                        v = None
+                    else:
+                        v = ({("f", bind, f): 1}, 0)
+                    if v is None:
+                        ok = False
+                        break
+                    t = lin_add(t, v, coef)
+                ok = ok and self.prove_le0(t, env)
+                if not ok:
+                    break
+            self.inv_row(key, ok, "書く前に確かめている")
+            if not ok:
+                self.d(ERROR, "不変条件", f"不変条件 {r['text']} を示せません"
+                       f"（{data} の{'・'.join(changed) or '状態'}を書く前に、守れることを if … {{ return … }} で確かめてください）", line)
+
+    def set_change(self, st, data, fld):
+        """add 要素 to 変数.項目 ／ remove 要素 from 変数.項目。足す先は件数の上限（max N）が要り、
+        足す前に、まだ上限に届いていないと示せること（if len(x.f) >= N { return … } の先）。外すほうは確かめが要らない"""
+        info, where = self.info, f"{data}.{st.f}"
+        word = "to" if st.op == "add" else "from"
+        if fld.type.kind != "集合":
+            self.d(ERROR, "型", f"{st.op} … {word} の相手は集合の項目です（{where} は集合ではありません）", st.line)
+            return
+        if fld.type.optional:
+            self.d(ERROR, "null", f"{where} は null になりうるので、{st.op} できません（集合の項目に required を付けてください）", st.line)
+            return
+        if self.ty(st.e) not in ("ID", "?"):
+            self.d(ERROR, "型", f"集合 {where} に{'足せる' if st.op == 'add' else 'から外せる'}のは id です（{show(st.e)}）", st.line)
+        b = self.bindings.get(st.var, st.var)
+        key = LEN + st.f
+        info.field_reads.add(where)
+        if st.op == "add":
+            n = fld.type.maxn
+            if n is None:
+                self.d(ERROR, "範囲", f"{where} に要素を足すには、型に件数の上限が要ります（set of id max N）", st.line)
+            else:
+                hi = self.facts.get((UP, b, key))
+                if hi is None or hi >= n:
+                    self.d(ERROR, "範囲", f"{where} に足す前に、まだ上限（{n} 件）に届いていないと示せません"
+                           f"（先に if len({st.var}.{st.f}) >= {n} {{ return … }} で確かめてください）", st.line)
+                else:
+                    self.forget(data, key)  # 同じデータの別の束縛（同じ 1 件かもしれない）について分かっていた件数は消える
+                    self.facts[(UP, b, key)] = hi + 1
+        else:
+            hi = self.facts.get((UP, b, key))
+            self.forget(data, key)
+            if hi is not None:  # 外しても件数は増えない。この 1 件について分かっていた上限はそのまま
+                self.facts[(UP, b, key)] = hi
+        self.note_write(where)
+        info.write_ops.setdefault(where, set()).add(st.op)
+
     def check_transition(self, data, fname, dst, line, var):
         sname = next(f.type.target for f in self.ck.data[data].fields if f.name == fname)
         decl = [(a, b) for (d, a, b) in self.proc.transitions if d == data and b == dst]
@@ -3216,12 +3758,26 @@ class ProcChecker:
     def check_text_fit(self, e, dst: Type, where: str, line: int):
         """長さか使える文字が決まっている文字列の項目へ書くとき、書く値の長さと文字が収まると示せるか。
         示せるのは、宣言のある入力・項目・slot と、部品の戻り値を、そのまま書く場合だけ（外から来る値は、境界で確かめてある）"""
-        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.check is None and dst.read is None) or isinstance(e, Null):
+        if dst.kind != "文字列" or (dst.range is None and dst.chars is None and dst.read is None) or isinstance(e, Null):
             return
         if isinstance(e, Call) and e.n in self.ck.parts:
             src = self.ck.parts[e.n].ret
         else:
             src = self.decl_type(e, self.env)
+        if src is None:
+            sh = self.text_shape(e)
+            if sh is not None:  # つないだ文字列・直に書いた文字列：長さは足し算、文字は合わせたもので示す
+                lo, hi, chars = sh
+                d = dst.range or Range()
+                if (d.lo is not None and lo < d.lo) or (d.hi is not None and hi > d.hi):
+                    self.d(ERROR, "範囲", f"{where} に書く文字列「{show(e)}」の長さ（{lo}..{hi}）が、項目の長さの範囲{show_range(dst.range)}に収まると示せません"
+                           "（入れ先の上限を広げるか、つなぐ元の型の上限を狭めます。切り詰める書き方はありません）", line)
+                if dst.chars is not None and (chars is None or not all(any(c <= a and b <= e_ for c, e_ in dst.chars) for a, b in chars)):
+                    self.d(ERROR, "文字種", f"{where} に書く文字列「{show(e)}」の文字が、項目の使える文字に収まると示せません"
+                           f"（書く値{'の文字は制限なし' if chars is None else ' [' + show_chars(chars) + ']'} ／ 項目 [{show_chars(dst.chars)}]）", line)
+                if dst.read is not None:
+                    self.d(ERROR, "検査", f"{where} は変換を通った値だけを書けるので、つないだ文字列「{show(e)}」は書けません", line)
+                return
         if src is None or src.kind != "文字列":
             if src is None:
                 self.d(ERROR, "範囲", f"{where} は長さか使える文字が決まっているので、宣言のある入力・項目・slot か部品の戻り値を、そのまま書いてください（「{show(e)}」では収まると示せません）", line)
@@ -3236,9 +3792,6 @@ class ProcChecker:
         if dst.read is not None and src.read != dst.read:
             self.d(ERROR, "検査", f"{where} に書く文字列が、変換 {dst.read} を通った値と示せません"
                    f"（書く値{'は変換を通っていない' if src.read is None else 'の変換は ' + src.read} ／ 項目は {dst.read}）。型に read {dst.read} が結ばれた入力・項目・部品の戻り値を、そのまま書いてください", line)
-        if dst.check is not None and src.check != dst.check:
-            self.d(ERROR, "検査数字", f"{where} に書く文字列が、検査数字（{dst.check}）を満たすと示せません"
-                   f"（書く値{'は検査数字なし' if src.check is None else 'の検査数字は ' + src.check} ／ 項目は {dst.check}）", line)
 
     def delete(self, st: Delete):
         """delete 変数：let で引いた1件を消す。keep のデータは消せない。状態を持つデータは、消してよい状態（removable）と、その状態だと確かめた後でだけ消せる（足りなければ問い）"""
@@ -3314,6 +3867,8 @@ class ProcChecker:
                 iv = self.interval(e)
                 self.check_write(st.data, f.name, iv, st.line, new_state=states)
                 lows[f.name] = iv[0]
+        self.rel_check(st.data, {n: self.lin(e) for n, e in st.fields
+                                 if any(f.name == n and f.type.kind in ("整数", "金額") for f in dt.fields)}, None, st.line, new_state=states, creating=True)
         self.created.add(st.name)
         self.env[st.name] = f"Rec:{st.data}"
         self.lookup_data[st.name] = st.data
@@ -3354,7 +3909,13 @@ class ProcChecker:
             return self.add_facts(self.cond_facts(c.l, holds), self.cond_facts(c.r, holds))
         if not (isinstance(c, Bin) and c.op in ("<", "<=", ">", ">=", "==", "!=") and isinstance(c.r, Num)):
             return {}
-        if isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
+        if (isinstance(c.l, Call) and c.l.n == "len" and len(c.l.args) == 1 and isinstance(c.l.args[0], Attr)
+                and isinstance(c.l.args[0].e, Name) and c.l.args[0].e.n in self.bindings):
+            t = self.decl_type(c.l.args[0], self.env)
+            if t is None or t.kind != "集合":
+                return {}
+            b, f = self.bindings[c.l.args[0].e.n], LEN + c.l.args[0].n  # 集合の項目の件数
+        elif isinstance(c.l, Attr) and isinstance(c.l.e, Name) and c.l.e.n in self.bindings:
             t = self.decl_type(c.l, self.env)
             if t is None or t.kind not in ("整数", "金額"):
                 return {}
@@ -3399,6 +3960,9 @@ class ProcChecker:
 
     def forget(self, data, fname):
         """data.fname が書き換わった。同じデータのどの束縛（同じ1件かもしれない）についても、分かっていた下限を消す"""
+        hit = lambda a: a[0] == "f" and a[2] == fname and self.binding_data.get(a[1], a[1][1] if isinstance(a[1], tuple) else None) == data  # noqa: E731
+        self.rel = {r for r in self.rel if not any(hit(a) for a, _ in r[0])}
+        self.var_lin = {n: f for n, f in self.var_lin.items() if not any(hit(a) for a in f[0])}
         self.facts = {k: v for k, v in self.facts.items()
                       if not ((k[0] == "#不足" and k[1:3] == (data, fname))
                               or (k[0] == UP and self.binding_data.get(k[1]) == data and k[2] == fname)
@@ -3440,12 +4004,17 @@ class ProcChecker:
             return how + 'か、人が引き受けるなら文の末尾に saturating "理由"（範囲の端で止める）か trust assume "理由"（届かないと承知する）を書きます'
         return how + "と示せます"
 
-    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None, null=False, fix=None):
+    def check_write(self, data, fname, iv, line, bind=None, note=None, grow=False, new_state=None, null=False, fix=None, form=None):
         """項目へ範囲 iv の値を書くとき、項目の範囲と、その項目にかかる不変条件が守れるか。
         bind は書く1件の束縛（update では None）。note は値の範囲を示せた理由。grow は「元の値から減らさない」こと。
         new_state は新規作成のときの状態（状態の項目 → 状態名）。fix は、範囲を示せないときの直し方（無ければ一般的な案内）"""
         fld = next(f for f in self.ck.data[data].fields if f.name == fname)
         lo, hi = iv_of(fld.type)
+        if form is not None and not null:  # 値の範囲だけでは言えなくても、確かめた条件（n <= x.stock など）と合わせれば言えることがある
+            if lo is not None and (iv[0] is None or iv[0] < lo) and self.prove_le0(lin_add(({}, lo), form, -1)):
+                iv = (lo, iv[1])
+            if hi is not None and (iv[1] is None or iv[1] > hi) and self.prove_le0(lin_add(form, ({}, hi), -1)):
+                iv = (iv[0], hi)
         if not null and ((lo is not None and (iv[0] is None or iv[0] < lo)) or (hi is not None and (iv[1] is None or iv[1] > hi))):
             self.d(ERROR, "範囲", f"{data}.{fname} に書く値が、項目の範囲 {iv_show((lo, hi))} に収まると示せません"
                    f"（書く値の範囲 {iv_show(iv)}。はみ出す例（反例）があります。"
@@ -3494,9 +4063,14 @@ class ProcChecker:
         else:
             iv = iv_add(old, iv_neg(v))
         self.check_write(data, fname, iv, st.line, note=note, grow=grow)
+        row = ("#update", data)  # どの 1 件か決まっていない行。項目の値は、型の範囲と不変条件から分かることだけ
+        val, cur = self.lin(st.value, env2), ({("f", row, fname): 1}, 0)
+        new = None if val is None else val if st.op == "=" else lin_add(cur, val, 1 if st.op == "+=" else -1)
+        self.rel_check(data, {fname: new}, row, st.line, env=env2)
 
     def check_state_write(self, data, sf, dst, var, line):
         """x.状態 = 状態名 のとき、「状態 == S implies g > n」が守れるか"""
+        self.rel_check(data, {}, self.bindings.get(var, var), line, force_state=(sf, dst))
         for i, form in enumerate(self.ck.inv_forms):
             if not (form and form[0] == "ならば" and form[1] == data and form[2] == sf):
                 continue
@@ -3586,3 +4160,22 @@ def check(prog: Program, strict_names: bool = False):
     ck = Checker(prog, strict_names)
     ck.run()
     return ck
+
+
+def example_mismatch(t, v) -> str:
+    """具体例に直に書いた値 v が、型 t に合わない理由（合えば空）。数は範囲、文字列は長さと文字種を見る"""
+    if isinstance(v, BoolLit):
+        return "" if t.kind == "真偽" else "真偽の値ではない型です"
+    if isinstance(v, Num):
+        if t.kind not in ("整数", "金額", "日時"):
+            return "数ではない型です"
+        r = t.range
+        if r is not None and ((r.lo is not None and v.v < r.lo) or (r.hi is not None and v.v > r.hi)):
+            return f"範囲{show_range(r)}の外です"
+        return ""
+    if t.kind not in ("文字列", "ID", "生"):
+        return "文字列ではない型です"
+    r = t.range
+    if r is not None and ((r.lo is not None and len(v.s) < r.lo) or (r.hi is not None and len(v.s) > r.hi)):
+        return f"長さ{show_range(r)}の外です"
+    return ""

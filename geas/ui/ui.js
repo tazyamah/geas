@@ -37,12 +37,22 @@ function ipcFetch(url, init = {}) {
 const xfetch = viaIpc ? ipcFetch : (url, init) => fetch(url, init);
 
 let ROUTE = {};                    // 処理・問い合わせ・出来事の名前 → resource の URL（defs の routes）
-async function api(method, path, body, keep) {
-  const r = await xfetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json" }, body: body ? JSON.stringify(body) : undefined });
+async function api(method, path, body, keep, etag) {
+  const r = await xfetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json", ...(etag ? { "If-Match": etag } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({ error: "応答が読めません" }));
+  if (r.status === 412) throw Object.assign(new Error("ほかで変更されていました。画面を新しくしたので、確かめてからもう一度操作してください"), { stale: true });
   if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
   return j;
 }
+// 画面が見せている行の版（一覧の行の _etag）。PUT・DELETE のときに If-Match で送り、見たあとに変わった行への書き込みを止める
+const etagOf = (entity, id) => {
+  for (const [q, rows] of Object.entries(rowsOf)) {
+    if (!Q[q] || Q[q].entity !== entity) continue;
+    const r = rows.find((x) => x._etag && String(x[idCol(Q[q]).name]) === String(id));
+    if (r) return `"${r._etag}"`;
+  }
+  return null;
+};
 // 問い合わせの URL：パスの :名前 に入力を入れ、残りの入力は絞り込みの条件 q[名前]=値 で渡す（指定しない条件は書かない）
 const urlOf = (name, args) => {
   const r = ROUTE[name], a = args || {}, vals = Object.values(a);
@@ -307,7 +317,7 @@ async function act(sc, a) {
   try {
     const rt0 = ROUTE[a.deed], idv = rt0.id_input ? input[rt0.id_input] : undefined;  // update／destroy は /…/:id の ID を URL に載せる
     if (rt0.id_input) delete input[rt0.id_input];
-    const r = await api(rt0.method, rt0.path.replace(/:[A-Za-z0-9_]+/, encodeURIComponent(idv ?? "")), { ...input, slots }, true);
+    const r = await api(rt0.method, rt0.path.replace(/:[A-Za-z0-9_]+/, encodeURIComponent(idv ?? "")), { ...input, slots }, true, rt0.row_entity ? etagOf(rt0.row_entity, idv) : null);
     const rt = a.routes.find((x) => x.result === r.result);
     const b = r.body || {};
     const detail = (rt?.body || []).filter((p) => b[p.name] !== undefined && !(Array.isArray(b[p.name]) && !b[p.name].length)).map((p) => `${p.label} ${bodyText(b[p.name])}`).join("　");
@@ -316,7 +326,10 @@ async function act(sc, a) {
     if (to === "back") history.back();
     else if (to !== "stay") { qty = {}; go(to, {}); }
     else await Promise.all([...sc.shows.map((q) => loadShow(sc, q)), ...sc.fields.filter((f) => f.from && f.type.kind !== "map").map((f) => fillField(sc, f))]);  // 選ぶ元が変わる（取り下げなど）ので引き直す
-  } catch (e) { notice("できませんでした: " + e.message, "warn"); }
+  } catch (e) {
+    notice(e.stale ? e.message : "できませんでした: " + e.message, "warn");
+    if (e.stale) await Promise.all([...sc.shows.map((q) => loadShow(sc, q)), ...sc.fields.filter((f) => f.from && f.type.kind !== "map").map((f) => fillField(sc, f))]).catch(() => {});
+  }
   finally { btn.disabled = false; }
 }
 

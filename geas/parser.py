@@ -178,6 +178,7 @@ class Parser:
     def program(self) -> Program:
         p = Program()
         stores: list[tuple[str, str, int]] = []
+        examples: list[tuple] = []  # library の具体例（example の行）。部品の宣言より後ろでも前でもよいので、最後に結びつける
         self.skip_nl()
         while self.peek().kind != "EOF":
             line = self.peek().line
@@ -201,6 +202,8 @@ class Parser:
                                  'library を使います（例：library tax_included(x: Yen) -> Yen from rust "std" "" call "x + x / 10" guarantee result >= x trust check "整数の計算だけ"）', line)
             elif kw == "library":
                 p.parts.append(self.library(line))
+            elif kw == "example":
+                examples.append(self.example(line))
             elif kw == "convert":
                 p.parts.append(self.convert(line))
             elif kw == "invariant":
@@ -285,6 +288,11 @@ class Parser:
         if "currency" in self.used_builtin:
             p.states.append(State("Currency", initial="JPY", middle=["USD", "EUR"], plain=True))
         self.apply_stores(p, stores)
+        libs = {pt.name: pt for pt in p.parts if pt.external}
+        for name, args, want, ln in examples:
+            if name not in libs:
+                raise ParseError(f"example の対象「{name}」という library がありません（具体例を書けるのは library だけです。convert は式そのものが定義です）", ln)
+            libs[name].examples.append((args, want, ln))
         self.add_sync_state(p)
         if p.data_folder is not None:
             name, ln = p.data_folder
@@ -462,7 +470,7 @@ class Parser:
         if self.is_("store"):
             raise self.err(f"保存先は entity の中ではなく、別の行で store {name} in 保存先 と書きます")
         self.block_open()
-        fields = []
+        fields, derived = [], []
         keep, removable, on_delete = False, [], []
         while not self.accept("}"):
             if self.is_("keep") and not self.is_(":", 1):  # 削除させない
@@ -502,10 +510,14 @@ class Parser:
                     f.required = True
                 else:
                     raise self.err("項目は、書かなければ「無いかもしれない」（null になりうる）扱いです。optional は要りません（必須なら required と書きます）")
-            fields.append(f)
+            if self.accept("="):  # 名前: 型 = 式：定義した項目（保存しない）
+                f.expr = self.expr()
+                derived.append(f)
+            else:
+                fields.append(f)
             self.end_line()
         d = Data(name, fields, line)
-        d.keep, d.removable, d.on_delete = keep, removable, on_delete
+        d.keep, d.removable, d.on_delete, d.derived = keep, removable, on_delete, derived
         return d
 
     def signed_num(self):
@@ -538,23 +550,16 @@ class Parser:
             raise self.err(str(e))
 
     def check_opt(self, rng, chars):
-        """check gtin：JAN・EAN・UPC の最後の1桁（チェックディジット）が合っている文字列。長さは8・12・13・14桁、文字は数字だけ"""
-        if not self.accept("check"):
-            return None
-        kind = self.name()
-        if kind != "gtin":
-            raise self.err(f"check に書けるのは gtin だけです（「{kind}」は使えません）")
-        if rng is None or rng.lo != rng.hi or rng.lo not in (8, 12, 13, 14):
-            raise self.err("check gtin の文字列は、長さを 8・12・13・14 のどれか1つに決めてください（例：text 13..13 of \"0-9\" check gtin）")
-        if chars != ((48, 57),):
-            raise self.err('check gtin の文字列は、文字種を of "0-9" にしてください')
-        return kind
+        """check gtin は 2026-11-16 に言語から外した。検査数字は、geas の式で書いた変換（標準モジュール Gtin）を型に結んで確かめる"""
+        if self.is_("check"):
+            raise self.err('check gtin は無くなりました。検査数字は、標準モジュール Gtin（geas に同梱）で確かめます：'
+                           'use "gtin.geas" と書き、型は Gtin.Gtin13（8・12・14 桁は Gtin.Gtin8・Gtin.Gtin12・Gtin.Gtin14）を使います')
 
     def type(self) -> Type:
         line = self.peek().line
         named = self.peek().val in self.ltypes and not self.is_("→", 1)
         t = self._type()
-        if not (self.in_ltype or named) and (t.kind in ("写像", "集合") or t.range is not None or t.chars is not None or t.check is not None):
+        if not (self.in_ltype or named) and (t.kind in ("写像", "集合") or t.range is not None or t.chars is not None):
             raise ParseError("範囲や組み合わせは、ltype で名前を付けてから使ってください（例：ltype 数量 = int 1..99）", line)
         return t
 
@@ -576,10 +581,11 @@ class Parser:
         if tok == "set":  # set of id
             self.expect("of")
             self.expect("id")
-            return Type("集合", value=Type("ID"))
+            return Type("集合", value=Type("ID"), maxn=self.max_opt())
         if tok == "text":  # 範囲は長さ（文字数）。of "a-z0-9_" は使える文字
             rng, chars = self.range_opt(), self.chars_opt()
-            return Type("文字列", range=rng, chars=chars, check=self.check_opt(rng, chars))
+            self.check_opt(rng, chars)
+            return Type("文字列", range=rng, chars=chars)
         if tok in ("time", "bool"):
             return Type(SIMPLE_TYPES[tok])
         if tok == "raw":  # 未検査の生データ（外から来たままの文字列）。convert の引数にだけ書ける
@@ -870,6 +876,25 @@ class Parser:
         self.end_line()
         return Part(name, params, ret, g, line, lib=(strs[0], strs[1], expr, level, why.val))
 
+    def example(self, line) -> tuple:
+        """example 部品(値, …) == 値：library の具体例。引数も期待する値も、直に書いた値（数・文字列・true／false）だけ"""
+        usage = 'example tax_included(100) == 110'
+        name = self.name()
+        self.expect("(")
+        args = [] if self.peek().val == ")" else self.comma_list(self.example_value)
+        self.expect(")")
+        if not self.accept("=="):
+            raise self.err(f"具体例は、呼び出しと期待する値を == でつなぎます（{usage}）")
+        want = self.example_value()
+        self.end_line()
+        return name, args, want, line
+
+    def example_value(self):
+        e = self.expr()
+        if not isinstance(e, (Num, StrLit, BoolLit)):
+            raise self.err("具体例には、直に書いた値（数・\"文字列\"・true・false）だけを書けます")
+        return e
+
     def convert(self, line) -> Part:
         """convert 名前(引数: 型) -> 型 = 式：論理型どうしの一方通行の変換。定義が geas の式なので、外の実装も保証も要らない"""
         name = self.name()
@@ -1103,6 +1128,16 @@ class Parser:
         elif self.is_("delete") and self.peek(1).kind == "NAME" and not self.is_(".", 1):
             self.next()
             s = Delete(self.name(), line)
+        elif (self.is_("add") or self.is_("remove")) and not self.is_(".", 1):
+            # add 要素 to 変数.項目 ／ remove 要素 from 変数.項目：集合に 1 つ足す・外す
+            op = self.next().val
+            word = "to" if op == "add" else "from"
+            e = self.expr()
+            if not self.accept(word):
+                raise self.err(f"{op} は「{op} 要素 {word} 変数.項目」と書きます（例：{op} tag_id {word} product.tags）")
+            n = self.name()
+            self.expect(".")
+            s = SetField(n, self.name(), e, line, op)
         elif self.accept("let"):
             if self.is_("mut") and self.peek(1).kind == "NAME":
                 raise self.err("let に mut は付けません", "let の変数は作り直さず、項目の更新は 名前.項目 = 値 と書きます")
@@ -1130,23 +1165,44 @@ class Parser:
             if self.peek().val in ("+=", "-="):  # x.f += e は x.f = x.f + e（読む項目にも数える）。並列の枝で重なってよい可換な更新の印を残す
                 op = self.next().val
                 e = self.expr()
-                guard = None
+                guard = calc = None
                 if self.is_("saturating") or self.is_("trust"):  # saturating "理由"（範囲の端で止める）／trust assume "理由"（届かないと人が承知する）
                     mode = self.next().val
                     if mode == "trust":
-                        if not self.accept("assume"):
-                            raise self.err("+= と -= の trust は assume だけです（trust assume \"理由\"）")
+                        if self.peek().val in ("prove", "check", "verify"):  # 途中の計算の trust（項目の範囲の確認は外さない）
+                            calc = self.next().val
+                        elif not self.accept("assume"):
+                            raise self.err("trust のあとには prove（示せなければエラー）、check（警告を出し、実行時に確かめる）、"
+                                           "verify（検証ビルドだけ確かめる）、assume（確かめない）のどれかを書きます")
                         mode = "assume"
                     why = self.next()
                     if why.kind != "STR" or not why.val.strip():
-                        raise self.err(f'{"trust assume" if mode == "assume" else mode} には、理由を "…" で書いてください')
-                    guard = (mode, why.val)
+                        raise self.err(f'{"trust " + (calc or "assume") if mode == "assume" else mode} には、理由を "…" で書いてください')
+                    guard = (mode, why.val) if calc is None else None
                 s = SetField(n, f, Bin(op[0], Attr(Name(n), f), e), line, op, guard)
+                if calc is not None:
+                    s.calc = (calc, why.val)
             else:
+                if self.is_("<") and self.is_("<", 1):
+                    raise self.err(f"集合に足す記号 << はありません。add 要素 to {n}.{f} と書きます（外すのは remove 要素 from {n}.{f}）")
                 self.expect("=")
                 s = SetField(n, f, self.expr(), line)
+        if self.is_("trust") and isinstance(s, (Return, Assign, Create, SetField)) and getattr(s, "guard", None) is None and s.calc is None:
+            s.calc = self.calc_trust()
         self.end_stmt()
         return s
+
+    def calc_trust(self) -> tuple:
+        """文の末尾の trust prove|check|verify|assume "理由"：途中の計算が収まると示せないときに、人が引き受ける段階"""
+        self.expect("trust")
+        if self.peek().val not in ("prove", "check", "verify", "assume"):
+            raise self.err("trust のあとには prove（示せなければエラー）、check（警告を出し、実行時に確かめる）、"
+                           "verify（検証ビルドだけ確かめる）、assume（確かめない）のどれかを書きます")
+        level = self.next().val
+        why = self.next()
+        if why.kind != "STR" or not why.val.strip():
+            raise self.err(f'trust {level} には、理由を "…" で書いてください')
+        return (level, why.val)
 
     # ---- 式 ----
     def expr(self):
@@ -1680,8 +1736,17 @@ class Parser:
         steps = []
         while not self.accept("}"):
             t = self.peek()
-            if self.accept("rename"):  # rename 実体.項目 to 新しい名前
+            if self.accept("rename"):  # rename 実体.項目 to 新しい名前 ／ rename entity 実体 to 新しい名前
+                if self.accept("entity"):
+                    entity = self.name()
+                    if not self.accept("to"):
+                        raise self.unexpected("実体の名前の変更は「rename entity 実体 to 新しい名前」です（to が要ります）")
+                    steps.append(("rename_entity", entity, None, ("to", self.name()), t.line))
+                    self.end_line()
+                    continue
                 entity = self.name()
+                if not self.is_("."):
+                    raise self.unexpected(f"項目の名前を変えるなら「rename {entity}.項目 to 新しい名前」、実体の名前を変えるなら「rename entity {entity} to 新しい名前」です")
                 self.expect(".")
                 fname = self.name()
                 if not self.accept("to"):
@@ -1689,14 +1754,20 @@ class Parser:
                 steps.append(("rename", entity, fname, ("to", self.name()), t.line))
                 self.end_line()
                 continue
-            if self.accept("drop"):  # drop 実体.項目
+            if self.accept("drop"):  # drop 実体.項目 ／ drop entity 実体
+                if self.accept("entity"):
+                    steps.append(("drop_entity", self.name(), None, None, t.line))
+                    self.end_line()
+                    continue
                 entity = self.name()
+                if not self.is_("."):
+                    raise self.unexpected(f"項目を消すなら「drop {entity}.項目」、実体ごと消すなら「drop entity {entity}」です")
                 self.expect(".")
                 steps.append(("drop", entity, self.name(), None, t.line))
                 self.end_line()
                 continue
             if not self.accept("add"):
-                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」「rename 実体.項目 to 新しい名前」「drop 実体.項目」です（「{shown(t)}」があります）")
+                raise self.unexpected(f"migration の中は「add 実体.項目 = 値」「rename 実体.項目 to 新しい名前」「drop 実体.項目」「rename entity 実体 to 新しい名前」「drop entity 実体」です（「{shown(t)}」があります）")
             entity = self.name()
             self.expect(".")
             fname = self.name()
@@ -1818,7 +1889,7 @@ class Parser:
 
 
 # 宣言を始めるキーワード。説明コメントは、このキーワードの次の名前に付く
-DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "convert", "invariant", "deed", "nexus", "flow",
+DECL_KEYWORDS = {"entity", "ltype", "store", "state", "result", "effect", "part", "library", "example", "convert", "invariant", "deed", "nexus", "flow",
                  "trigger", "query", "event", "screen", "resource", "actor", "scope", "let", "initial", "middle", "final", "reply", "deadline", "slot", "input"}
 
 

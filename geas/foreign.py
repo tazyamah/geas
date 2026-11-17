@@ -104,7 +104,7 @@ def token_hint(toks, i: int) -> str:
 
 
 # ---- 構文：定義と文の始まり ----
-TOP_KEYWORDS = ("app", "timezone", "use", "module", "ltype", "entity", "store", "storage", "state", "result", "effect", "reply", "library", "convert",
+TOP_KEYWORDS = ("app", "timezone", "use", "module", "ltype", "entity", "store", "storage", "state", "result", "effect", "reply", "library", "example", "convert",
                 "invariant", "deed", "nexus", "flow", "trigger", "rule", "migration", "query", "event", "screen", "resource", "actor", "scope", "needs", "resident", "path", "data_folder")
 
 DEF_HINTS = {

@@ -102,6 +102,12 @@ impl Engine {
         Ok(self.version())
     }
 
+    /// 保存の 1 行の版（行の中身から作る値）。行が無ければ None。書き込みの版の確認（If-Match）に使う
+    pub fn row_version(&mut self, entity: &str, key: &str) -> R<Option<String>> {
+        self.ensure_store()?;
+        Ok(self.store.as_ref().and_then(|s| geas_app::host::row_version(s, entity, key)))
+    }
+
     /// いまの保存の版（起動ごとの値と世代）。問い合わせを実行した直後に呼ぶと、その答えの版になる
     pub fn version(&self) -> String {
         format!("{}-{}", self.boot, self.generation)

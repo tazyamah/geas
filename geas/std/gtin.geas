@@ -1,0 +1,58 @@
+module Gtin
+
+// 商品コード（GTIN：JAN・EAN・UPC）の型。最後の 1 桁（検査数字）まで、外から入る所で確かめる。
+// 確かめ方は、この下の変換（geas の式）に書いてあるとおり：数字だけで、右から 1 倍・3 倍・1 倍…と掛けて足した和が 10 の倍数。
+// 根の言語のライブラリは呼ばない。使い方：アプリの .geas に use "gtin.geas" と書いて、型 Gtin.Gtin13 などを使う（geas に同梱。隣に置かなくてよい）。
+
+/// 商品コード（8 桁）
+ltype Gtin8 = text 8..8 of "0-9" read read8
+/// 商品コード（12 桁）
+ltype Gtin12 = text 12..12 of "0-9" read read12
+/// 商品コード（13 桁）
+ltype Gtin13 = text 13..13 of "0-9" read read13
+/// 商品コード（14 桁）
+ltype Gtin14 = text 14..14 of "0-9" read read14
+
+/// 商品コード（8 桁）を読む
+convert read8(
+  /// 読んだ文字
+  r: raw
+) -> Gtin8 {
+  require len(r) == 8 "8 桁の数字で入れてください"
+  require only(r, "0-9") "数字だけで入れてください"
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "最後の 1 桁（検査数字）が合っていません"
+  return text(r)
+}
+
+/// 商品コード（12 桁）を読む
+convert read12(
+  /// 読んだ文字
+  r: raw
+) -> Gtin12 {
+  require len(r) == 12 "12 桁の数字で入れてください"
+  require only(r, "0-9") "数字だけで入れてください"
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "最後の 1 桁（検査数字）が合っていません"
+  return text(r)
+}
+
+/// 商品コード（13 桁）を読む
+convert read13(
+  /// 読んだ文字
+  r: raw
+) -> Gtin13 {
+  require len(r) == 13 "13 桁の数字で入れてください"
+  require only(r, "0-9") "数字だけで入れてください"
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "最後の 1 桁（検査数字）が合っていません"
+  return text(r)
+}
+
+/// 商品コード（14 桁）を読む
+convert read14(
+  /// 読んだ文字
+  r: raw
+) -> Gtin14 {
+  require len(r) == 14 "14 桁の数字で入れてください"
+  require only(r, "0-9") "数字だけで入れてください"
+  require sum { digit(r, i) * (if (len(r) - 1 - i) % 2 == 1 then 3 else 1) | i in positions(r) } % 10 == 0 "最後の 1 桁（検査数字）が合っていません"
+  return text(r)
+}

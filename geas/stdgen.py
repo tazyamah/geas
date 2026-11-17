@@ -143,8 +143,30 @@ def verified(text: str) -> str:
         raise SystemExit("標準部品の宣言が、実際の動きと合いません:\n" + "\n".join(
             [f"  {f.part}：{f.kind}　{f.detail}" for f in rest] + [f"  {n}：手本（geas/stdref.py）がありません" for n in no_ref]
             + [f"  {n}：{why}" for n, why in rep.skipped.items()]))
-    return "".join(ln for ln in text.splitlines(keepends=True)
-                   if not (ln.startswith("library ") and ln.split("(", 1)[0].split()[1] in drop))
+    ref, out = reference(ck.p.parts), []
+    by_name = {pt.name.removeprefix("Num_"): pt for pt in ck.p.parts if pt.external}
+    for ln in text.splitlines(keepends=True):
+        if ln.startswith("example "):  # 前に書き出した具体例は作り直す
+            continue
+        name = ln.split("(", 1)[0].split()[1] if ln.startswith("library ") else None
+        if name in drop:
+            continue
+        out.append(ln)
+        if name is not None:  # 具体例は必須。手本（端の値で実物と比べてある）から 1 件ずつ作る
+            pt = by_name[name]
+            args = [example_arg(t, i) for i, (_, t) in enumerate(pt.params)]
+            shown = lambda v: ("true" if v else "false") if isinstance(v, bool) else str(v)  # noqa: E731
+            out.append(f"example {name}({', '.join(shown(a) for a in args)}) == {shown(ref[pt.name](*args))}\n")
+    return "".join(out)
+
+
+def example_arg(t, i: int):
+    """具体例の引数に使う値：真偽は true、数は 100・3・2 を範囲に収めたもの"""
+    from .partcheck import bounds
+    if t.kind == "真偽":
+        return True
+    lo, hi = bounds(t)
+    return max(lo, min(hi, (100, 3, 2)[min(i, 2)]))
 
 
 def main(argv):

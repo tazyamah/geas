@@ -99,27 +99,6 @@ pub fn check_chars(name: &str, s: &str, allowed: &[(char, char)]) -> Result<(), 
         None => Ok(()),
     }
 }
-/// GTIN（JAN・EAN・UPC）の最後の1桁が合っているか。右から2桁目を3倍、次を1倍…と足して、10の倍数になるのが正しい
-/// GTIN の判定（文言を組み立てない判定。足し込みは saturating なので、どれだけ長くても panic しない）
-pub fn gtin_ok(s: &str) -> bool {
-    gtin_chars_ok(s.chars())
-}
-pub fn gtin_chars_ok<I: DoubleEndedIterator<Item = char>>(cs: I) -> bool {
-    let mut sum: u32 = 0;
-    for (i, c) in cs.rev().enumerate() {
-        match c.to_digit(10) {
-            Some(d) => sum = sum.saturating_add(if i % 2 == 1 { d.saturating_mul(3) } else { d }),
-            None => return false,
-        }
-    }
-    sum % 10 == 0
-}
-pub fn check_gtin(name: &str, s: &str) -> Result<(), String> {
-    if !gtin_ok(s) {
-        return Err(format!("{} の最後の1桁（チェックディジット）が合っていません", name));
-    }
-    Ok(())
-}
 /// 冪等キーの組を1つの文字列に（["a","b"] の形。" と \\ は逃がすので、区切りがあいまいにならない）
 pub fn join_idem_key(xs: &[String]) -> String {
     let q: Vec<String> = xs.iter().map(|x| format!("\"{}\"", x.replace('\\', "\\\\").replace('"', "\\\""))).collect();
@@ -455,8 +434,8 @@ pub fn place_order(ctx: &place_orderCtx, Store: &Store, Input: &place_orderInput
             writes.push(Write::Product_stock(k.clone(), ((new_value) as u32)));
         }
     }
-    let subtotal: i128 = { let mut acc: i128 = 0; for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; acc = acc.checked_add((((Store.Product.get(&(k.clone())).ok_or(Fault::Unproven("検査で示した参照先が無い: Product"))?.unit_price as i128)).checked_mul(v).ok_or(Fault::Overflow("Product[k].unit_price * v"))?)).ok_or(Fault::Overflow("合計"))?; } acc };
-    let total: i128 = ((subtotal).checked_add(floor(scale(subtotal, ctx.tax_rate)?)?).ok_or(Fault::Overflow("subtotal + round(subtotal * tax_rate, floor, JPY)"))?);
+    let subtotal: i128 = { let mut acc: i128 = 0; for (k_, v_) in Input.items.iter() { let k: String = k_.clone(); let v: i128 = *v_ as i128; acc = acc.checked_add((((Store.Product.get(&(k.clone())).ok_or(Fault::Unproven("検査で示した参照先が無い: Product"))?.unit_price as i128)).wrapping_mul(v))).ok_or(Fault::Overflow("合計"))?; } acc };
+    let total: i128 = ((subtotal).wrapping_add(floor(scale(subtotal, ctx.tax_rate)?)?));
     let order = Order {
         order_id: ctx.new_Order_id.clone(),
         customer: Input.customer_id.clone(),
