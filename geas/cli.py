@@ -342,6 +342,8 @@ def main(argv=None) -> int:
     iv.add_argument("--title", default="（題名）")
     iv.add_argument("-o", help="render の出力先")
     iv.add_argument("--force", action="store_true", help="init で既存の台帳を上書きする")
+    ad = sub.add_parser("astdump", help="（内部用）構文木を JSON で出す。Rust 版との突き合わせに使う")
+    ad.add_argument("code", help=".geas ファイル")
     c = sub.add_parser("check", help="コードを検査する")
     c.add_argument("code", help=".geas ファイル")
     c.add_argument("--json", action="store_true", help="結果を JSON で出す（AI が直すための手がかり hint つき）")
@@ -428,6 +430,9 @@ def main(argv=None) -> int:
             print(b, file=sys.stderr)
         return 2
 
+    if a.cmd == "astdump":
+        from .astdump import run as run_astdump
+        return run_astdump(a.code)
     if a.cmd == "interview":
         return run_interview(a)
     if a.cmd == "mutate":

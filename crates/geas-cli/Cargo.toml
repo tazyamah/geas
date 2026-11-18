@@ -10,3 +10,4 @@ path = "src/main.rs"
 
 [dependencies]
 geas-core = { path = "../geas-core" }
+serde_json = { version = "1", features = ["preserve_order"] }
