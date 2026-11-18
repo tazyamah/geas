@@ -79,7 +79,7 @@ fn syntax_error_text(e: &Error, path: &str) -> String {
     out.join("\n")
 }
 
-fn spec_cmd(path: &str, out: Option<&str>) -> i32 {
+fn spec_cmd(path: &str, out: Option<&str>, plan: Option<&str>) -> i32 {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -98,7 +98,12 @@ fn spec_cmd(path: &str, out: Option<&str>) -> i32 {
     ck.code_path = Some(path.to_string());
     let name = Path::new(path).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let spec = geas_core::spec::build(&ck);
-    let text = geas_core::spec::render(&ck, &spec, &format!("（{}）", name));
+    let mut text = geas_core::spec::render(&ck, &spec, &format!("（{}）", name));
+    if let Some(pp) = plan {
+        let md = match std::fs::read_to_string(pp) { Ok(s) => s, Err(e) => { eprintln!("{}: {}", pp, e); return 2; } };
+        text += &geas_core::plan::coverage_markdown(&spec, &geas_core::plan::read_plan(&md)).join("\n");
+        text += "\n";
+    }
     match out {
         Some(o) => std::fs::write(o, &text).unwrap(),
         None => println!("{}", text),
@@ -170,8 +175,20 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("astdump") if args.len() == 3 => astdump(&args[2]),
-        Some("spec") if args.len() == 3 => spec_cmd(&args[2], None),
-        Some("spec") if args.len() == 5 && args[3] == "-o" => spec_cmd(&args[2], Some(&args[4])),
+        Some("spec") => {
+            let (mut f, mut o, mut p) = (None, None, None);
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-o" => { i += 1; o = args.get(i).cloned(); }
+                    "--plan" => { i += 1; p = args.get(i).cloned(); }
+                    a if f.is_none() => f = Some(a.to_string()),
+                    _ => { eprintln!("geas-rs: 解釈できない引数: {}", args[i]); std::process::exit(2); }
+                }
+                i += 1;
+            }
+            match f { Some(f) => spec_cmd(&f, o.as_deref(), p.as_deref()), None => 2 }
+        }
         Some("review") => review_cmd(&args[2..]),
         Some("check") if args.len() == 4 && args[3] == "--json" => check_json(&args[2]),
         _ => {
