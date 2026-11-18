@@ -33,10 +33,32 @@ fn astdump(path: &str) -> i32 {
     }
 }
 
+fn check_json(path: &str) -> i32 {
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}: {}", path, e);
+            return 2;
+        }
+    };
+    match parse(&src, Some(Path::new(path))) {
+        Err(e) => {
+            print!("{}", geas_core::hints::syntax_json(path, &e));
+            2
+        }
+        Ok(mut prog) => {
+            let ck = geas_core::check::defs::check(&mut prog, true);
+            print!("{}", geas_core::hints::to_json(ck.ok(), ck.ready(), &ck.diags, path));
+            if ck.ok() { 0 } else { 1 }
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("astdump") if args.len() == 3 => astdump(&args[2]),
+        Some("check") if args.len() == 4 && args[3] == "--json" => check_json(&args[2]),
         _ => {
             eprintln!("geas-rs: まだ astdump だけが動きます（Python 版を移している途中）");
             2

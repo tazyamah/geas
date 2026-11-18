@@ -61,6 +61,8 @@ def one(cmd, workdir: Path, name: str, full: bool, only=None) -> dict:
         return out
     r = run(cmd, ["check", name, "--json"], workdir)
     out["check"] = [r.returncode, sha(r.stdout), sha(r.stderr)]
+    if only == ["ast", "check"] or only == ["check"]:
+        return out
     if r.returncode == 0:
         r = run(cmd, ["spec", name], workdir)
         out["spec"] = [r.returncode, sha(r.stdout), sha(r.stderr)]
@@ -157,7 +159,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=["make", "verify", "corpus-record", "astdiff"])
     ap.add_argument("--cmd", default=f"{sys.executable} -m geas")
-    ap.add_argument("--only", help="比べる項目を絞る（いまは ast だけ）")
+    ap.add_argument("--only", help="比べる項目を絞る（ast、check）")
     ap.add_argument("--limit", type=int, default=10)
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     a = ap.parse_args()
