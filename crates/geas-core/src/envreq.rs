@@ -251,3 +251,22 @@ pub fn items(p: &Program) -> Vec<EnvItem> {
 pub fn rows(p: &Program) -> Vec<[String; 5]> {
     items(p).into_iter().map(|x| [x.id, x.aspect, x.text, x.origin, x.how.join("・")]).collect()
 }
+
+fn item_json(x: &EnvItem) -> serde_json::Value {
+    use serde_json::json;
+    json!({"id": x.id, "観点": x.aspect, "要求": x.text, "由来": x.origin, "確かめ方": x.how, "環境の事実": x.facts, "人の保証": x.trust, "理由": x.why, "条件": x.cond})
+}
+
+pub fn to_json(p: &Program) -> String {
+    let v = serde_json::json!({"items": items(p).iter().map(item_json).collect::<Vec<_>>()});
+    crate::crategen::dumps_indent(&v, 2) + "\n"
+}
+
+pub fn to_text(p: &Program) -> String {
+    let mut lines: Vec<String> = vec![];
+    for x in items(p) {
+        lines.push(format!("{}（{}）{}", x.id, x.aspect, x.text));
+        lines.push(format!("    由来：{}　確かめ方：{}", x.origin, x.how.join("・")));
+    }
+    if lines.is_empty() { String::new() } else { lines.join("\n") + "\n" }
+}

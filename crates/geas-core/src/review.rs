@@ -357,7 +357,7 @@ fn fig(d: &str) -> String {
     format!("<div class=\"scroll figure\">{}</div>", d)
 }
 
-fn lead(s: &str) -> String {
+pub fn lead(s: &str) -> String {
     format!("<p class=\"lead\">{}</p>", s)
 }
 
@@ -726,7 +726,7 @@ fn py_item(v: &Value) -> String {
     }
 }
 
-fn row_text(x: &Value) -> String {
+pub fn row_text(x: &Value) -> String {
     match x {
         Value::Object(m) => {
             let keys = ["処理", "問い合わせ", "入力", "読む", "書く", "結果", "手順", "参照", "外部", "条件", "列", "並び", "ページ"];
