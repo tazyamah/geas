@@ -292,6 +292,7 @@ pub struct Checker<'a> {
     pub inv_rows: IndexMap<(bool, usize), IndexMap<String, Vec<(bool, String)>>>,
     pub rel_invs: Vec<RelInv>,
     pub def_lines: Option<IndexMap<(String, String), i64>>,
+    pub code_path: Option<String>,
 }
 
 fn re_where() -> &'static Regex {
@@ -382,6 +383,7 @@ impl<'a> Checker<'a> {
             inv_rows: IndexMap::new(),
             rel_invs: vec![],
             def_lines: None,
+            code_path: None,
         };
         ck.collect_rel_invs();
         ck

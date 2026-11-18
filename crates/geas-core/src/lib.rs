@@ -13,3 +13,5 @@ pub mod rest;
 pub mod rawexpr;
 pub mod envreq;
 pub mod hints;
+pub mod partcheck;
+pub mod spec;
