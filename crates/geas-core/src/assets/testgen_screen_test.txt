@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""計画書の「ユースケースの手順」と「画面の具体例」から geas が生成したテスト。手で直さない（計画書を直して作り直す）。
+手順は screen_cases.json、実行部は screen_runner.js（Playwright。アプリを知らない汎用のもの）。
+サーバーは、生成物の server/ をビルドしたもの（cargo build --release）を新しい DB で起こし、上から順に実行する。
+Chrome 拡張の手順は、拡張が問い合わせてよい先（manifest の host_permissions）のポート 8787 で行う。"""
+import os
+import shutil
+import socket
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+APP = Path(__file__).resolve().parent.parent
+
+
+def _node_env():
+    node = shutil.which("node")
+    if node is None:
+        return None
+    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, encoding="utf-8").stdout.strip() if shutil.which("npm") else ""
+    env = dict(os.environ, NODE_PATH=root)
+    ok = subprocess.run([node, "-e", "require('playwright')"], env=env, capture_output=True).returncode == 0
+    return env if ok else None
+
+
+def _free(port):
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+@pytest.mark.skipif(_node_env() is None, reason="node と Playwright が無い")
+def test_ユースケースの手順を画面で通す(tmp_path):
+    exe = APP / "server" / "target" / "release" / "geas_server"
+    if not exe.exists():
+        pytest.skip("サーバーがビルドされていません（cd server && cargo build --release）")
+    ext_ok = _free(8787)
+    if ext_ok:
+        port = 8787
+    else:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    # 模擬の返事・時計・開発用の操作パネルを使うので、テスト用の口を開く（--test）
+    proc = subprocess.Popen([str(exe), "--port", str(port), "--db", str(tmp_path / "app.sqlite"), "--pwa", str(APP / "ui"), "--test", "--dev", str(APP / "dev")],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        url = f"http://127.0.0.1:{port}"
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(url + "/api/health", timeout=1)
+                break
+            except OSError:
+                time.sleep(0.1)
+        here = Path(__file__).resolve().parent
+        r = subprocess.run(["node", str(here / "screen_runner.js"), str(here / "screen_cases.json"), url, str(tmp_path)] + ([] if ext_ok else ["--no-ext"]),
+                           env=_node_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)

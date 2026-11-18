@@ -245,12 +245,15 @@ fn rust_cmd(args: &[String]) -> i32 {
             return 1;
         }
     }
-    if plan.is_some() {
-        eprintln!("geas-rs: --plan（具体例の実行用 bin）はまだ移していません");
-        return 2;
-    }
-    let dest = Path::new(&out);
-    if let Err(e) = geas_core::crategen::generate_tree(&ck, dest, host, runtime, standalone, seed.as_deref(), &server) {
+    let plan_md = match &plan {
+        Some(p) => match std::fs::read_to_string(p) { Ok(t) => Some(t), Err(e) => { eprintln!("{}", e); return 1; } },
+        None => None,
+    };
+    let dest: std::path::PathBuf = Path::new(&out).components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect();
+    let mut msgs = vec![];
+    let r = geas_core::crategen::generate_tree(&ck, &dest, host, runtime, standalone, seed.as_deref(), &server, plan_md.as_deref(), &mut msgs);
+    for m in msgs { println!("{}", m); }
+    if let Err(e) = r {
         eprintln!("{}", e);
         return 1;
     }

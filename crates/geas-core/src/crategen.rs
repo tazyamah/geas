@@ -249,14 +249,35 @@ pub fn write_crate(ck: &Checker, lib_src: &str, runner_src: &str, dest: &Path, h
     write(&dest.join("src").join("bin").join("plan_examples.rs"), runner_src)
 }
 
-/// `rust` コマンドの生成本体（--plan の具体例は別）
-pub fn generate_tree(ck: &Checker, dest: &Path, host: bool, runtime: bool, standalone: bool, seed: Option<&str>, server: &str) -> R {
+/// `rust` コマンドの生成本体。plan_md があれば、具体例の実行用 bin と、URL・画面の具体例のテストも作る。
+/// 標準出力に出す行は msgs に積む（途中で失敗しても、そこまでの行は出す）
+pub fn generate_tree(ck: &Checker, dest: &Path, host: bool, runtime: bool, standalone: bool, seed: Option<&str>, server: &str, plan_md: Option<&str>, msgs: &mut Vec<String>) -> R {
     let lib = generate(ck);
-    write_crate(ck, &lib, &runner_source_empty(), dest, host)?;
+    let plan = plan_md.map(crate::plan::read_plan);
+    let (src, problems) = match &plan {
+        Some(p) => crate::examples::runner_source(ck, p.get("具体例").map(|v| v.as_slice()).unwrap_or(&[])),
+        None => (runner_source_empty(), vec![]),
+    };
+    for p in problems {
+        msgs.push(format!("{}: {}: {}", p.kind, p.where_, p.msg));
+    }
+    write_crate(ck, &lib, &src, dest, host)?;
     if host && runtime {
         write_server(dest, seed, ck.p.effects.iter().any(|e| e.http.is_some()))?;
         if standalone {
             write_window(dest, ck.p.resident.is_some())?;
+        }
+        if let Some(plan) = &plan {
+            match crate::testgen::write_url_tests(ck, plan, dest) {
+                Err(e) => return Err(format!("URL の具体例: {}", e)),
+                Ok(Some(f)) => msgs.push(format!("URL の具体例のテストを生成しました: {}", f.display())),
+                Ok(None) => {}
+            }
+            match crate::testgen::write_screen_tests(ck, plan, dest) {
+                Err(e) => return Err(format!("画面の具体例: {}", e)),
+                Ok(Some(f)) => msgs.push(format!("画面の具体例のテストを生成しました: {}", f.display())),
+                Ok(None) => {}
+            }
         }
     }
     if host {
