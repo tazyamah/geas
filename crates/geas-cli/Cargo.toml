@@ -5,10 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "geas-rs"
+name = "geas"
 path = "src/main.rs"
 
 [dependencies]
 geas-core = { path = "../geas-core" }
 serde_json = { version = "1", features = ["preserve_order"] }
 unicode-width = "0.1"
+
+[dev-dependencies]
+sha2 = "0.10"
+tar = "0.4"
+lzma-rs = "0.3"
