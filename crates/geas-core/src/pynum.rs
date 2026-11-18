@@ -172,3 +172,41 @@ pub fn escape(s: &str) -> String {
     }
     o
 }
+
+/// Python 3.12 以降の sum()：整数だけなら整数、小数が混じれば補正つきの和（Neumaier）
+pub fn pysum(xs: impl IntoIterator<Item = N>) -> N {
+    let (mut isum, mut f, mut c, mut float_mode) = (0i64, 0f64, 0f64, false);
+    for x in xs {
+        match (float_mode, x) {
+            (false, N::I(i)) => isum += i,
+            _ => {
+                if !float_mode {
+                    float_mode = true;
+                    f = isum as f64;
+                }
+                let v = match x {
+                    N::I(i) => {
+                        f += i as f64;
+                        continue;
+                    }
+                    N::F(v) => v,
+                };
+                let t = f + v;
+                if f.abs() >= v.abs() {
+                    c += (f - t) + v;
+                } else {
+                    c += (v - t) + f;
+                }
+                f = t;
+            }
+        }
+    }
+    if !float_mode {
+        N::I(isum)
+    } else {
+        if c != 0.0 && c.is_finite() {
+            f += c;
+        }
+        N::F(f)
+    }
+}

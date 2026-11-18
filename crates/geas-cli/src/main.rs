@@ -106,12 +106,73 @@ fn spec_cmd(path: &str, out: Option<&str>) -> i32 {
     if ck.ok() { 0 } else { 1 }
 }
 
+/// 検査まで済ませた Checker を作る（読めなければ終了コードを返す）
+fn load(path: &str, prog: &mut Option<geas_core::ast::Program>) -> Result<(), i32> {
+    let src = std::fs::read_to_string(path).map_err(|e| {
+        eprintln!("{}: {}", path, e);
+        2
+    })?;
+    match parse(&src, Some(Path::new(path))) {
+        Ok(p) => {
+            *prog = Some(p);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{}", syntax_error_text(&e, path));
+            Err(2)
+        }
+    }
+}
+
+fn review_cmd(args: &[String]) -> i32 {
+    let (mut file, mut out, mut plan, mut diff_o) = (None, None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => { i += 1; out = args.get(i).cloned(); }
+            "--plan" => { i += 1; plan = args.get(i).cloned(); }
+            "--diff-o" => { i += 1; diff_o = args.get(i).cloned(); }
+            a if file.is_none() => file = Some(a.to_string()),
+            _ => { eprintln!("geas-rs: 解釈できない引数: {}", args[i]); return 2; }
+        }
+        i += 1;
+    }
+    let (Some(path), Some(out)) = (file, out) else { eprintln!("geas-rs: review FILE -o OUT"); return 2; };
+    let mut prog = None;
+    if let Err(c) = load(&path, &mut prog) { return c; }
+    let mut prog = prog.unwrap();
+    let mut ck = geas_core::check::defs::check(&mut prog, true);
+    ck.code_path = Some(path.clone());
+    let name = Path::new(&path).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let plan_md = match &plan {
+        Some(p) => match std::fs::read_to_string(p) { Ok(s) => Some(s), Err(e) => { eprintln!("{}: {}", p, e); return 2; } },
+        None => None,
+    };
+    let findings = match &plan_md {
+        Some(m) => geas_core::plan::compare_static(&geas_core::spec::build(&ck), &geas_core::plan::read_plan(m)),
+        None => vec![],
+    };
+    let label = format!("（{}）", name);
+    let html = match geas_core::review::review(&ck, plan_md.as_deref(), &findings, &label, false) {
+        Ok(h) => h,
+        Err(e) => { eprintln!("{}", e); return 1; }
+    };
+    std::fs::write(&out, html).unwrap();
+    if let Some(d) = diff_o {
+        std::fs::write(&d, geas_core::review::review_changes(&ck, &findings, &label, None, "", false, None)).unwrap();
+        println!("生成しました: {}", d);
+    }
+    println!("生成しました: {}", out);
+    if ck.ok() { 0 } else { 1 }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("astdump") if args.len() == 3 => astdump(&args[2]),
         Some("spec") if args.len() == 3 => spec_cmd(&args[2], None),
         Some("spec") if args.len() == 5 && args[3] == "-o" => spec_cmd(&args[2], Some(&args[4])),
+        Some("review") => review_cmd(&args[2..]),
         Some("check") if args.len() == 4 && args[3] == "--json" => check_json(&args[2]),
         _ => {
             eprintln!("geas-rs: まだ astdump だけが動きます（Python 版を移している途中）");
