@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>開発用：模擬の操作</title>
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <!-- 開発用の汎用のページ。アプリの画面ではない。中身は /api/defs の mock（Geas の応答の結果の種類・出来事の宣言）と /api/test/state から作る -->
+  <header><h1>開発用：模擬の操作</h1><a href="/">アプリへ</a></header>
+  <div id="notice" class="banner info" hidden></div>
+  <main>
+    <p class="hint">外の世界（決済・倉庫など）は模擬です。返事の結果の種類を選んだり、返事が来ない状況を作れます。</p>
+    <div class="group" id="t-settings"></div>
+    <div class="actions" id="t-actions"></div>
+    <h2>返事待ち</h2><div id="t-waits"></div>
+    <h2>外へ出した作用</h2><div id="t-effects"></div>
+  </main>
+  <script src="/test.js"></script>
+</body>
+</html>

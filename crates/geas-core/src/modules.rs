@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 /// geas に同梱の標準モジュール。use "gtin.geas" は、取り込む側の隣に同じ名前のファイルが無ければ、ここから読む
 pub fn std_source(rel: &str) -> Option<&'static str> {
     match rel {
-        "gtin.geas" => Some(include_str!("../../../geas/std/gtin.geas")),
-        "num.geas" => Some(include_str!("../../../geas/std/num.geas")),
+        "gtin.geas" => Some(include_str!("../assets/std/gtin.geas")),
+        "num.geas" => Some(include_str!("../assets/std/num.geas")),
         _ => None,
     }
 }

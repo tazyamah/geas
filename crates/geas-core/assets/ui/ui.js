@@ -1,0 +1,427 @@
+"use strict";
+// Geas の screen 宣言（/api/defs の screens）から画面を作る汎用の実行部。アプリの名前も項目も知らない。
+// 規則：show＝問い合わせの行を design の layout で並べる／open＝行を選ぶと開く／field x from q＝q の行から選ぶ（写像は行ごとに数）／
+//       slot＝利用者に選ばせる値（同じ名前の列を持つ行だけを出す）／action＝処理を呼び、結果の種類ごとの行き先へ進む。
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+let D, S, Q;                       // 定義全体、画面、問い合わせ
+const rowsOf = {};                 // 問い合わせ名 → 直近の行
+let cur = null;                    // いまの画面 {name, params}
+const slotVal = {};                // slot 名 → 選んだ値
+let qty = {};                      // 写像の入力欄 → {行のID: 数}
+
+// ---- 呼び出しの運び方 ----
+// 窓つき exe（window.ipc がある）では、処理の呼び出しも問い合わせも、HTTP を通さず WebView の IPC でプロセスの中へ渡す
+// （URL は「機能の定義としての名前」で、通信路ではない）。ふつうのブラウザでは fetch。どちらも Response を返すので、呼び出し側は同じ。
+const viaIpc = typeof window !== "undefined" && window.ipc && typeof window.ipc.postMessage === "function";
+const pending = new Map();
+let ipcSeq = 0;
+if (viaIpc) {
+  window.__geasReply = (id, status, headers, body) => {
+    const done = pending.get(id);
+    if (!done) return;
+    pending.delete(id);
+    const nobody = status === 204 || status === 304;
+    done(new Response(nobody ? null : body, { status, headers }));
+  };
+}
+function ipcFetch(url, init = {}) {
+  return new Promise((resolve) => {
+    const id = ++ipcSeq;
+    pending.set(id, resolve);
+    window.ipc.postMessage(JSON.stringify({ id, method: init.method || "GET", url, headers: init.headers || {}, body: init.body || "" }));
+  });
+}
+const xfetch = viaIpc ? ipcFetch : (url, init) => fetch(url, init);
+
+let ROUTE = {};                    // 処理・問い合わせ・出来事の名前 → resource の URL（defs の routes）
+async function api(method, path, body, keep, etag) {
+  const r = await xfetch(path.startsWith("/") ? path : "/api/" + path, { method, headers: { "Content-Type": "application/json", Accept: "application/json", ...(etag ? { "If-Match": etag } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({ error: "応答が読めません" }));
+  if (r.status === 412) throw Object.assign(new Error("ほかで変更されていました。画面を新しくしたので、確かめてからもう一度操作してください"), { stale: true });
+  if (!r.ok && !(keep && j.result)) throw new Error(j.error || r.statusText);  // 処理の結果の種類は、HTTP の状態が 4xx でも結果として読む
+  return j;
+}
+// 画面が見せている行の版（一覧の行の _etag）。PUT・DELETE のときに If-Match で送り、見たあとに変わった行への書き込みを止める
+const etagOf = (entity, id) => {
+  for (const [q, rows] of Object.entries(rowsOf)) {
+    if (!Q[q] || Q[q].entity !== entity) continue;
+    const r = rows.find((x) => x._etag && String(x[idCol(Q[q]).name]) === String(id));
+    if (r) return `"${r._etag}"`;
+  }
+  return null;
+};
+// 問い合わせの URL：パスの :名前 に入力を入れ、残りの入力は絞り込みの条件 q[名前]=値 で渡す（指定しない条件は書かない）
+const urlOf = (name, args) => {
+  const r = ROUTE[name], a = args || {}, vals = Object.values(a);
+  let i = 0;
+  const path = r.path.replace(/:[a-z_0-9]+/g, () => { const p = (r.path_inputs || [])[i]; const v = p && p.name in a ? a[p.name] : vals[i]; i++; return encodeURIComponent(v ?? ""); });
+  const q = (r.q_inputs || []).filter((x) => a[x.name] != null && a[x.name] !== "").map((x) => `q[${x.name}]=${encodeURIComponent(a[x.name])}`);
+  return path + (q.length ? "?" + q.join("&") : "");
+};
+// 問い合わせの答えは、URL ごとに版（ETag）と行を覚えておき、引き直すときに版を送る。保存が変わっていなければ、
+// サーバーは 304 で本文を送らず、覚えている行を使う（2 秒ごとの引き直しで、変わっていない一覧を毎回送り直して描き直さない）
+const known = {};
+// url を渡すと、その URL（答えの next）を読む。答えには、続きがあるときの next（次のページの URL）か after（POST のときの印）が付く
+async function fetchRows(name, args, url0) {
+  const rt = ROUTE[name];
+  if (rt && rt.post) {  // 事情があって POST で受ける問い合わせ：条件は本文の {"q": {…}}。版（ETag）は無いので、毎回読み直す
+    const a = args || {}, q = Object.fromEntries((rt.q_inputs || []).filter((x) => a[x.name] != null && a[x.name] !== "").map((x) => [x.name, x.int ? Number(a[x.name]) : a[x.name]]));
+    const j = await api("POST", urlOf(name, Object.fromEntries((rt.path_inputs || []).map((x) => [x.name, a[x.name]]))), { q });
+    const rows = j.rows || (j.ids || []).map((id) => ({ id }));
+    return (rowsOf[name] = rows, { tag: null, rows, key: null, after: j.after });
+  }
+  const url = url0 || urlOf(name, args), had = known[url];
+  const r = await xfetch(url, { headers: { Accept: "application/json", ...(had ? { "If-None-Match": had.tag } : {}) } });
+  if (r.status === 304 && had) return (rowsOf[name] = had.rows, had);
+  const j = await r.json().catch(() => ({ error: "応答が読めません" }));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  const tag = r.headers.get("ETag"), got = { tag, rows: j.rows || (j.ids || []).map((id) => ({ id })), key: tag && url + " " + tag, next: j.next };
+  if (tag) known[url] = got; else delete known[url];
+  return (rowsOf[name] = got.rows, got);
+}
+const query = async (name, args) => (await fetchRows(name, args)).rows;
+// 一覧ごとの読み方：選んだ並び（order）と、「続きを読む」で読み足したページの数（pages）
+const view = {};
+const loadTurn = {};  // 問い合わせ名 → 一覧の読み込みを始めた回数（古い読み込みの結果を描かないため）
+const viewOf = (name) => view[name] || (view[name] = { order: "", pages: 0 });
+// 一覧を、読み足したページの分まで読む。引き直すとき（2 秒ごと・書き込みのあと）も、同じページ数を読み直す
+async function fetchShown(name, args) {
+  const v = viewOf(name), a = { ...args, ...(v.order ? { order: v.order } : {}) };
+  let got = await fetchRows(name, a), rows = got.rows;
+  const keys = [got.key];
+  for (let i = 0; i < v.pages && (got.next || got.after); i++) {
+    got = got.next ? await fetchRows(name, a, got.next) : await fetchRows(name, { ...a, after: got.after });
+    rows = rows.concat(got.rows);
+    keys.push(got.key);
+  }
+  rowsOf[name] = rows;
+  return { rows, key: keys.every(Boolean) ? keys.join("|") : null, more: !!(got.next || got.after) };
+}
+
+function notice(msg, kind) {
+  const n = $("#notice");
+  n.textContent = msg || ""; n.hidden = !msg; n.className = "banner " + (kind || "info");
+  if (msg) clearTimeout(notice.t), notice.t = setTimeout(() => (n.hidden = true), 6000);
+}
+
+// ---- 値の見せ方 ----
+// 金額の書式は、通貨と小数の桁ごとに 1 つ作って使い回す（作るのは重く、値ごとに作ると 1 万行の一覧で約 0.5 秒かかる）
+const moneyFmts = new Map();
+function moneyFmt(cur, m) {
+  const k = cur + "/" + m;
+  let f = moneyFmts.get(k);
+  if (!f) moneyFmts.set(k, (f = new Intl.NumberFormat("ja-JP", { style: "currency", currency: cur, minimumFractionDigits: m, maximumFractionDigits: m })));
+  return f;
+}
+function fmt(col, row) {
+  const v = row[col.name];
+  if (v === null || v === undefined) return "";
+  if (col.kind === "money") {
+    const cur = col.currency || row[col.unit], m = D.screens.minor[cur] ?? 0;
+    try { return moneyFmt(cur, m).format(v / 10 ** m); } catch { return String(v); }
+  }
+  if (col.kind === "enum") return col.values.find((x) => x.value === v)?.label ?? v;
+  if (col.kind === "bool") return v ? "✓" : "—";
+  return v;
+}
+const mainCol = (qd) => qd.columns.find((c) => c.kind === "text") || qd.columns[0];
+const idCol = (qd) => qd.columns.find((c) => c.kind === "id") || qd.columns[0];
+// 結果の中身（IDなど）を、読み込んである問い合わせの行の見出しに置き換えて見せる
+function nameOf(id) {
+  for (const [q, rows] of Object.entries(rowsOf)) {
+    const qd = Q[q], r = rows.find((x) => x[idCol(qd).name] === id);
+    if (r) return String(r[mainCol(qd).name]);
+  }
+  return String(id);
+}
+const bodyText = (v) => (Array.isArray(v) ? v.map(nameOf).join("、") : typeof v === "object" && v ? JSON.stringify(v) : nameOf(v));
+
+// ---- 行の並び ----
+function rowHtml(qd, row, opts) {
+  const id = row[idCol(qd).name], main = mainCol(qd);
+  const cols = qd.columns.filter((c) => c !== main && !(c.kind === "id" && qd.columns.length > 1));
+  const parts = cols.map((c) => {
+    if (c.kind === "money") return `<div class="money" data-col="${esc(c.name)}">${esc(fmt(c, row))}</div>`;
+    if (c.kind === "enum" && c.name !== (opts.slot && opts.slot.name)) return `<span class="tag" data-col="${esc(c.name)}" data-value="${esc(row[c.name])}">${esc(fmt(c, row))}</span>`;
+    if (c.kind === "enum") return "";
+    return `<div class="col" data-col="${esc(c.name)}">${esc(c.label)} <b>${esc(fmt(c, row))}</b></div>`;
+  }).join("");
+  const opens = (opts.opens || []).map((t) => `<button type="button" data-open="${esc(t)}" data-id="${esc(id)}">${esc(S[t].label)}</button>`).join("");
+  const step = opts.qtyField
+    ? `<div class="qty"><button type="button" data-dec="${esc(id)}" aria-label="減らす">−</button><span data-qty="${esc(id)}">${qty[opts.qtyField][id] || 0}</span><button type="button" data-inc="${esc(id)}" aria-label="増やす">＋</button></div>` : "";
+  return `<div class="row" data-row="${esc(id)}"><div class="main">${esc(fmt(main, row))}</div>${parts}${opens}${step}</div>`;
+}
+function visible(rows, slots) {  // slot と同じ名前の列を持つ行は、選んだ値のものだけ
+  return rows.filter((r) => slots.every((s) => !(s.name in r) || r[s.name] === slotVal[s.name]));
+}
+
+// ---- 問い合わせの入力 ----
+function fieldValue(sc, f) {
+  const el = $(`[data-field="${f.name}"]`);
+  if (f.type.kind === "map") return Object.fromEntries(Object.entries(qty[f.name] || {}).filter(([, n]) => n > 0));
+  if (f.type.kind === "group") return Object.fromEntries(f.type.parts.map((p) => [p.name, $(`[data-field="${f.name}.${p.name}"]`).value]));
+  if (f.type.kind === "bool") return el ? el.checked : Boolean(cur.params[f.name]);  // 真偽の欄は true／false で送る
+  return el ? el.value : (cur.params[f.name] ?? "");
+}
+function showArgs(sc, qname) {
+  const args = {};
+  for (const n of Q[qname].inputs) {
+    const f = sc.fields.find((x) => x.name === n.name);
+    const v = f ? fieldValue(sc, f) : cur.params[n.name];
+    if (v === undefined || v === "") return null;
+    args[n.name] = v;
+  }
+  return args;
+}
+async function loadShow(sc, qname) {
+  const box = $(`[data-show="${qname}"] .rows`);
+  if (!box) return;
+  const args = showArgs(sc, qname);
+  if (!args) { drawRows(box, [], `<p class="hint">入力すると表示します。</p>`); box.dataset.drawn = ""; return; }
+  // 同じ一覧の読み込みが重なったら（引き直しの途中で「続きを読む」を押した、など）、後から始めたものだけを描く
+  const turn = (loadTurn[qname] = (loadTurn[qname] || 0) + 1);
+  const got = await fetchShown(qname, args), rows = got.rows, qd = Q[qname];
+  if (loadTurn[qname] !== turn) return;
+  const more = $(`[data-more="${qname}"]`);
+  if (more) more.hidden = !got.more;  // 続きがあるときだけ「続きを読む」を出す
+  if (got.key && box.dataset.drawn === got.key) return;  // 前に描いた答えと同じ（URL と版が同じ）。描き直さない
+  box.dataset.drawn = got.key || "";
+  drawRows(box, rows.map((r) => rowHtml(qd, r, { opens: sc.opens, slot: sc.slots[0] })), `<p class="hint">ありません。</p>`);
+}
+// 一覧の箱を、行の HTML の並びで描く。前に描いた並びと、先頭からと末尾から同じ HTML の行はそのまま残し、間だけを作り直す
+// （書き込みで 1 行が変わっただけでも、1 万行を全部作り直すと 0.2〜0.3 秒かかる）。できる DOM は、全部を作り直したときと同じ
+const drawnRows = new WeakMap();  // 箱 → 前に描いた行の HTML の並び（箱の子と 1 つずつ対応）
+const drawnOptions = new WeakMap();  // 選ぶ欄 → 前に作った選択肢の HTML
+function drawRows(box, htmls, empty) {
+  const prev = drawnRows.get(box);
+  if (!htmls.length || !prev || box.children.length !== prev.length) {
+    box.innerHTML = htmls.length ? htmls.join("") : empty;
+    if (htmls.length) drawnRows.set(box, htmls); else drawnRows.delete(box);
+    return;
+  }
+  let head = 0, tail = 0;
+  const n = Math.min(prev.length, htmls.length);
+  while (head < n && prev[head] === htmls[head]) head++;
+  while (tail < n - head && prev[prev.length - 1 - tail] === htmls[htmls.length - 1 - tail]) tail++;
+  for (let i = prev.length - tail - 1; i >= head; i--) box.children[i].remove();
+  const mid = htmls.slice(head, htmls.length - tail).join("");
+  if (mid) {
+    const t = document.createElement("template");
+    t.innerHTML = mid;
+    box.insertBefore(t.content, box.children[head] || null);
+  }
+  drawnRows.set(box, htmls);
+}
+
+// 並びを選べる問い合わせ（order を 2 行以上書いたもの）の、選ぶ欄。選べなければ空
+function orderSelect(q) {
+  const os = Q[q].orders || [];
+  if (!os.length) return "";
+  const cur = viewOf(q).order || os[0].value;
+  return `<label class="order">並び <select data-order="${esc(q)}">${os.map((o) => `<option value="${esc(o.value)}"${o.value === cur ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select></label>`;
+}
+
+// ---- 画面 ----
+let gen = 0;  // 続けて開かれたとき、古い描画を途中でやめる
+async function render() {
+  const my = ++gen, sc = S[cur.name];
+  document.body.dataset.mode = sc.design.mode;
+  document.body.dataset.layout = sc.design.layout;
+  document.documentElement.style.setProperty("--acc", sc.design.accent);
+  $('meta[name="theme-color"]').content = sc.design.accent;
+  $("#screen-title").textContent = sc.label;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.screen === cur.name));
+  const main = $("#screen");
+  main.dataset.screen = cur.name;
+  main.innerHTML = "";
+  for (const s of sc.slots) {
+    const known = s.values.some((v) => v.value === slotVal[s.name]);
+    if (!known) slotVal[s.name] = store.get("slot:" + s.name) || s.values[0].value;
+  }
+  // 画面に渡された値で、選ぶ行と slot の初期値を決める
+  for (const f of sc.fields) if (f.from && f.type.kind === "map" && !(f.name in qty)) {
+    const q = (qty[f.name] = {});
+    const rows = rowsOf[f.from] || await query(f.from, {}), qd = Q[f.from];
+    if (my !== gen) return;
+    for (const v of Object.values(cur.params)) {
+      const r = rows.find((x) => x[idCol(qd).name] === v);
+      if (r) { q[v] = 1; for (const s of sc.slots) if (s.name in r) slotVal[s.name] = r[s.name]; }
+    }
+  }
+  main.innerHTML = [
+    ...sc.slots.map((s) => `<div class="pills" role="group" aria-label="${esc(s.label)}" data-slot="${esc(s.name)}">${s.values.map((v) => `<button type="button" data-slotval="${esc(v.value)}" class="${v.value === slotVal[s.name] ? "on" : ""}">${esc(v.label)}</button>`).join("")}</div>`),
+    ...sc.fields.map((f) => fieldHtml(sc, f)),
+    ...sc.shows.map((q) => `<section data-show="${esc(q)}"><h2>${esc(Q[q].label)}</h2>${orderSelect(q)}<div class="rows ${esc(sc.design.layout)}"></div><button type="button" class="more" data-more="${esc(q)}" hidden>続きを読む</button></section>`),
+    sc.actions.length ? `<div class="actions">${sc.actions.map((a) => `<button type="button" class="primary" data-action="${esc(a.deed)}">${esc(a.label)}</button>`).join("")}</div>` : "",
+  ].join("");
+  for (const f of sc.fields) { await fillField(sc, f); if (my !== gen) return; }
+  await Promise.all(sc.shows.map((q) => loadShow(sc, q).catch((e) => notice("読み込めません: " + e.message, "warn"))));
+}
+function fieldHtml(sc, f) {
+  const t = f.type;
+  if (t.kind === "map") return `<h2>${esc(f.label)}</h2><div class="rows ${esc(sc.design.layout === "form" ? "stack" : sc.design.layout)}" data-field="${esc(f.name)}"></div>`;
+  if (t.kind === "group") return `<fieldset class="group"><legend>${esc(f.label)}</legend>${t.parts.map((p) => inputHtml(`${f.name}.${p.name}`, p.label, p)).join("")}</fieldset>`;
+  if (f.from) return `<label class="f">${esc(f.label)}<select data-field="${esc(f.name)}"></select></label><div class="picked" data-picked="${esc(f.name)}"></div>`;
+  return inputHtml(f.name, f.label, t);
+}
+function inputHtml(name, label, t) {
+  if (t.kind === "bool") return `<label class="f check"><input data-field="${esc(name)}" type="checkbox"> ${esc(label)}</label>`;
+  const attrs = t.kind === "int" ? `type="number" ${t.lo != null ? `min="${Number(t.lo)}"` : ""} ${t.hi != null ? `max="${Number(t.hi)}"` : ""}` : `type="text" ${t.max ? `maxlength="${Number(t.max)}"` : ""}`;
+  return `<label class="f">${esc(label)}<input data-field="${esc(name)}" ${attrs} autocomplete="off"></label>`;
+}
+async function fillField(sc, f) {
+  if (!f.from) return;
+  const qd = Q[f.from], rows = await query(f.from, {});
+  if (f.type.kind === "map") {
+    const list = visible(rows, sc.slots), box = $(`[data-field="${f.name}"]`);
+    if (!box) return;
+    box.innerHTML = list.map((r) => rowHtml(qd, r, { qtyField: f.name, slot: sc.slots[0] })).join("") || `<p class="hint">ありません。</p>`;
+    return;
+  }
+  const sel = $(`[data-field="${f.name}"]`), idc = idCol(qd).name;
+  if (!sel) return;
+  // 選択肢が前と同じなら作り直さない（入荷のように、選択肢に出ない項目だけが変わったとき。1 万件の選択肢を作り直すと約 0.2 秒かかる）
+  const html = rows.map((r) => `<option value="${esc(r[idc])}">${esc(r[mainCol(qd).name])}</option>`).join("");
+  if (drawnOptions.get(sel) !== html) { sel.innerHTML = html; drawnOptions.set(sel, html); }
+  const saved = store.get("pick:" + f.from);
+  sel.value = rows.some((r) => String(r[idc]) === saved) ? saved : (rows[0] ? rows[0][idc] : "");
+  const show = () => {
+    const r = rows.find((x) => String(x[idc]) === sel.value);
+    $(`[data-picked="${f.name}"]`).textContent = r ? qd.columns.filter((c) => c.name !== idc && c !== mainCol(qd)).map((c) => `${c.label} ${fmt(c, r)}`).join("　") : "";
+  };
+  show();
+  // 選び直したとき。処理の後に選ぶ元を引き直しても、受け手は 1 つ（足し続けると、選び直すたびに同じ引き直しが重なる）
+  sel.onchange = () => { store.set("pick:" + f.from, sel.value); show(); sc.shows.forEach((q) => loadShow(sc, q).catch(() => {})); };
+}
+
+// ---- 処理を呼ぶ ----
+async function act(sc, a) {
+  if (!navigator.onLine) return notice("オフラインのため、操作できません。", "warn");
+  const input = {};
+  for (const i of a.inputs) {
+    const f = sc.fields.find((x) => x.name === i.name);
+    if (!f) { input[i.name] = cur.params[i.name]; continue; }
+    const v = fieldValue(sc, f);
+    if (i.kind === "group" ? Object.values(v).some((x) => x === "") : v === "") return notice(`「${f.label}」を入れてください。`, "warn");
+    if (i.kind === "map") {  // slot と同じ名前の列で絞られて見えている行だけを送る
+      const rows = visible(rowsOf[f.from] || [], sc.slots), idc = idCol(Q[f.from]).name, ok = new Set(rows.map((r) => r[idc]));
+      input[i.name] = Object.fromEntries(Object.entries(v).filter(([k]) => ok.has(k)));
+      if (!Object.keys(input[i.name]).length) return notice(`「${f.label}」を1つ以上選んでください。`, "warn");
+    } else input[i.name] = i.kind === "int" ? Number(v) : v;  // 数の欄は数で送る
+  }
+  const slots = Object.fromEntries(sc.slots.map((s) => [s.name, slotVal[s.name]]));
+  const btn = $(`[data-action="${a.deed}"]`); btn.disabled = true;
+  try {
+    const rt0 = ROUTE[a.deed], idv = rt0.id_input ? input[rt0.id_input] : undefined;  // update／destroy は /…/:id の ID を URL に載せる
+    if (rt0.id_input) delete input[rt0.id_input];
+    const r = await api(rt0.method, rt0.path.replace(/:[A-Za-z0-9_]+/, encodeURIComponent(idv ?? "")), { ...input, slots }, true, rt0.row_entity ? etagOf(rt0.row_entity, idv) : null);
+    const rt = a.routes.find((x) => x.result === r.result);
+    const b = r.body || {};
+    const detail = (rt?.body || []).filter((p) => b[p.name] !== undefined && !(Array.isArray(b[p.name]) && !b[p.name].length)).map((p) => `${p.label} ${bodyText(b[p.name])}`).join("　");
+    const to = rt ? rt.to : "stay";
+    notice((rt ? rt.label : r.result) + (detail ? "：" + detail : ""), to === "stay" ? "warn" : "info");
+    if (to === "back") history.back();
+    else if (to !== "stay") { qty = {}; go(to, {}); }
+    else await Promise.all([...sc.shows.map((q) => loadShow(sc, q)), ...sc.fields.filter((f) => f.from && f.type.kind !== "map").map((f) => fillField(sc, f))]);  // 選ぶ元が変わる（取り下げなど）ので引き直す
+  } catch (e) {
+    notice(e.stale ? e.message : "できませんでした: " + e.message, "warn");
+    if (e.stale) await Promise.all([...sc.shows.map((q) => loadShow(sc, q)), ...sc.fields.filter((f) => f.from && f.type.kind !== "map").map((f) => fillField(sc, f))]).catch(() => {});
+  }
+  finally { btn.disabled = false; }
+}
+
+// ---- 移動 ----
+// 画面の URL は、リソースの URL（defs の screens[].url。例 /orders/new）。渡す値は、パスの :名前 か URL のフラグメント（#名前=値）に載せる（クエリ文字列は使わない）。
+// リソースに付かない画面だけ、/#/画面名 を使う。
+const pathNames = (url) => [...url.matchAll(/:([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+const patOf = (url) => new RegExp("^" + url.split("/").map((p) => (p.startsWith(":") ? "([^/]+)" : p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/") + "/?$");
+function parseLocation() {
+  const frag = location.hash.replace(/^#/, "");
+  if (frag.startsWith("/")) {
+    const [n, qs] = frag.slice(1).split("?");
+    if (S[n]) return { name: n, params: Object.fromEntries(new URLSearchParams(qs || "")) };
+  }
+  for (const [name, sc] of Object.entries(S)) {
+    const m = sc.url && patOf(sc.url).exec(location.pathname);
+    if (!m) continue;
+    const params = Object.fromEntries(new URLSearchParams(frag));
+    pathNames(sc.url).forEach((n, i) => { const v = decodeURIComponent(m[i + 1]); if (v !== ":" + n) params[n] = v; });  // 値が入っていないパス（:名前 のまま）は、渡された値なし
+    return { name, params };
+  }
+  return { name: D.screens.first, params: {} };
+}
+function urlFor(name, params) {
+  const sc = S[name], rest = { ...params };
+  if (!sc.url) { const qs = new URLSearchParams(rest).toString(); return `/#/${name}` + (qs ? "?" + qs : ""); }
+  const path = sc.url.replace(/:([A-Za-z0-9_]+)/g, (m, n) => { if (!(n in rest)) return m; const v = rest[n]; delete rest[n]; return encodeURIComponent(v); });
+  const frag = new URLSearchParams(rest).toString();
+  return path + (frag ? "#" + frag : "");
+}
+function go(name, params) { history.pushState(null, "", urlFor(name, params)); return route(); }
+async function route() {
+  const next = parseLocation();
+  if (!cur || cur.name !== next.name) qty = {};
+  cur = next;
+  await render().catch((e) => notice("画面を作れません: " + e.message, "warn"));
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button"); if (!t) return;
+  const sc = cur && S[cur.name];
+  if (t.dataset.more && sc) { viewOf(t.dataset.more).pages++; loadShow(sc, t.dataset.more).catch((x) => notice("読み込めません: " + x.message, "warn")); }
+  else if (t.dataset.screen) go(t.dataset.screen, {});
+  else if (t.dataset.open) {
+    const target = S[t.dataset.open], p = target.params[0];
+    qty = {}; go(t.dataset.open, p ? { [p.name]: t.dataset.id } : {});
+  } else if (t.dataset.slotval !== undefined) {
+    const n = t.closest("[data-slot]").dataset.slot;
+    slotVal[n] = t.dataset.slotval; store.set("slot:" + n, slotVal[n]); render();
+  } else if (t.dataset.inc || t.dataset.dec) {
+    const f = sc.fields.find((x) => x.type.kind === "map"), q = qty[f.name], id = t.dataset.inc || t.dataset.dec, hi = f.type.value.hi ?? 99;
+    q[id] = Math.max(0, Math.min(hi, (q[id] || 0) + (t.dataset.inc ? 1 : -1)));
+    $(`[data-qty="${id}"]`).textContent = q[id];
+  } else if (t.dataset.action) act(sc, sc.actions.find((a) => a.deed === t.dataset.action));
+});
+
+// ---- 出来事・つながり ----
+async function fire(name) {
+  try { await api("POST", ROUTE[name].path, {}); } catch (e) { notice("確かめ直せません: " + e.message, "warn"); }
+  if (cur) await Promise.all(S[cur.name].shows.map((q) => loadShow(S[cur.name], q).catch(() => {})));
+}
+const eventsOn = (when) => Object.entries(D.screens.events_on).filter(([, on]) => on === when).map(([n]) => n);
+document.addEventListener("change", (e) => {
+  const t = e.target.closest("select[data-order]"), sc = cur && S[cur.name];
+  if (!t || !sc) return;
+  const v = viewOf(t.dataset.order);
+  v.order = t.value; v.pages = 0;  // 並びを変えたら、最初のページから読み直す
+  loadShow(sc, t.dataset.order).catch((x) => notice("読み込めません: " + x.message, "warn"));
+});
+window.addEventListener("online", () => { $("#offline").hidden = true; eventsOn("online").forEach(fire); });
+window.addEventListener("offline", () => ($("#offline").hidden = false));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) eventsOn("opened").forEach(fire); });
+window.addEventListener("popstate", route);
+
+// 見せている問い合わせは、状態が変わる（返事が届く）ので引き直す。入力中の欄には触らない
+setInterval(() => {
+  if (!cur || document.hidden || !navigator.onLine) return;
+  const sc = S[cur.name];
+  sc.shows.forEach((q) => loadShow(sc, q).catch(() => {}));
+}, 2000);
+
+(async function start() {
+  // 定義は覚えておき、オフラインでも画面を開けるようにする
+  try { D = await api("GET", "defs"); store.set("defs", JSON.stringify(D)); }
+  catch (e) { const c = store.get("defs"); if (!c) throw e; D = JSON.parse(c); }
+  S = D.screens.screens; Q = D.screens.queries;
+  ROUTE = Object.fromEntries(D.routes.map((r) => [r.target, r]));
+  document.title = D.screens.title;
+  $("#app-title").textContent = D.screens.title;
+  $("#tabs").innerHTML = D.screens.order.map((n) => [n, S[n]]).filter(([, s]) => !s.params.length && s.entry === (s === S[D.screens.first])).map(([n, s]) => `<button data-screen="${n}">${esc(s.label)}</button>`).join("");
+  if (!viaIpc && "serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if (!navigator.onLine) $("#offline").hidden = false;
+  eventsOn("opened").forEach(fire);
+  await route();
+})().catch((e) => notice("定義を読めません: " + e.message, "warn"));

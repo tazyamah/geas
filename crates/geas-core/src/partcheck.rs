@@ -5,7 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-const STD_LEDGER: &str = include_str!("../../../geas/std/num.parts.json");
+const STD_LEDGER: &str = include_str!("../assets/std/num.parts.json");
 
 /// Python の json.dumps（ensure_ascii=False、区切りは ", " と ": "）で、文字列の入れ子の配列を書く
 fn pyjson(v: &Value) -> String {

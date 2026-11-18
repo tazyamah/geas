@@ -171,6 +171,93 @@ fn review_cmd(args: &[String]) -> i32 {
     if ck.ok() { 0 } else { 1 }
 }
 
+fn counts_line(ck: &geas_core::check::Checker) -> String {
+    use geas_core::check::{ERROR, QUESTION, WARN};
+    let n = |lv: &str| ck.diags.iter().filter(|d| d.level == lv).count();
+    let tally = format!("エラー {} 件・問い {} 件・警告 {} 件", n(ERROR), n(QUESTION), n(WARN));
+    if n(ERROR) > 0 {
+        return format!("検査: エラーがあります（{}）", tally);
+    }
+    if n(QUESTION) > 0 {
+        return format!("検査: 通りました（{}）。問いは人に1問ずつ聞いて決めてください（答えるまで rust と compare は進みません）", tally);
+    }
+    format!("検査: 通りました{}", if n(WARN) > 0 { format!("（{}）", tally) } else { String::new() })
+}
+
+fn rust_cmd(args: &[String]) -> i32 {
+    let (mut file, mut out, mut plan, mut seed, mut target) = (None, None, None, None, None);
+    let mut server = geas_core::crategen::DEFAULT_SERVER.to_string();
+    let (mut host, mut runtime, mut standalone) = (false, false, false);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => { i += 1; out = args.get(i).cloned(); }
+            "--plan" => { i += 1; plan = args.get(i).cloned(); }
+            "--seed" => { i += 1; seed = args.get(i).cloned(); }
+            "--target" => { i += 1; target = args.get(i).cloned(); }
+            "--server" => { i += 1; if let Some(s) = args.get(i) { server = s.clone(); } }
+            "--host" => host = true,
+            "--runtime" => runtime = true,
+            "--standalone" => standalone = true,
+            a if file.is_none() => file = Some(a.to_string()),
+            _ => { eprintln!("geas-rs: 解釈できない引数: {}", args[i]); return 2; }
+        }
+        i += 1;
+    }
+    let (Some(path), Some(out)) = (file, out) else { eprintln!("geas-rs: rust FILE -o OUT"); return 2; };
+    let mut bad: Vec<String> = vec![];
+    for (k, v) in [("コード", Some(&path)), ("計画書", plan.as_ref()), ("seed", seed.as_ref())] {
+        let _ = k;
+        if let Some(v) = v {
+            let p = Path::new(v);
+            if !p.is_file() {
+                bad.push(if !p.exists() { format!("ファイルがありません: {}", v) } else { format!("ファイルではありません: {}", v) });
+            }
+        }
+    }
+    if runtime && !host { bad.push("--runtime は --host と一緒に使います（サーバーの実行部は、画面の窓口と組みます）".into()); }
+    if standalone && !(host && runtime) { bad.push("--standalone は --host --runtime と一緒に使います（窓つき exe は、サーバーの実行部と生成した画面を使います）".into()); }
+    if seed.is_some() && !runtime { bad.push("--seed は --host --runtime と一緒に使います（最初のデータはサーバーが入れます）".into()); }
+    if !bad.is_empty() {
+        for b in bad { eprintln!("{}", b); }
+        return 2;
+    }
+    let mut prog = None;
+    if let Err(c) = load(&path, &mut prog) { return c; }
+    let mut prog = prog.unwrap();
+    let mut ck = geas_core::check::defs::check(&mut prog, true);
+    ck.code_path = Some(path.clone());
+    if !ck.ready() {
+        for d in &ck.diags { println!("{}", d.for_code()); }
+        println!("{}", counts_line(&ck));
+        eprintln!("検査にエラーか問いが残っているので、続けません（問いに答えて、コードか計画書に反映してください）。");
+        return 1;
+    }
+    if standalone && !ck.p.actors.is_empty() {
+        eprintln!("役割（actor）のあるアプリは、窓つき exe（--standalone）にできません。窓つき exe には、役割を確かめるプロキシが前にいないためです。");
+        return 1;
+    }
+    if standalone && !ck.p.paths.is_empty() {
+        let tgt = target.clone().unwrap_or_else(|| if cfg!(windows) { "windows".into() } else if cfg!(target_os = "macos") { "macos".into() } else { "linux".into() });
+        let lack: Vec<&str> = ck.p.paths.iter().filter(|(_, k, es, _)| k == "absolute" && !es.iter().any(|(o, _, _)| o == &tgt)).map(|(n, _, _, _)| n.as_str()).collect();
+        if !lack.is_empty() {
+            eprintln!("パス {} に、組む OS（{}）の行がありません。`{} \"…\"` を書くか、--target で組む OS を指定してください", lack.join("・"), tgt, tgt);
+            return 1;
+        }
+    }
+    if plan.is_some() {
+        eprintln!("geas-rs: --plan（具体例の実行用 bin）はまだ移していません");
+        return 2;
+    }
+    let dest = Path::new(&out);
+    if let Err(e) = geas_core::crategen::generate_tree(&ck, dest, host, runtime, standalone, seed.as_deref(), &server) {
+        eprintln!("{}", e);
+        return 1;
+    }
+    println!("生成しました: {}", out);
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
@@ -207,6 +294,7 @@ fn main() {
                 Err(e) => { eprintln!("{}", e); 1 }
             }
         }
+        Some("rust") => rust_cmd(&args[2..]),
         Some("review") => review_cmd(&args[2..]),
         Some("check") if args.len() == 4 && args[3] == "--json" => check_json(&args[2]),
         _ => {

@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""MCP サーバー（標準入出力・JSON-RPC）。ツール定義（tools.json、geas が生成）を読み、ツールの呼び出しを、動いているサーバーの REST に中継するだけの汎用の橋渡し。
+アプリを知らない。使い方：python mcp_bridge.py tools.json http://127.0.0.1:8080"""
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PROTOCOL = "2025-06-18"
+# サーバーの返事を読む上限（バイト）。サーバーの本文の上限と同じ
+MAX_REPLY = 16 * 1024 * 1024
+
+
+def call(tool: dict, args: dict, base: str) -> tuple[int, str]:
+    g = tool["geas"]
+    path = "/".join(urllib.parse.quote(str(args[s[1:]]), safe="") if s.startswith(":") else s for s in g["path"].split("/"))
+    q = [(f"q[{n}]", str(args[n])) for n in g.get("q", []) if args.get(n) is not None]  # 絞り込みの条件（指定しないものは書かない）
+    if g.get("post_q"):  # 事情があって POST で受ける問い合わせ：条件は、本文の {"q": {…}}
+        data = json.dumps({"q": {n: args[n] for n in g.get("q", []) if args.get(n) is not None}}).encode()
+        req = urllib.request.Request(base.rstrip("/") + path, data=data, method="POST", headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read(MAX_REPLY).decode(errors="replace")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(MAX_REPLY).decode(errors="replace")
+    path += "?" + urllib.parse.urlencode(q) if q else ""
+    body = json.dumps({k: args[k] for k in g["body"] if k in args}).encode() if g["method"] != "GET" else None
+    headers = {"Content-Type": "application/json"}
+    if g.get("if_match") and args.get("if_match"):  # 書き込みの版の確認：読んだときの行の版を、ヘッダ If-Match で送る
+        tag = str(args["if_match"]).strip()
+        headers["If-Match"] = tag if tag.startswith('"') else f'"{tag}"'
+    req = urllib.request.Request(base.rstrip("/") + path, data=body, method=g["method"], headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            text = r.read(MAX_REPLY).decode(errors="replace")
+            # 1 件の読み出し：答えの版（ETag）を、本文の前に 1 行で付ける（書き込みのツールの if_match に、そのまま渡せる）
+            return r.status, (f"ETag: {r.headers['ETag']}\n{text}" if g.get("etag") and r.headers.get("ETag") else text)
+    except urllib.error.HTTPError as e:  # 結果の種類（404・409・422 など）も、AI が読む返事
+        return e.code, e.read(MAX_REPLY).decode(errors="replace")
+
+
+def handle(msg: dict, tools: list[dict], base: str) -> dict | None:
+    m, i = msg.get("method"), msg.get("id")
+    if i is None:  # 通知には返事しない
+        return None
+    if m == "initialize":
+        res = {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}}, "serverInfo": {"name": "geas", "version": "0.1.0"}}
+    elif m == "tools/list":
+        res = {"tools": [{k: v for k, v in t.items() if k != "geas"} for t in tools]}
+    elif m == "tools/call":
+        prm = msg.get("params", {})
+        tool = next((t for t in tools if t["name"] == prm.get("name")), None)
+        if tool is None:
+            return {"jsonrpc": "2.0", "id": i, "error": {"code": -32602, "message": f"ツール「{prm.get('name')}」はありません"}}
+        try:
+            code, text = call(tool, prm.get("arguments") or {}, base)
+        except (KeyError, OSError) as e:
+            return {"jsonrpc": "2.0", "id": i, "result": {"isError": True, "content": [{"type": "text", "text": f"呼べませんでした: {e!r}"}]}}
+        res = {"isError": code >= 400, "content": [{"type": "text", "text": f"HTTP {code}\n{text}"}]}
+    elif m == "ping":
+        res = {}
+    else:
+        return {"jsonrpc": "2.0", "id": i, "error": {"code": -32601, "message": f"未対応: {m}"}}
+    return {"jsonrpc": "2.0", "id": i, "result": res}
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3:
+        print("使い方: python mcp_bridge.py tools.json サーバーのURL", file=sys.stderr)
+        return 2
+    tools = json.load(open(argv[1], encoding="utf-8"))
+    for s in (sys.stdin, sys.stdout):  # MCP の stdio は UTF-8（Windows の既定の文字コードで読み書きしない）
+        if hasattr(s, "reconfigure"):
+            s.reconfigure(encoding="utf-8")
+    for line in sys.stdin:
+        if line.strip():
+            # 読めない 1 行で橋渡しを止めない（JSON でない・オブジェクトでない行は、JSON-RPC の誤りとして返す）
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                msg = None
+            if not isinstance(msg, dict):
+                code, text = (-32700, "JSON として読めません") if msg is None else (-32600, "要求は JSON のオブジェクトで送ります")
+                print(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": code, "message": text}}, ensure_ascii=False), flush=True)
+                continue
+            out = handle(msg, tools, argv[2])
+            if out is not None:
+                print(json.dumps(out, ensure_ascii=False), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
