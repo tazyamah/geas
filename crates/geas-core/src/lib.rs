@@ -13,6 +13,7 @@ pub mod rest;
 pub mod rawexpr;
 pub mod envreq;
 pub mod hints;
+pub mod hostgen;
 pub mod rustgen;
 pub mod screengen;
 pub mod review;
