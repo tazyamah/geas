@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""標準部品（geas/std/num.geas）の証明を、Kani で実行する。
+"""標準部品（crates/geas-core/assets/std/num.geas）の証明を、Kani で実行する。
 
-部品の境界値の検査（python -m geas parts）は、端の値で呼ぶだけ。ここでは、引数の型の全部の値について示す。
+部品の境界値の検査（geas parts）は、端の値で呼ぶだけ。ここでは、引数の型の全部の値について示す。
 部品ごとに、証明を 2 段で試す：
 - 式どおり：戻り値が、桁の限りを気にしない計算（i128）で書いた式と、全部の入力で等しい（下の SPEC に式がある部品だけ）
 - panic しない：全部の入力で、panic も計算のあふれも起きない
@@ -9,11 +9,12 @@
 
 使い方: python proofs/std_proofs.py [--timeout 秒] [--jobs 数] [--record]
         （cargo install --locked kani-verifier && cargo kani setup が済んでいること）
---record を付けると、境界値の検査も回して、台帳（geas/std/num.parts.json）に証明した内容を書く。仕様書の「人の保証」に出る。
-通常のテスト（pytest）には入れない。
+--record を付けると、境界値の検査も回して、台帳（crates/geas-core/assets/std/num.parts.json）に証明した内容を書く。仕様書の「人の保証」に出る。
+通常のテスト（cargo test）には入れない。geas の実行ファイルは、環境変数 GEAS か PATH から探す。
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -21,12 +22,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-from geas.check import check, phys  # noqa: E402
-from geas.parser import parse  # noqa: E402
-from geas.stdref import NAME  # noqa: E402
-
-NUM = ROOT / "geas" / "std" / "num.geas"
+GEAS = os.environ.get("GEAS", "geas")  # geas の実行ファイル（既定は PATH の geas）
+NAME = re.compile(r"^Num_([iu])(8|16|32|64)_(\w+)$")
+NUM = ROOT / "crates" / "geas-core" / "assets" / "std" / "num.geas"
 EQ, SAFE = "式どおりで、panic しない", "panic しない"
 
 # メソッド名 → 戻り値 R が満たす式（Rust）。A・B は引数、R は戻り値で、どれも i128（真偽の戻り値は bool のまま）。
@@ -72,14 +70,26 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 """
 
 
+class T:
+    def __init__(self, kind: str, ty: str):
+        self.kind, self.ty = kind, ty
+
+
+class Part:
+    def __init__(self, d: dict):
+        self.name = d["name"]
+        self.params = [(n, T(k, t)) for n, k, t in d["params"]]
+        self.ret = T(*d["ret"])
+        self.lib = ("std", "", d["expr"])
+
+
 def std_parts() -> list:
-    with tempfile.TemporaryDirectory() as tmp:
-        ck = check(parse(f'use "{NUM.as_posix()}"\n', str(Path(tmp) / "all.geas")))
-    return [pt for pt in ck.p.parts if pt.external]
+    r = subprocess.run([GEAS, "parts", str(NUM), "--describe"], capture_output=True, text=True, encoding="utf-8", check=True)
+    return [Part(d) for d in json.loads(r.stdout)]
 
 
 def rust_ty(t) -> str:
-    return "bool" if t.kind == "真偽" else phys(t)
+    return t.ty
 
 
 def source(parts: list) -> str:
@@ -140,21 +150,22 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--timeout", type=int, default=60, help="証明 1 つあたりの上限（秒）")
     ap.add_argument("--jobs", type=int, default=4, help="同時に回す証明の数")
-    ap.add_argument("--record", action="store_true", help="境界値の検査も回して、台帳（geas/std/num.parts.json）に書く")
+    ap.add_argument("--record", action="store_true", help="境界値の検査も回して、台帳（crates/geas-core/assets/std/num.parts.json）に書く")
     a = ap.parse_args()
     parts = std_parts()
     proved = run(a.timeout, a.jobs)
     print(report(proved, parts))
     if a.record:
-        from geas.partcheck import STD_LEDGER, check_parts, ledger_of
-        from geas.stdref import reference
-        with tempfile.TemporaryDirectory() as tmp:
-            rep = check_parts(parts, Path(tmp), reference(parts))
-        if not rep.ok:
-            print("境界値の検査で食い違いがあるので、台帳は書きません", file=sys.stderr)
+        check = subprocess.run([GEAS, "parts", str(NUM)], capture_output=True, text=True, encoding="utf-8")
+        if check.returncode != 0:
+            print(check.stdout + "境界値の検査で食い違いがあるので、台帳は書きません", file=sys.stderr)
             return 1
-        STD_LEDGER.write_text(json.dumps(ledger_of(rep, parts, proved), ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"台帳を書きました: {STD_LEDGER}")
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "proved.json"
+            f.write_text(json.dumps(proved, ensure_ascii=False), encoding="utf-8")
+            r = subprocess.run([GEAS, "parts", str(NUM), "--record", "--proved", str(f)], capture_output=True, text=True, encoding="utf-8")
+        print(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
+        return r.returncode
     return 0
 
 

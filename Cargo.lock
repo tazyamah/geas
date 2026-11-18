@@ -161,6 +161,7 @@ version = "0.0.0"
 dependencies = [
  "geas-core",
  "lzma-rs",
+ "regex",
  "serde_json",
  "sha2",
  "tar",

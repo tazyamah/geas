@@ -422,13 +422,16 @@ pub fn toolchain() -> String {
 }
 
 /// 検査の結果を台帳の形にする（キーは名前順にそろえる：Python 版は sort_keys で書く）
-pub fn ledger_of(rep: &Report, parts: &[&Part]) -> Value {
+pub fn ledger_of(rep: &Report, parts: &[&Part], proved: Option<&serde_json::Map<String, Value>>) -> Value {
     let bad: BTreeSet<&str> = rep.findings.iter().map(|f| f.part.as_str()).collect();
     let mut out = serde_json::Map::new();
     for pt in parts {
         if (rep.calls.contains_key(&pt.name) || rep.examples.contains_key(&pt.name)) && !bad.contains(pt.name.as_str()) {
             out.insert(pt.name.clone(), json!({"fingerprint": fingerprint(pt), "calls": rep.calls.get(&pt.name).copied().unwrap_or(0), "reference": rep.compared.contains(&pt.name),
                                                 "examples": rep.examples.get(&pt.name).copied().unwrap_or(0), "examples_fingerprint": examples_fingerprint(pt)}));
+            if let Some(v) = proved.and_then(|m| m.get(&pt.name)) {
+                out.get_mut(&pt.name).unwrap().as_object_mut().unwrap().insert("proved".into(), v.clone());
+            }
         }
     }
     json!({"toolchain": toolchain(), "parts": out})

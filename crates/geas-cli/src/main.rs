@@ -94,7 +94,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "interview", pos: &["action", "ledger"], opts: &[("--title", true), ("-o", true), ("--force", false)] },
     Cmd { name: "astdump", pos: &["code"], opts: &[] },
     Cmd { name: "check", pos: &["code"], opts: &[("--json", false), ("--base", true), ("--base-git", true)] },
-    Cmd { name: "parts", pos: &["code"], opts: &[("--all", false), ("--record", false)] },
+    Cmd { name: "parts", pos: &["code"], opts: &[("--all", false), ("--record", false), ("--proved", true), ("--describe", false)] },
     Cmd { name: "spec", pos: &["code"], opts: &[("--plan", true), ("-o", true)] },
     Cmd { name: "env-checks", pos: &["code"], opts: &[("--json", false)] },
     Cmd { name: "env-facts", pos: &["plan"], opts: &[("--adapter", true), ("--service", true)] },
@@ -803,6 +803,18 @@ fn cmd_parts(a: &Args) -> i32 {
         println!("確かめる部品（library）がありません{}", if is_module || all { "" } else { "（呼ばれていない部品も確かめるには --all）" });
         return 0;
     }
+    if a.f("describe") {
+        // 開発用：確かめる部品の宣言を JSON で出す（proofs/std_proofs.py が読む）
+        let ty = |t: &geas_core::ast::Type| if t.kind == "真偽" { "bool".to_string() } else { geas_core::check::phys(t).to_string() };
+        let list: Vec<serde_json::Value> = parts.iter().map(|pt| serde_json::json!({
+            "name": pt.name,
+            "params": pt.params.iter().map(|(n, t)| serde_json::json!([n, t.kind, ty(t)])).collect::<Vec<_>>(),
+            "ret": [pt.ret.kind, ty(&pt.ret)],
+            "expr": pt.lib.as_ref().map(|l| l.2.clone()).unwrap_or_default(),
+        })).collect();
+        println!("{}", geas_core::crategen::dumps_indent(&serde_json::Value::Array(list), 1));
+        return 0;
+    }
     let tmp = std::env::temp_dir().join(format!("geas-parts-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let rep = pr::check_parts(&parts, &tmp, &pr::reference(&parts));
@@ -817,7 +829,8 @@ fn cmd_parts(a: &Args) -> i32 {
     println!("{}", pr::render(&rep));
     if a.f("record") {
         let out = Path::new(path).with_extension("parts.json");
-        let led = pr::sort_keys(&pr::ledger_of(&rep, &parts));
+        let proved: Option<serde_json::Map<String, serde_json::Value>> = a.v("proved").and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str(&t).ok());
+        let led = pr::sort_keys(&pr::ledger_of(&rep, &parts, proved.as_ref()));
         std::fs::write(&out, geas_core::crategen::dumps_indent(&led, 1) + "\n").unwrap();
         println!("台帳を書きました: {}", out.display());
     }

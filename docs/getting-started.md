@@ -4,12 +4,13 @@ geas を入れて、小さなアプリを 1 つ作り、人が読む仕様書を
 
 ## 1. 入れる
 
-要るのは Python 3.10 以上だけです（外部のライブラリは要りません）。インストール作業もありません。
+要るのは Rust（cargo）だけです。
 
 ```sh
 git clone https://github.com/tazyamah/geas.git
 cd geas
-python -m geas check tests/fixtures/overseas_shop/overseas_shop.geas   # 見本が検査を通る
+cargo install --path crates/geas-cli                          # geas を入れる
+geas check tests/fixtures/overseas_shop/overseas_shop.geas   # 見本が検査を通る
 ```
 
 生成した Rust を動かすときだけ、Rust（cargo）が要ります。
@@ -20,7 +21,7 @@ python -m geas check tests/fixtures/overseas_shop/overseas_shop.geas   # 見本�
 
 ```sh
 F=tests/fixtures/overseas_shop
-python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o 仕様書.html
+geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o 仕様書.html
 ```
 
 ## 3. 小さなアプリを作る
@@ -131,7 +132,7 @@ nexus MemoFlow {
 ## 4. 検査する
 
 ```sh
-python -m geas check tests/fixtures/tutorial/memo.geas
+geas check tests/fixtures/tutorial/memo.geas
 ```
 
 ```
@@ -143,8 +144,8 @@ python -m geas check tests/fixtures/tutorial/memo.geas
 ## 5. 仕様書を出す
 
 ```sh
-python -m geas review tests/fixtures/tutorial/memo.geas -o memo.html    # 人が読む仕様書（スマホ幅の HTML）
-python -m geas spec tests/fixtures/tutorial/memo.geas                   # Markdown で標準出力へ
+geas review tests/fixtures/tutorial/memo.geas -o memo.html    # 人が読む仕様書（スマホ幅の HTML）
+geas spec tests/fixtures/tutorial/memo.geas                   # Markdown で標準出力へ
 ```
 
 仕様書には、データ、状態と遷移、処理の一覧、処理の中身（上から順の手順）、URL の表、フロー図が、コードから機械で作られて出ます。人はこれを頭から読んで「これで合っている」と言えるかを確かめます。コードは読みません。
@@ -152,7 +153,7 @@ python -m geas spec tests/fixtures/tutorial/memo.geas                   # Markdo
 ## 6. 約束を崩して、守られているかを見る
 
 ```sh
-python -m geas mutate tests/fixtures/tutorial/memo.geas
+geas mutate tests/fixtures/tutorial/memo.geas
 ```
 
 約束を 1 つずつ崩した版を作って、検査器が止めるかを見ます。このアプリでは、`body: NoteBody required` から `required` を外しても検査器が何も言いません（生き残り）。「本文は必ずある」という約束が、検査器では守られていないという印です。守りたい約束なら、具体例（計画書）か不変条件に足します。
@@ -160,7 +161,7 @@ python -m geas mutate tests/fixtures/tutorial/memo.geas
 ## 7. Rust にする
 
 ```sh
-python -m geas rust tests/fixtures/tutorial/memo.geas -o out/memo
+geas rust tests/fixtures/tutorial/memo.geas -o out/memo
 ```
 
 `out/memo` に、そのまま組める Rust の crate が出ます。サーバーや画面まで出すオプション（`--host`・`--runtime`・`--standalone`）は [ai-guide.md](ai-guide.md) にあります。
@@ -171,7 +172,7 @@ python -m geas rust tests/fixtures/tutorial/memo.geas -o out/memo
 
 1. AI と会話して計画書（Markdown）を作る（[plan-interview](../skills/plan-interview/SKILL.md)）。
 2. AI が計画書から `.geas` を書き、検査器に通す（[geas-develop](../skills/geas-develop/SKILL.md)）。
-3. 仕様書を生成して、計画書と突き合わせる（`python -m geas compare アプリ.geas 計画書.md`）。具体例は生成した Rust で実際に動かします。
+3. 仕様書を生成して、計画書と突き合わせる（`geas compare アプリ.geas 計画書.md`）。具体例は生成した Rust で実際に動かします。
 4. 人が仕様書をレビューする。変更のたびに、[前の版からの変更](https://tazyamah.github.io/geas/overseas_shop_changes.html)の版（`review --diff-o 変更.html --base-git HEAD~1`）だけを見れば済みます。
 
 ## 次に読むもの

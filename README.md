@@ -21,14 +21,15 @@
 
 ## 使い方
 
-Python 3.10 以上、外部ライブラリなし（試作の Python 版。生成物と実行部は Rust）。
+Rust（cargo）だけで動きます。本体も、生成物も、サーバーの実行部も Rust です。
 
 ```
-python -m geas check アプリ.geas                  # 検査
-python -m geas review アプリ.geas --plan 計画書.md -o 仕様書.html   # 人が読む仕様書
-python -m geas rust アプリ.geas -o 出力先          # Rust を生成
-python -m geas compare アプリ.geas 計画書.md       # 計画書と突合（具体例も実行）
-python -m pytest tests                            # テスト
+cargo install --path crates/geas-cli               # 入れる（実行ファイル名は geas）
+geas check アプリ.geas                             # 検査
+geas review アプリ.geas --plan 計画書.md -o 仕様書.html   # 人が読む仕様書
+geas rust アプリ.geas -o 出力先                    # Rust を生成
+geas compare アプリ.geas 計画書.md                 # 計画書と突合（具体例も実行）
+cargo test                                         # テスト
 ```
 
 ## 読むもの

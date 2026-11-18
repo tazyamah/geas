@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/geas-core", "crates/geas-cli"]
-exclude = ["tests", "out", "geas", "proofs"]
+exclude = ["tests", "out", "proofs", "crates/geas-core/assets/server", "crates/geas-core/assets/window"]
 
 [workspace.package]
 edition = "2021"

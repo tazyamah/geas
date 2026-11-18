@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "geas/**"
+      - "crates/**"
       - "tests/fixtures/overseas_shop/*.geas"
       - "tests/fixtures/overseas_shop/overseas_shop_plan.md"
       - "pages/**"
@@ -42,7 +42,7 @@ jobs:
         run: |
           F=tests/fixtures/overseas_shop
           mkdir -p site
-          python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
+          cargo run --release -q -p geas-cli -- review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
             -o site/overseas_shop.html \
             --diff-o site/overseas_shop_changes.html \
             --base $F/overseas_shop_before.geas

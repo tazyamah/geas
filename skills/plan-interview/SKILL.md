@@ -7,7 +7,7 @@ description: 初回の対話から、一問一答でアプリの仕様書（plan
 
 出典：このスキルは、Cockburn が提唱したユースケース手法に基づく。Alistair Cockburn, *Writing Effective Use Cases*, Addison-Wesley, 2000（日本語訳『ユースケース実践ガイド』ウイングス）。
 
-人が最初に話した内容（アプリの望み）から、短い一問一答を繰り返して plan の仕様書（①）を作る。道具は台帳（JSON）で、`python -m geas interview` の `status`（次に聞くこと）と `render`（plan の Markdown）を使う。台帳は plan の元であり、コードから作らない。
+人が最初に話した内容（アプリの望み）から、短い一問一答を繰り返して plan の仕様書（①）を作る。道具は台帳（JSON）で、`geas interview` の `status`（次に聞くこと）と `render`（plan の Markdown）を使う。台帳は plan の元であり、コードから作らない。
 
 ## 約束
 
@@ -45,4 +45,4 @@ description: 初回の対話から、一問一答でアプリの仕様書（plan
 
 ## 台帳の書き方
 
-`interview init 台帳.json --title 題名` で作る。形は geas/interview.py の冒頭を見る。JSON は Edit で直接直してよい。書いたら必ず `status` を実行し、次に聞くことを確かめる。
+`interview init 台帳.json --title 題名` で作る。形は crates/geas-core/src/interview.rs の冒頭を見る。JSON は Edit で直接直してよい。書いたら必ず `status` を実行し、次に聞くことを確かめる。

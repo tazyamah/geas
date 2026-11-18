@@ -1,6 +1,6 @@
 module Num
 
-// 自動生成（python -m geas.stdgen）。手で編集しない。Rust の標準ライブラリ（core）の整数型のメソッドのうち、
+// 自動生成（Python 版の stdgen.py。タグ python-final にある）。手で編集しない。Rust の標準ライブラリ（core）の整数型のメソッドのうち、
 // 宣言から panic も繰り返しもしないと言えるものだけ。範囲は Rust の型から決める。
 // 書き出す前に、安定版の toolchain で組んで範囲の端の値で呼び、手本（geas/stdref.py）と比べてある（組めないものは外した）。
 

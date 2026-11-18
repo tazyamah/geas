@@ -1,6 +1,6 @@
 # Geas 言語リファレンス（AI 向け）
 
-Python 版（試作）の書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`python -m geas check`）が正本**です。
+書き方の一覧です。書き方の例は、すべて [tests/fixtures/overseas_shop/overseas_shop.geas](../tests/fixtures/overseas_shop/overseas_shop.geas) にあります。経緯と設計の理由は [v0.1.0-scope.md](v0.1.0-scope.md)。食い違ったら**検査器（`geas check`）が正本**です。
 
 ## 1. 全体の決まり
 
@@ -23,7 +23,7 @@ Python 版（試作）の書き方の一覧です。書き方の例は、すべ�
 | `money` / `money(USD)` / `money(currency)` | 金額（最小単位の整数）。単位ごとに別の型で、違う単位は混ぜられない。`money(名前)` は、同じ並びにある通貨（`currency` 型）の入力・slot・項目の名前 |
 | `currency` | 通貨コード（JPY・USD・EUR）。入力・slot・項目に持てる |
 | `text` / `text 1..80` / `text 2..2 of "A-Z"` | 文字列。長さと使える文字（`of` は `-` でつないだ範囲） |
-| `Gtin.Gtin13`（標準モジュール） | JAN・EAN・UPC。最後の 1 桁の検査数字まで境界で確かめる。`use "gtin.geas"` と書いて使う（geas に同梱の `geas/std/gtin.geas`。隣に同じ名前のファイルが無ければ、同梱のものを読む）（8・12・14 桁は `Gtin.Gtin8`・`Gtin.Gtin12`・`Gtin.Gtin14`）。確かめ方は geas の式（`convert`）で書いてあり、仕様書の部品の表に出る。組み込みの `check gtin` は 2026-11-16 に外した |
+| `Gtin.Gtin13`（標準モジュール） | JAN・EAN・UPC。最後の 1 桁の検査数字まで境界で確かめる。`use "gtin.geas"` と書いて使う（geas に同梱の `crates/geas-core/assets/std/gtin.geas`。隣に同じ名前のファイルが無ければ、同梱のものを読む）（8・12・14 桁は `Gtin.Gtin8`・`Gtin.Gtin12`・`Gtin.Gtin14`）。確かめ方は geas の式（`convert`）で書いてあり、仕様書の部品の表に出る。組み込みの `check gtin` は 2026-11-16 に外した |
 | `time` | 日時。`30 min`・`24 hour`・`10 sec` の期間を足し引きでき、時刻どうしの引き算は秒数。`day` `week` `month` `year` は書けない |
 | `bool` | 真偽。値は `true` `false`。範囲は無い。項目・入力・slot・`library` の引数と戻り値に書ける。JSON も `true` / `false`（`"yes"` や `1` は入力不正）。画面ではチェックボックス |
 | `bytes` | バイト列 |
@@ -137,7 +137,7 @@ migration 3 {
 - `add` の値は、数・`"文字列"`・`true`/`false`・`null`・状態の名前・`分子/分母` です。値は、項目の型と範囲に入っていること（検査が見ます。あとの `rename` で名前が変わる項目は、変わった先の型で見ます）。`add` は、その項目が無い行にだけ値を入れます。
 - 手順を全部当てた結果が、今の実体の項目と合っていること（検査が見ます）。`rename` の元と `drop` の項目は今の実体に無いこと、`add` と `rename` の先は今の実体にあること。足してからあとで消す項目は、今の実体に無くてかまいません。
 - DB は自分の版を覚えています（覚えていなければ 1）。サーバーは起動時に、足りない版の手順だけを順に当て、書き換えた行を今の型の範囲で確かめてから、版を進めます。全部を 1 回でまとめて行い、合わない行が 1 つでもあれば、何も変えずに止まります（`rename` の元と先の両方がある行も、どちらを残すか決まらないので止まります）。行の無い DB は、今の版として始まります。このアプリより新しい版の DB は開きません。
-- `python -m geas check アプリ.geas --base 前のコード.geas`（または `--base-git HEAD~1`）は、前の版にもある実体で、増えた項目・減った項目が `migration` に書かれていなければ、エラーにします。`geas review --base` でも同じです。項目を `migration` に書かずに消すと、起動は通りますが、前の版の行にその値が残り、同じ名前の項目をあとで足したときに生き返ります。
+- `geas check アプリ.geas --base 前のコード.geas`（または `--base-git HEAD~1`）は、前の版にもある実体で、増えた項目・減った項目が `migration` に書かれていなければ、エラーにします。`geas review --base` でも同じです。項目を `migration` に書かずに消すと、起動は通りますが、前の版の行にその値が残り、同じ名前の項目をあとで足したときに生き返ります。
 - 仕様書には「保存の形の変更」の表が出ます。
 
 ## 4. 処理（deed）
@@ -183,11 +183,11 @@ deed place_order {
 - 割り算 `x / d`・余り `x % d`（整数。切り捨ては負の無限大へ、余りは 0 以上）：`d` が定数なら正の整数。`d` が変数なら、検査器が **1 以上と示せる**ときだけ通ります（`ltype` の範囲が 1 以上、または `if n == 0 { return … }`・`if n < 1 { return … }` のように、先へ進む道で 0 を除いてある）。示せないときは、`x / d or 0` のように **0 のときの値**（`or` のあとは整数）を書きます。`or` があれば `d` は 0 でも負でもよく、結果の範囲は商（または余り）と `or` の値の合流です。生成物は `checked_div_euclid` を使い、`i64::MIN / -1` のようなあふれは `Fault::Overflow` になります。
 - 足し引き `x.f += 式`・`x.f -= 式` の範囲：書く値が項目の範囲に収まると示せなければ検査が止まります（`if x.f > 999900 { return Full }` のように確かめる）。示せなくても人が引き受けるときは、**理由つき**で文の末尾に書きます。`x.f += 式 saturating "理由"` は範囲の端（上限・下限）で止まります。`x.f += 式 trust assume "理由"` は届かないと承知する書き方で、検査器は範囲に収まるものとして先へ進み、届いたら実行時に範囲の確認で異常（Fault）になって止まります。どちらも整数・金額で null にならない項目だけで、仕様書の「人の保証」に出ます。
 - 保存先の定義 `storage 保存先 isolation process`／`isolation store(種類) ["理由"]`：保存先を 1 回定義し、リクエストの直列を誰が保証するかを持たせる。entity は `store 名 in 保存先` で参照する（定義の漏れも、使われない定義も検査が止める）。`isolation process` は、このアプリのプロセスの中だけ geas のサーバーが直列にする（別プロセスとの関係は約束しない）。`isolation store(種類)` は保存先が直列にする。種類は引数で、サーバー実行部が契約の試験で確かめてあるもの（いまは `sqlite`）は理由が要らず、それ以外は人の保証として理由が必須。`store` の行がない entity は標準の保存先（`sqlite`）で、書かなくてよい。`process` と確かめていない種類は仕様書の「人の保証」に出ます。
-- 動かす前提 `needs`：アプリが実行環境に要求することを書く。環境の実際（いま何台か、どのポートが開いているか）は書かず、plan や実環境から読んで照合する（`env-verify`。判定は 合格・不合格・確かめられなかった・人の保証 の 4 つで、読めなかった事実は合格にしない。事実はクラウドに依存しない形で、plan から作る部分はアダプタ `geas/adapters/` が担う。いまは aws-ecs だけ）。理由 `"…"` は必須で、仕様書の「動かす前提」に出る。3 種類ある：`needs secret 外部.名前 "理由"`（必要なシークレットの名前だけ。外部は `effect` で宣言した名前空間、名前は lower_snake の半角英数。値は書かない）、`needs exposure public|internal "理由"`（インターネットに公開してよいか。リソースがあるのに書かないと警告）、`needs instances at_most N "理由"`（同時に動くサーバーの上限。保存先が `isolation process` なら導出で 1 台なので、それより緩い値はエラー。書けるのは導出した上限より厳しい値だけ）。保存先の永続、外部への到達、前段の読み込みの時間切れは、宣言から検査器が導出するので書けない。一覧は `python -m geas env-checks アプリ.geas [--json]`、各項目の番号は導出元の名前（`instances`、`durable.default`、`reach.Payment`、`secret.Payment.api_key`、`exposure`、`limits`）。
+- 動かす前提 `needs`：アプリが実行環境に要求することを書く。環境の実際（いま何台か、どのポートが開いているか）は書かず、plan や実環境から読んで照合する（`env-verify`。判定は 合格・不合格・確かめられなかった・人の保証 の 4 つで、読めなかった事実は合格にしない。事実はクラウドに依存しない形で、plan から作る部分はアダプタ（`crates/geas-core/src/adapter.rs`）が担う。いまは aws-ecs だけ）。理由 `"…"` は必須で、仕様書の「動かす前提」に出る。3 種類ある：`needs secret 外部.名前 "理由"`（必要なシークレットの名前だけ。外部は `effect` で宣言した名前空間、名前は lower_snake の半角英数。値は書かない）、`needs exposure public|internal "理由"`（インターネットに公開してよいか。リソースがあるのに書かないと警告）、`needs instances at_most N "理由"`（同時に動くサーバーの上限。保存先が `isolation process` なら導出で 1 台なので、それより緩い値はエラー。書けるのは導出した上限より厳しい値だけ）。保存先の永続、外部への到達、前段の読み込みの時間切れは、宣言から検査器が導出するので書けない。一覧は `geas env-checks アプリ.geas [--json]`、各項目の番号は導出元の名前（`instances`、`durable.default`、`reach.Payment`、`secret.Payment.api_key`、`exposure`、`limits`）。
 - 結果は `result 名前 { 種類(中身: 型), 種類, … }`。**すべての `return` と、フローの行き先が、結果の種類を漏れなく覆う**必要があります。
 - 外部作用 `request` には冪等キー（`idempotency_key`）が必須。`for` の中では、回す値と、外で決まる値の両方を組（`(order_id, k)`）にします。
-- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`library 名前(x: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee result >= x] trust check|verify|assume "理由"`（根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。標準ライブラリだけなら `from rust "std" ""`。版は固定して `Cargo.toml` に書き出す。戻り値は呼ぶたびに、型の範囲と `guarantee` で確かめる。`verify` は検証ビルドだけ、`assume` は確かめない。理由は必須で、仕様書の「人の保証」に出る。ライブラリが panic しても `Fault` で止まり、サーバーは続く（計算の溢れも、リリースビルドを含めて panic になる）。無限ループとメモリ枯渇は防げない）。旧 `part` は廃止。標準部品は、Rust の公開 API（rustdoc の JSON）から `python -m geas.stdgen` で機械で作った `library` の束 [geas/std/num.geas](../geas/std/num.geas)（モジュール `Num`、`use "…/num.geas"` で取り込み、`Num.u8_wrapping_add(a, b)` の形で呼ぶ）。いまは整数型（i8 i16 i32 i64 u8 u16 u32）の、宣言から panic しないと言えるメソッドだけ（Panics の記述・unsafe・オーバーフロー検査の付くもの・Option を返すものは除く。bool を返すものは bool 型）。範囲は Rust の型から決まり、引数の範囲に収まると示せない値は渡せない。呼んだものだけが生成物と仕様書の「人の保証」に出る。
-- 部品の境界値の検査 `python -m geas parts ファイル.geas`：`library` の宣言を、引数の範囲の端の値（両端とその隣、0 の周り、ビット幅の境目）の全部の組み合わせで実際に呼んで確かめます。見るのは、いまの toolchain で組めるか・panic しないか（デバッグビルドで呼ぶので、計算のあふれも見つかる）・戻り値が宣言の範囲に収まるか・`guarantee` が成り立つか・2 回呼んで同じ値か、の 5 つ。食い違いがあれば終了コード 1。呼ばれている部品だけを見ます（`--all` で全部。`module` のファイルを渡すと、その全部）。引数が整数・金額・真偽でない部品は、まだ確かめられません。端の値を試すだけなので証明ではなく、宣言の書き間違いを早く見つける網です。`trust` に理由を書く前に、これを通します。`--record` を付けると、結果をコードの隣の台帳（`アプリ.parts.json`）に書き、仕様書の「人の保証」の行に「宣言は端の値で N 回呼んで確かめた」と出ます。確かめていない部品は「宣言は実際に呼んで確かめていない」、宣言（型と範囲・呼ぶ式・`guarantee`）を変えたあとは「確かめ直していない」と出るので、レビューする人が見分けられます（台帳はコードと一緒にコミットします）。標準部品の台帳は geas に同梱で（`geas/std/num.parts.json`）、Kani で全部の入力について示せたものは「宣言は全部の入力で証明した」と出ます（`python proofs/std_proofs.py --record`）。標準部品は、別に書いた手本（[geas/stdref.py](../geas/stdref.py)）とも比べ、生成のとき（`python -m geas.stdgen`）に、組めないものを外し、食い違いがあれば書き出しません。
+- 純粋な値の部品：`convert 名前(x: 型) -> 型 = 式`（式で書く一方通行の変換）、`library 名前(x: 型) -> 型 from rust "クレート" "版" call "Rust の式" [guarantee result >= x] trust check|verify|assume "理由"`（根の言語のライブラリを呼ぶ純粋な関数。式は引数の名前を使える。標準ライブラリだけなら `from rust "std" ""`。版は固定して `Cargo.toml` に書き出す。戻り値は呼ぶたびに、型の範囲と `guarantee` で確かめる。`verify` は検証ビルドだけ、`assume` は確かめない。理由は必須で、仕様書の「人の保証」に出る。ライブラリが panic しても `Fault` で止まり、サーバーは続く（計算の溢れも、リリースビルドを含めて panic になる）。無限ループとメモリ枯渇は防げない）。旧 `part` は廃止。標準部品は、Rust の公開 API（rustdoc の JSON）から `stdgen（タグ python-final の tools にある生成の道具）` で機械で作った `library` の束 [crates/geas-core/assets/std/num.geas](../crates/geas-core/assets/std/num.geas)（モジュール `Num`、`use "…/num.geas"` で取り込み、`Num.u8_wrapping_add(a, b)` の形で呼ぶ）。いまは整数型（i8 i16 i32 i64 u8 u16 u32）の、宣言から panic しないと言えるメソッドだけ（Panics の記述・unsafe・オーバーフロー検査の付くもの・Option を返すものは除く。bool を返すものは bool 型）。範囲は Rust の型から決まり、引数の範囲に収まると示せない値は渡せない。呼んだものだけが生成物と仕様書の「人の保証」に出る。
+- 部品の境界値の検査 `geas parts ファイル.geas`：`library` の宣言を、引数の範囲の端の値（両端とその隣、0 の周り、ビット幅の境目）の全部の組み合わせで実際に呼んで確かめます。見るのは、いまの toolchain で組めるか・panic しないか（デバッグビルドで呼ぶので、計算のあふれも見つかる）・戻り値が宣言の範囲に収まるか・`guarantee` が成り立つか・2 回呼んで同じ値か、の 5 つ。食い違いがあれば終了コード 1。呼ばれている部品だけを見ます（`--all` で全部。`module` のファイルを渡すと、その全部）。引数が整数・金額・真偽でない部品は、まだ確かめられません。端の値を試すだけなので証明ではなく、宣言の書き間違いを早く見つける網です。`trust` に理由を書く前に、これを通します。`--record` を付けると、結果をコードの隣の台帳（`アプリ.parts.json`）に書き、仕様書の「人の保証」の行に「宣言は端の値で N 回呼んで確かめた」と出ます。確かめていない部品は「宣言は実際に呼んで確かめていない」、宣言（型と範囲・呼ぶ式・`guarantee`）を変えたあとは「確かめ直していない」と出るので、レビューする人が見分けられます（台帳はコードと一緒にコミットします）。標準部品の台帳は geas に同梱で（`crates/geas-core/assets/std/num.parts.json`）、Kani で全部の入力について示せたものは「宣言は全部の入力で証明した」と出ます（`python proofs/std_proofs.py --record`）。標準部品は、別に書いた手本（[crates/geas-core/src/partrun.rs](../crates/geas-core/src/partrun.rs)）とも比べ、生成のとき（`stdgen（タグ python-final の tools にある生成の道具）`）に、組めないものを外し、食い違いがあれば書き出しません。
 
 ## 5. slot の値の決め方（rule）
 
@@ -478,7 +478,7 @@ resource MyUnpaidOrders {
 
 ## 11. 検査の結果の種類
 
-`python -m geas check` は、エラー・警告・問い（QUESTION）を出します。**エラー**は直します。**問い**は、決まっていないことを検査器が見つけたものなので、人に聞いて決めます。**警告**は、表示名の抜けなどです。エラーと問いが無いと、`rust` と `compare` が進みます。
+`geas check` は、エラー・警告・問い（QUESTION）を出します。**エラー**は直します。**問い**は、決まっていないことを検査器が見つけたものなので、人に聞いて決めます。**警告**は、表示名の抜けなどです。エラーと問いが無いと、`rust` と `compare` が進みます。
 
 - 指摘の名前は、コードに書いたとおり（`Product.stock`）で、分かるものには行番号（`（30行目）`）が付きます。仕様書（`spec`・`review`）に載るときは、表示名に置き換わります。
 - 打ち間違いらしい名前には `（近い名前：stock）` が、他の言語の型名や値（`string`・`True` など）には geas での書き方が付きます。

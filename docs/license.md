@@ -6,7 +6,7 @@
 
 | 層 | 対象 | ライセンス |
 |---|---|---|
-| geas 本体 | 構文解析・検査・生成器・CLI など `geas/` の Python（のちに Rust）のコード、docs、skills | GPL-3.0-or-later（[LICENSE](../LICENSE)） |
+| geas 本体 | 構文解析・検査・生成器・CLI など `crates/` の Rust のコード、docs、skills | GPL-3.0-or-later（[LICENSE](../LICENSE)） |
 | 生成コードに埋め込まれる部品 | 生成される Rust に写される、範囲検査・有理数・丸め・割合検査・冪等キーの組・保証違反・JSON の入出力・WASM の入口などのコード片 | MIT OR Apache-2.0（[LICENSE-MIT](../LICENSE-MIT)・[LICENSE-APACHE](../LICENSE-APACHE)） |
 | 生成された Rust とバイナリ | `.geas` から作られた Rust のコードと、そこからビルドしたもの | 利用者のもの。制限なし（埋め込まれた部品の MIT/Apache の表示だけ守る） |
 
@@ -20,8 +20,8 @@
 
 次のものを埋め込み部品とする。ソース中では `SPDX-License-Identifier: MIT OR Apache-2.0` の印をつけ、生成コードの先頭にも同じ印を出す。
 
-- `geas/rustgen.py` の `PRELUDE`
-- `geas/hostgen.py` の `JSON_PRELUDE` と `CALL_WASM`
+- `crates/geas-core/src/assets/rust_prelude.txt`（`rustgen.rs` の `PRELUDE`）
+- `crates/geas-core/src/assets/host_json_prelude.txt` と `host_call_wasm.txt`（`hostgen.rs` の `JSON_PRELUDE` と `CALL_WASM`）
 - 生成器が `.geas` の内容に応じて Rust の文字列として出力するコード片（検査の `if`、保証の確認、文脈の `検査()` など）全般
 
 それ以外の `geas/` 配下は本体（GPL）。

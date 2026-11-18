@@ -14,7 +14,7 @@ OS の WebView（Windows は WebView2、macOS は WKWebView、Linux は WebKitGT
 - **画面から処理への呼び出しは、HTTP を通りません。** 画面（`ui.js`）は、`window.ipc` があれば、問い合わせも処理も WebView の IPC（プロセスの中）で渡します。URL（`/orders` など）は、`resource` 宣言どおりの「機能の定義としての名前」で、通信路ではありません。ふつうのブラウザでは、同じ画面が `fetch` で動きます。
 - 画面のファイルの配信だけは、WebView のカスタムプロトコル（`geas://`。Windows では WebView2 が `http://geas.localhost` と見せる）を使います。読み込むのは exe に埋め込んだ HTML・JS・CSS だけで、ネットワークには出ません。
 - 窓の中の画面には、通信先を持たせません（CSP の `connect-src 'none'`、窓の移動も自分の画面だけ）。
-- Linux では、窓とその補助プロセスが IP のソケット（待ち受けも接続も）を 1 つも持たないことを、`tests/test_window.py` で確かめています。
+- Linux では、窓とその補助プロセスが IP のソケット（待ち受けも接続も）を 1 つも持たないことを、`tests/test_window.py`（タグ `python-final` に残してある。xvfb と WebKitGTK が要る）で確かめていました。Rust 化のあとは、この確認を移していません（残件）。
 - 外へ出る通信は、`effect` に `over http { … }` を宣言した外部作用だけが、宣言した先に Rust 側から出します（リダイレクトには従いません。書き方は [language-reference.md](language-reference.md) の「外とのやりとり」）。宣言がないアプリには、通信の部品（ureq）が依存にも実行ファイルにも入りません。通信しうる先は、仕様書とレビュー画面の「外へ出る通信」の表と、「動かす前提」の到達性の行に出ます。見本は `tests/fixtures/solo_tweet`（X への投稿。試験は手元の模擬の X）。
 
 - ファイルへの操作は、`effect` に `over file` を宣言した外部作用だけが、宣言した場所・ファイルに、Rust 側から行います（[language-reference.md](language-reference.md) の「ファイル操作」）。宣言のない外部作用は、ファイルに触りません（ファイルを扱う部品は std だけで、依存は増えません）。
