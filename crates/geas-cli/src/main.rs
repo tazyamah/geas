@@ -189,6 +189,14 @@ fn main() {
             }
             match f { Some(f) => spec_cmd(&f, o.as_deref(), p.as_deref()), None => 2 }
         }
+        Some("rustlib") if args.len() == 3 => {
+            let mut prog = None;
+            if let Err(c) = load(&args[2], &mut prog) { std::process::exit(c); }
+            let mut prog = prog.unwrap();
+            let ck = geas_core::check::defs::check(&mut prog, true);
+            print!("{}", geas_core::rustgen::generate(&ck));
+            0
+        }
         Some("review") => review_cmd(&args[2..]),
         Some("check") if args.len() == 4 && args[3] == "--json" => check_json(&args[2]),
         _ => {
