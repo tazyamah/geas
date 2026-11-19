@@ -1,0 +1,47 @@
+
+const S=JSON.parse(document.getElementById('screens-data').textContent),U=JSON.parse(document.getElementById('ucs').textContent);
+const mock=document.getElementById('mock'),pad=document.getElementById('pad'),sel=document.getElementById('opsel'),$=id=>document.getElementById(id);
+let op=0,k=0,res=U.map(()=>null),editing=false,moved=false,net=true,netmsg='';
+const EV=document.getElementById('events')?JSON.parse(document.getElementById('events').textContent):[];
+function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!==undefined)e.textContent=h;return e}
+function nsteps(){return U[op].steps.length}
+function curScreen(){const u=U[op];return k<u.steps.length?u.steps[k].screen:u.end}
+function banner(){if(!net)return'オフライン：つながりが切れています';if(netmsg)return netmsg;const u=U[op];if(k>0){const p=u.steps[k-1];if(p.result&&p.to==='そのまま')return p.op+'の結果：'+p.result}return''}
+function draw(){
+ const u=U[op],n=curScreen(),s=S[n],d=s.design;mock.className=(d.mode==='dark'?'dark':'')+(document.querySelector('[data-dev=pc]').getAttribute('aria-pressed')==='true'?' pc':'');mock.innerHTML='';
+ mock.append(el('span','ucid',u.id));
+ const h=el('header');h.style.background=d.accent;h.append(el('b','',n));mock.append(h);
+ const body=el('div','in lay-'+d.layout);const bn=banner();if(bn)body.append(el('div','banner',bn));
+ const st=k<u.steps.length?u.steps[k]:null;
+ s.fields.forEach(f=>{const w=el('div');w.append(el('label','',f));const i=document.createElement('input');i.placeholder=f;i.disabled=true;w.append(i);body.append(w)});
+ const sh=el('div','shows');
+ s.shows.forEach(q=>{const w=el('div');w.append(el('label','',q.title));const t=el('table');
+  const hr=document.createElement('tr');q.cols.forEach(c=>hr.append(el('th','',c)));t.append(hr);
+  q.rows.forEach((r,i)=>{const tr=document.createElement('tr');r.forEach(c=>tr.append(el('td','',c)));if(st&&st.op==='行を選ぶ'&&i===0)tr.className='hl';t.append(tr)});w.append(t);sh.append(w)});
+ body.append(sh);
+ s.actions.forEach(a=>{const b=el('button','',a.title);b.style.background=d.accent;if(st&&st.op===a.title)b.className='hl';body.append(b)});
+ if(st&&st.op==='見る')h.className='hl';
+ mock.append(body);
+ const last=k>=nsteps();
+ $('bNext').hidden=last;$('bOk').hidden=!last;$('bPrev').hidden=(op===0&&k===0);
+ $('line').textContent=u.id+' '+u.name+'　'+(last?'手順は以上':(k+1)+'/'+nsteps()+' '+st.screen+(st.url?' '+st.url:'')+'：'+st.op+(st.result?'（'+st.result+'）':''));
+ const done=res.filter(x=>x).length;$('prog').textContent=done===U.length?'すべて完了（'+done+'件）':'済 '+done+' / '+U.length;
+ const ng=res[op]&&res[op].v==='NG';$('bNg').textContent=ng?'NG✎':'NG';$('bNg').title=ng?res[op].why:'';
+ sel.innerHTML='';U.forEach((x,i)=>{const o=el('option','',(res[i]?(res[i].v==='OK'?'✓ ':'✗ '):'')+x.id+' '+x.name);o.value=i;if(i===op)o.selected=true;sel.append(o)});
+ if($('bNet')){$('bNet').textContent=net?'オンライン':'オフライン';$('bNet').className=net?'':'off'}
+ $('ngrow').hidden=!editing;
+ list();if(moved){const h=mock.querySelector('.hl');if(h)h.scrollIntoView({block:'center',behavior:'smooth'})}}
+function list(){const ul=$('ngs');ul.innerHTML='';res.forEach((r,i)=>{if(r&&r.v==='NG'){const li=el('li','',U[i].id+' '+U[i].name+'：'+(r.why||'（理由なし）')+'　［'+r.at+'］');ul.append(li)}});$('ngwrap').hidden=!ul.children.length}
+function pick(i){op=i;k=0;editing=false;netmsg='';draw()}
+function next(){if(k<nsteps()){k++;moved=true;netmsg='';draw()}}
+function prev(){if(k>0){k--}else if(op>0){op--;k=nsteps()}editing=false;moved=true;netmsg='';draw()}
+function advance(){if(op<U.length-1){pick(op+1)}else draw()}
+if($('bNet'))$('bNet').onclick=()=>{net=!net;netmsg=net&&EV.length?EV[0].name+'：'+EV[0].proc+'を行います':'';draw()};
+$('bNext').onclick=next;$('bPrev').onclick=prev;$('bReset').onclick=()=>pick(op);sel.onchange=()=>pick(+sel.value);
+$('bOk').onclick=()=>{res[op]={v:'OK'};advance()};
+$('bNg').onclick=()=>{editing=true;$('why').value=res[op]&&res[op].v==='NG'?res[op].why:'';draw();$('why').focus()};
+$('ngsave').onclick=()=>{res[op]={v:'NG',why:$('why').value,at:curScreen()+'・手順'+Math.min(k+1,nsteps())};editing=false;advance()};
+$('copy').onclick=()=>{const t=Array.from($('ngs').children).map(x=>'- '+x.textContent).join('\n');try{navigator.clipboard.writeText(t).catch(()=>{})}catch(e){}};
+const sec=$('walk');
+if('IntersectionObserver' in window){new IntersectionObserver(es=>{pad.hidden=!es[0].isIntersecting},{threshold:0.02}).observe(sec)}
+draw();

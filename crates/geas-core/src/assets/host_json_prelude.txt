@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// 自動生成。手で編集しない。
+#![allow(non_snake_case, non_camel_case_types, dead_code, unused_variables, unused_mut)]
+use crate::*;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+
+#[derive(Clone, Debug)]
+pub enum J { Null, Bool(bool), Num(i128), Str(String), Arr(Vec<J>), Obj(BTreeMap<String, J>) }
+
+impl J {
+    pub fn get(&self, k: &str) -> Result<&J, String> {
+        match self { J::Obj(m) => m.get(k).ok_or_else(|| format!("項目「{}」がありません", k)), _ => Err("オブジェクトではありません".into()) }
+    }
+    pub fn get_opt(&self, k: &str) -> Option<&J> {
+        match self { J::Obj(m) => match m.get(k) { Some(J::Null) | None => None, Some(x) => Some(x) }, _ => None }
+    }
+    pub fn as_bool(&self) -> Result<bool, String> { match self { J::Bool(b) => Ok(*b), _ => Err("true か false のはずです".into()) } }
+    pub fn as_str(&self) -> Result<&str, String> { match self { J::Str(s) => Ok(s), _ => Err("文字列のはずです".into()) } }
+    pub fn as_int(&self) -> Result<i128, String> { match self { J::Num(n) => Ok(*n), _ => Err("整数のはずです".into()) } }
+    pub fn as_obj(&self) -> Result<&BTreeMap<String, J>, String> { match self { J::Obj(m) => Ok(m), _ => Err("オブジェクトのはずです".into()) } }
+    pub fn as_set(&self) -> Result<BTreeSet<String>, String> {
+        match self { J::Arr(a) => a.iter().map(|x| x.as_str().map(|s| s.to_string())).collect(), _ => Err("配列のはずです".into()) }
+    }
+}
+
+struct P<'a> { s: &'a [u8], i: usize, d: usize }
+impl<'a> P<'a> {
+    fn ws(&mut self) { while self.i < self.s.len() && (self.s[self.i] as char).is_whitespace() { self.i += 1; } }
+    fn eat(&mut self, c: u8) -> Result<(), String> { self.ws(); if self.i < self.s.len() && self.s[self.i] == c { self.i += 1; Ok(()) } else { Err(format!("JSON: '{}' が必要です（{}文字目）", c as char, self.i)) } }
+    /// 入れ子の深さに上限を置く（深い入れ子で再帰があふれないように）
+    fn value(&mut self) -> Result<J, String> {
+        self.d += 1;
+        if self.d > 64 { return Err("JSON: 入れ子が深すぎます".into()); }
+        let r = self.value_inner();
+        self.d -= 1;
+        r
+    }
+    fn value_inner(&mut self) -> Result<J, String> {
+        self.ws();
+        if self.i >= self.s.len() { return Err("JSON: 途中で終わっています".into()); }
+        match self.s[self.i] {
+            b'{' => { self.i += 1; let mut m = BTreeMap::new(); self.ws();
+                if self.s[self.i] == b'}' { self.i += 1; return Ok(J::Obj(m)); }
+                loop { let k = match self.value()? { J::Str(s) => s, _ => return Err("JSON: キーは文字列です".into()) }; self.eat(b':')?; let v = self.value()?; m.insert(k, v); self.ws();
+                    if self.s[self.i] == b',' { self.i += 1; } else { self.eat(b'}')?; return Ok(J::Obj(m)); } } }
+            b'[' => { self.i += 1; let mut a = Vec::new(); self.ws();
+                if self.s[self.i] == b']' { self.i += 1; return Ok(J::Arr(a)); }
+                loop { a.push(self.value()?); self.ws(); if self.s[self.i] == b',' { self.i += 1; } else { self.eat(b']')?; return Ok(J::Arr(a)); } } }
+            b'"' => { self.i += 1; let mut out: Vec<u8> = Vec::new();
+                loop { if self.i >= self.s.len() { return Err("JSON: 文字列が閉じていません".into()); } let c = self.s[self.i]; self.i += 1;
+                    match c { b'"' => break, b'\\' => { let e = self.s[self.i]; self.i += 1;
+                        match e { b'n' => out.push(b'\n'), b't' => out.push(b'\t'), b'r' => out.push(b'\r'), b'b' => out.push(8), b'f' => out.push(12),
+                            b'u' => { let h = std::str::from_utf8(&self.s[self.i..self.i + 4]).map_err(|_| "JSON: \\u".to_string())?; let mut cp = u32::from_str_radix(h, 16).map_err(|_| "JSON: \\u".to_string())?; self.i += 4;
+                                if (0xD800..0xDC00).contains(&cp) && self.s.get(self.i) == Some(&b'\\') && self.s.get(self.i + 1) == Some(&b'u') {
+                                    let h2 = std::str::from_utf8(&self.s[self.i + 2..self.i + 6]).map_err(|_| "JSON: \\u".to_string())?; let lo = u32::from_str_radix(h2, 16).map_err(|_| "JSON: \\u".to_string())?; self.i += 6;
+                                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); }
+                                let ch = char::from_u32(cp).unwrap_or('\u{FFFD}'); let mut b = [0u8; 4]; out.extend_from_slice(ch.encode_utf8(&mut b).as_bytes()); }
+                            x => out.push(x) } }
+                        x => out.push(x) } }
+                Ok(J::Str(String::from_utf8(out).map_err(|_| "JSON: UTF-8 でありません".to_string())?)) }
+            b't' => { self.i += 4; Ok(J::Bool(true)) }
+            b'f' => { self.i += 5; Ok(J::Bool(false)) }
+            b'n' => { self.i += 4; Ok(J::Null) }
+            _ => { let st = self.i; if self.s[self.i] == b'-' { self.i += 1; } while self.i < self.s.len() && (self.s[self.i] as char).is_ascii_digit() { self.i += 1; }
+                std::str::from_utf8(&self.s[st..self.i]).unwrap().parse::<i128>().map(J::Num).map_err(|_| format!("JSON: 数が読めません（{}文字目）", st)) }
+        }
+    }
+}
+pub fn parse(s: &str) -> Result<J, String> { let mut p = P { s: s.as_bytes(), i: 0, d: 0 }; let v = p.value()?; Ok(v) }
+
+/// 文字列を JSON の文字列にして、o の後ろに書く（行の多い一覧で、値ごとに文字列を作らない）
+pub fn js_str_into(o: &mut String, s: &str) {
+    o.push('"');
+    for c in s.chars() { match c { '"' => o.push_str("\\\""), '\\' => o.push_str("\\\\"), '\n' => o.push_str("\\n"), '\r' => o.push_str("\\r"), '\t' => o.push_str("\\t"),
+        c if (c as u32) < 0x20 => { let _ = write!(o, "\\u{:04x}", c as u32); } c => o.push(c) } }
+    o.push('"');
+}
+pub fn js_str(s: &str) -> String { let mut o = String::with_capacity(s.len() + 2); js_str_into(&mut o, s); o }
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+pub fn b64_encode(b: &[u8]) -> String {
+    let mut o = String::with_capacity((b.len() + 2) / 3 * 4);
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        o.push(B64[(n >> 18) as usize & 63] as char);
+        o.push(B64[(n >> 12) as usize & 63] as char);
+        o.push(if c.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
+        o.push(if c.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+    }
+    o
+}
+/// 割合は "分子/分母" の文字列で受け取る（小数にすると丸めが入るため）。範囲の宣言もここで確かめる
+pub fn read_ratio(s: &str, lo: Option<i128>, hi: Option<i128>) -> Result<Ratio, String> {
+    let (a, b) = s.split_once('/').ok_or_else(|| "割合は \"分子/分母\" で書いてください".to_string())?;
+    let num: i128 = a.trim().parse().map_err(|_| "割合の分子が数ではありません".to_string())?;
+    let den: i128 = b.trim().parse().map_err(|_| "割合の分母が数ではありません".to_string())?;
+    if den <= 0 || den > RATIO_DEN_MAX { return Err(format!("割合の分母は 1 以上 {} 以下にしてください", RATIO_DEN_MAX)); }
+    let (lo, hi) = (lo.unwrap_or(-RATIO_VAL_MAX), hi.unwrap_or(RATIO_VAL_MAX));
+    if num < lo.saturating_mul(den) || num > hi.saturating_mul(den) { return Err("範囲外の割合です".into()); }
+    Ok(Ratio { num, den })
+}
+pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
+    let mut o = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut n, mut k) = (0u32, 0);
+    for ch in s.bytes() {
+        if ch == b'=' { break; }
+        let v = B64.iter().position(|&x| x == ch).ok_or("バイト列の符号化が不正です")? as u32;
+        n = n << 6 | v; k += 1;
+        if k == 4 { o.extend([(n >> 16) as u8, (n >> 8) as u8, n as u8]); n = 0; k = 0; }
+    }
+    if k == 2 { o.push((n >> 4) as u8); } else if k == 3 { o.extend([(n >> 10) as u8, (n >> 2) as u8]); }
+    Ok(o)
+}
+/// 行の版：DB に書く行の JSON から作る（中身が同じなら同じ値）。書き込みの版の確認（If-Match）と、一覧の各行の _etag に使う
+pub fn row_etag(row: &str) -> String {
+    let h = row.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    format!("r{:016x}", h)
+}
+pub fn js_set(s: &BTreeSet<String>) -> String { format!("[{}]", s.iter().map(|x| js_str(x)).collect::<Vec<_>>().join(",")) }
+pub fn js_arr(v: &[String]) -> String { format!("[{}]", v.iter().map(|x| js_str(x)).collect::<Vec<_>>().join(",")) }

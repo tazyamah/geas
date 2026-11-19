@@ -1,0 +1,11 @@
+
+document.querySelectorAll('.tab[data-view]').forEach(function(t){t.addEventListener('click',function(){
+ document.querySelectorAll('.tab[data-view]').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
+ document.querySelectorAll('.view').forEach(function(v){v.hidden=v.id!=='view-'+t.dataset.view});window.scrollTo(0,0)})});
+var org=document.getElementById('origin');
+if(org){var fo=function(){['walk','api','mcp'].forEach(function(id){var e=document.getElementById(id);if(e)e.hidden=org.value!==id})};org.onchange=fo;fo()}
+var sp=document.getElementById('specsel');
+if(sp){var fs=function(){document.querySelectorAll('.sub-view').forEach(function(v){v.hidden=v.dataset.sub!==sp.value})};sp.onchange=fs;fs()}
+document.querySelectorAll('[data-dev]').forEach(function(b){b.addEventListener('click',function(){
+ document.querySelectorAll('[data-dev]').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});
+ var m=document.getElementById('mock');if(m)m.classList.toggle('pc',b.dataset.dev==='pc')})});

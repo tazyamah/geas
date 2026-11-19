@@ -23,49 +23,50 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | 文書の一覧 | [README.md](README.md) |
 | 未決の事柄 | [open-questions.md](open-questions.md) |
 
-迷ったら、**検査器（`python -m geas check`）が正本**です。書き方の説明と検査器が食い違ったら、検査器の動きを信じて、説明のほうを直してください。
+迷ったら、**検査器（`geas check`）が正本**です。書き方の説明と検査器が食い違ったら、検査器の動きを信じて、説明のほうを直してください。
 
 ## 入れる
 
-geas は、いまは Python の試作版です（最終的には Rust にする予定）。
+geas 本体（検査器・生成器・CLI）は Rust です（以前の Python 版は、git のタグ `python-final` に残してあります）。
 
 | 道具 | 要るか | 用途 |
 |---|---|---|
-| Python 3.10 以上 | 必須 | `python -m geas …`。外部のライブラリは要りません |
-| pytest | テストを回すとき | `python -m pytest tests` |
-| Rust（cargo） | `rust` で作ったコードを動かす・具体例を実行するとき | 生成した crate のビルド |
-| node と Playwright | 画面・拡張の通しの確認をするとき（無ければその確認は飛ばされる） | 生成した `tests/test_screen_examples.py`（実行部は `geas/e2e/screen_runner.js`） |
+| Rust（cargo） | 必須 | `cargo install --path crates/geas-cli` で `geas` を入れる。`rust` で作ったコードの実行・具体例の実行・テスト（`cargo test`）にも使う |
+| Python 3 と pytest | 生成した通しテスト（`tests/test_url_examples.py`・`tests/test_screen_examples.py`）を回すときだけ | geas 本体には要らない。生成したアプリのテストの書き方が pytest |
+| node と Playwright | 画面・拡張の通しの確認をするとき（無ければその確認は飛ばされる） | 生成した `tests/test_screen_examples.py`（実行部は生成物の `tests/screen_runner.js`） |
 
 ```sh
 git clone https://github.com/tazyamah/geas.git
 cd geas
-python -m geas check tests/fixtures/overseas_shop/overseas_shop.geas   # 動作確認
-python -m pytest tests                                                # テスト（数分かかる。cargo がある環境では、お店アプリのビルドと通しも含む）
+cargo install --path crates/geas-cli                          # geas を入れる
+geas check tests/fixtures/overseas_shop/overseas_shop.geas   # 動作確認
+cargo test --release                                         # テスト（コーパス 3,894 件の突き合わせと、具体例の通し）
+cargo test --release -- --ignored                            # 生成したサーバーを組んで起動する確認（遅い。依存の crate を取る通信が要る）
 ```
 
-インストール作業は要りません（リポジトリの直下で `python -m geas` と打つだけです）。
+インストールを避けるなら、`cargo run --release -p geas-cli -- check アプリ.geas` のように、リポジトリの直下から動かせます。
 
-geas が読み書きするファイルと、標準出力・標準エラーは、OS によらず UTF-8 です（Windows でも、リダイレクトした仕様書や生成した Rust が cp932 になりません）。ただしテストのコードは文字コードを決めずに読み書きしているので、Windows でテストを回すときは `PYTHONUTF8=1` を付けます。
+geas が読み書きするファイルと、標準出力・標準エラーは、OS によらず UTF-8 です（Windows でも、リダイレクトした仕様書や生成した Rust が cp932 になりません）。
 
 ## コマンド
 
 ```sh
-python -m geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを、コードに書いた名前と行番号で出し、最後の行に件数。終了コードは、エラーがあれば 1、構文エラーとファイルが無いときは 2。--json は、指摘ごとに line と hint（見る節と直し方）を付けた JSON
-python -m geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
-python -m geas env-checks アプリ.geas [--json]              # 動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す。照合は env-verify
-python -m geas env-facts plan.json [--adapter aws-ecs] [--service アドレス]   # terraform show -json の出力から、環境の事実（クラウドに依存しない形）を作る。読めなかった事実は null
-python -m geas env-verify アプリ.geas (--plan plan.json | --facts 事実.json) [--strict] [--json]   # 動かす前提と環境の事実を照合。不合格があれば終了コード 1（--strict は「確かめられなかった」も 1）
-python -m geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
-python -m geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
-python -m geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [--run --plan 計画書.md] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束（`--run --plan` を付けると、生き残りを計画書の具体例でも確かめ、食い違えば「具体例で検出」にする。Rust をビルドするので遅い）
-python -m geas parts アプリ.geas [--all] [--record]                # 部品（library）を、引数の範囲の端の値で実際に呼んで、宣言どおりかを確かめる（組めるか・panic・範囲・guarantee・2 回呼んで同じか）。食い違いがあれば終了コード 1。library を書いたら、trust の理由を書く前に通す。--record で、結果を台帳（アプリ.parts.json。コミットする）に書き、仕様書の「人の保証」に出す
-python -m geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・動きが変わるかもしれない処理・URL・画面・ユースケース・生き残り）。PR の本文に貼る
-python -m geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
-python -m geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
+geas check アプリ.geas [--json]               # 検査。エラー・警告・問いを、コードに書いた名前と行番号で出し、最後の行に件数。終了コードは、エラーがあれば 1、構文エラーとファイルが無いときは 2。--json は、指摘ごとに line と hint（見る節と直し方）を付けた JSON
+geas spec アプリ.geas [--plan 計画書.md] [-o 出力.md]   # 仕様書（Markdown）を生成。--plan で、内部 URL ごとの確認の網羅も載る
+geas env-checks アプリ.geas [--json]              # 動かす前提（アプリが実行環境に要求すること）を、ツールに依存しない検査項目の一覧にして出す。照合は env-verify
+geas env-facts plan.json [--adapter aws-ecs] [--service アドレス]   # terraform show -json の出力から、環境の事実（クラウドに依存しない形）を作る。読めなかった事実は null
+geas env-verify アプリ.geas (--plan plan.json | --facts 事実.json) [--strict] [--json]   # 動かす前提と環境の事実を照合。不合格があれば終了コード 1（--strict は「確かめられなかった」も 1）
+geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
+geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる
+geas mutate アプリ.geas [--base 前のコード.geas | --base-git HEAD~1] [--run --plan 計画書.md] [-o 結果.md]  # 変異検査：約束を 1 つ崩した版を作り、検査器が止めるかを見る。生き残りは、検査器では守られていない約束（`--run --plan` を付けると、生き残りを計画書の具体例でも確かめ、食い違えば「具体例で検出」にする。Rust をビルドするので遅い）
+geas parts アプリ.geas [--all] [--record]                # 部品（library）を、引数の範囲の端の値で実際に呼んで、宣言どおりかを確かめる（組めるか・panic・範囲・guarantee・2 回呼んで同じか）。食い違いがあれば終了コード 1。library を書いたら、trust の理由を書く前に通す。--record で、結果を台帳（アプリ.parts.json。コミットする）に書き、仕様書の「人の保証」に出す
+geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・動きが変わるかもしれない処理・URL・画面・ユースケース・生き残り）。PR の本文に貼る
+geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
+geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
 python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
 python proofs/std_proofs.py [--timeout 秒] [--jobs 数] [--record]   # 標準部品の証明（Kani が要る）。全部の入力で、panic しないことと、式どおりであることを示す。--record で同梱の台帳に書く
-python -m geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--standalone] [--seed 最初のデータ.json] [--server URL]
-python -m geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
+geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--standalone] [--seed 最初のデータ.json] [--server URL]
+geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
 ```
 
 `rust` の付けものは次のとおりです。
@@ -129,39 +130,44 @@ python -m geas interview init|status|render 台帳.json     # 初回の対話の
 
 ```sh
 F=tests/fixtures/overseas_shop
-python -m geas spec $F/overseas_shop.geas --plan $F/overseas_shop_plan.md > $F/overseas_shop_spec.md
-python -m geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $F/overseas_shop_review.html
+geas spec $F/overseas_shop.geas --plan $F/overseas_shop_plan.md > $F/overseas_shop_spec.md
+geas review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md -o $F/overseas_shop_review.html
 ```
 
 変異検査の結果（`overseas_shop_mutation.md`）も見本として固定してあり、`.geas` を変えて崩し方や生き残りが変わったら、テストが落ちる。直したら再生成する：
 
 ```sh
-python -m geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
+geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 ```
 
 仕様書は[ユースケース][動作][仕様]の3タブ。ユースケース図の「人」は、計画書のユースケースの表に任意の「アクター」列を足すと、その名前で描く（無いときは、ユースケースを始める画面で代用）。
 
 仕様書には、答えてほしいことと件数、前の版からの変更は載せない（別の HTML）。更新のレビューでは `--diff-o 変更点.html` を足し、前の版を `--base 前のコード.geas`、または git の版なら `--base-git HEAD~1` で渡す。変更点の HTML には、変更の前に「信頼のレシート」の節が出る（`geas receipt` と同じ内容）。PR を出すときは、`geas receipt` の出力を本文に貼る。
 
-## ソースの地図（`geas/`）
+## ソースの地図（`crates/`）
 
-| ファイル | 役目 |
+本体は Cargo の workspace で、`crates/geas-core`（ライブラリ）と `crates/geas-cli`（コマンド `geas`）の 2 つです。外部の crate は、正規表現（`regex`）・JSON（`serde_json`）・多倍長の整数（`num-*`）・資産の埋め込み（`include_dir`）・PNG の圧縮（`flate2`）に使っています。
+
+| ファイル（`crates/geas-core/src/`） | 役目 |
 |---|---|
-| `lexer.py`・`parser.py`・`ast.py` | 字句・構文・構文木。宣言の入口は `Parser.program` |
-| `check.py` | 検査器（型・範囲・書き込みの重なり・遷移・REST・画面・拡張・rule など） |
-| `spec.py`・`review.py`・`svg.py`・`plan.py` | 仕様書（Markdown／HTML）の生成（図は `svg.py` の自前 SVG。見た目・構造は specgap のレビュー画面に合わせる）、計画書の読み取りと突合、確認の網羅 |
-| `rustgen.py`・`hostgen.py` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
-| `rest.py`・`screengen.py` | REST の URL と状態、画面の定義 |
-| `mcp.py`・`mcp_bridge.py` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（定義を読むだけの汎用） |
-| `extgen.py`・`devgen.py`・`servergen.py`・`windowgen.py` | ブラウザ拡張、開発用の模擬パネル、サーバー実行部、窓つき exe の生成。部品は `geas/ext`・`geas/dev`・`geas/server`・`geas/window`・`geas/ui` |
-| `testgen.py` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成 |
-| `e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
-| `receipt.py` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化・影響範囲・変異検査の生き残り |
-| `hints.py` | `check --json` の hint（指摘の種類ごとの、見る節と直し方）。検査器の指摘の種類を足したら、ここにも足す（テストが見張る） |
-| `trace.py` | `geas trace`。サーバーの構造化ログを仕様書の行に結ぶ |
-| `bench.py` | `geas bench`。AI が書いた `.geas` の採点 |
-| `partcheck.py`・`stdref.py` | 部品の境界値の検査（`geas parts`）と、標準部品の手本（Rust の整数のメソッドを Python で書き直したもの） |
-| `mutate.py` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
-| `modules.py` | `use`／`module` |
-| `names.py` | 名前の規則と表示名の検査 |
-| `cli.py` | コマンド |
+| `lexer.rs`・`parser.rs`・`ast.rs` | 字句・構文・構文木。宣言の入口は `parser.rs` の `parse` |
+| `check/` | 検査器（型・範囲・書き込みの重なり・遷移・REST・画面・拡張・rule など）。入口は `check/defs.rs` の `check` |
+| `spec.rs`・`review.rs`・`svg.rs`・`plan.rs` | 仕様書（Markdown／HTML）の生成（図は `svg.rs` の自前 SVG。見た目・構造は specgap のレビュー画面に合わせる）、計画書の読み取りと突合、確認の網羅 |
+| `rustgen.rs`・`hostgen.rs` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
+| `rest.rs`・`screengen.rs` | REST の URL と状態、画面の定義 |
+| `mcp.rs`・`assets/mcp_bridge.py` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（定義を読むだけの汎用。生成物に置かれる Python の小さなスクリプト） |
+| `crategen.rs` | 生成物の木（crate・サーバー実行部・窓つき exe・拡張・開発用の模擬パネル・MCP）を書き出す。部品は `assets/`（`ext`・`dev`・`server`・`window`・`ui`・`e2e`・`std`）に置き、`include_dir` で埋め込む |
+| `testgen.rs`・`examples.rs` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成。「具体例」の表から実行用の bin を作って動かし、計画と比べる |
+| `assets/e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
+| `receipt.rs` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化・影響範囲・変異検査の生き残り |
+| `hints.rs` | `check --json` の hint（指摘の種類ごとの、見る節と直し方）。検査器の指摘の種類を足したら、ここにも足す |
+| `trace.rs` | `geas trace`。サーバーの構造化ログを仕様書の行に結ぶ |
+| `bench.rs` | `geas bench`。AI が書いた `.geas` の採点 |
+| `partcheck.rs`・`partrun.rs` | 部品の台帳と、境界値の検査（`geas parts`）。標準部品の手本（Rust の整数のメソッドを桁の限りの無い整数で書き直したもの）も `partrun.rs` |
+| `mutate.rs` | 変異検査（`geas mutate`）。普段は走らせず、レビューの前に。`--base`／`--base-git` で、変わった行だけを崩す |
+| `envreq.rs`・`envcheck.rs`・`adapter.rs` | 動かす前提の一覧、環境の事実との照合、terraform の plan（aws-ecs）から事実を作るアダプタ |
+| `interview.rs` | 初回の対話の台帳 |
+| `modules.rs`・`names.rs` | `use`／`module`、名前の規則と表示名の検査 |
+| `crates/geas-cli/src/main.rs` | コマンド。`crates/geas-cli/tests/` に、コーパスの突き合わせ（`golden.rs`）と通しの確認（`e2e.rs`） |
+
+出力の一致を見張るコーパス（`tests/corpus.tar.xz`）の期待値は `tests/golden/hashes.json`（Rust 化の前の Python 版の出力から作った指紋）です。意図して出力を変えたら、期待値も作り直します（`cargo test` が、食い違った入力と項目を出します）。

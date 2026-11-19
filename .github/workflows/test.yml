@@ -1,4 +1,4 @@
-# PR と main への push で、テストを全部走らせる（python -m pytest tests）。
+# PR と main への push で、テストを全部走らせる（cargo test）。
 # 生成したアプリを cargo で組むテストは --offline で組むので、先に見本のアプリを生成して、依存の crate を取っておく。
 name: test
 
@@ -31,9 +31,6 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       # 窓つき exe の試験（WebKitGTK・仮想ディスプレイ）と、常駐のトレイの部品。
       # apt の配布元が遅い・つながらないことがある（37 分かかって失敗した回があった）ので、
       # 取ってきた .deb をキャッシュに置き、次からは配布元に行かずにそこから入れる。
@@ -68,18 +65,20 @@ jobs:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-          key: cargo-${{ hashFiles('geas/server/Cargo.lock', 'geas/window/Cargo.lock') }}
+          key: cargo-${{ hashFiles('crates/geas-core/assets/server/Cargo.lock', 'crates/geas-core/assets/window/Cargo.lock') }}
+      - name: geas を組む
+        run: cargo build --release -p geas-cli
       - name: 依存の crate を取っておく
         run: |
           for app in runtime_demo solo_tweet; do
-            python -m geas rust tests/fixtures/$app/$app.geas -o "$RUNNER_TEMP/$app" --host --runtime --standalone
+            target/release/geas rust tests/fixtures/$app/$app.geas -o "$RUNNER_TEMP/$app" --host --runtime --standalone
             (cd "$RUNNER_TEMP/$app/server" && cargo fetch)
             (cd "$RUNNER_TEMP/$app/window" && cargo fetch)
           done
       - name: テスト
         run: |
-          python -m pip install -q pytest
-          python -m pytest tests -q -rs --durations=15
+          cargo test --release
+          cargo test --release -- --ignored
       - name: 組んだ結果の使い回しの成績
         if: always()
         run: sccache --show-stats || true

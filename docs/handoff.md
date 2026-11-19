@@ -23,4 +23,4 @@
 - 返答・コメント・説明文は日本語。
 - 小さい PR にして、マージしてから次へ。PR を積み重ねない。
 - 質問や感想は修正依頼ではない。直す前に答えて確認する。
-- テスト：`python -m pytest tests`。`rusqlite` を取得できない環境では `runtime` と `shop_app` のテストが動かない（PR に書く）。生成物（`tests/fixtures/shop/shop_rust`）は、生成器を変えたら `python -m geas rust tests/fixtures/shop/shop.geas -o tests/fixtures/shop/shop_rust` で作り直す。
+- テスト：`cargo test`。`rusqlite` を取得できない環境では `runtime` と `shop_app` のテストが動かない（PR に書く）。生成物（`tests/fixtures/shop/shop_rust`）は、生成器を変えたら `geas rust tests/fixtures/shop/shop.geas -o tests/fixtures/shop/shop_rust` で作り直す。

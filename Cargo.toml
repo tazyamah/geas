@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/geas-core", "crates/geas-cli"]
+exclude = ["tests", "out", "proofs", "crates/geas-core/assets/server", "crates/geas-core/assets/window"]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"

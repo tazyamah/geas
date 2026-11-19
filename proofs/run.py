@@ -2,8 +2,8 @@
 """前置きの証明（proofs/prelude_proofs.rs）を、Kani で実行する。
 
 使い方: python proofs/run.py [--timeout 秒]    （cargo install --locked kani-verifier && cargo kani setup が済んでいること）
-生成物の前置き（geas.rustgen.PRELUDE）に証明を連結した crate を、一時フォルダに作って `cargo kani` を回す。
-通常のテスト（pytest）には入れない。Kani が無い環境では、tests/test_proofs.py が飛ばされる。
+生成物の前置き（crates/geas-core/src/assets/rust_prelude.txt）に証明を連結した crate を、一時フォルダに作って `cargo kani` を回す。
+通常のテスト（cargo test）には入れない。
 """
 import argparse
 import subprocess
@@ -12,8 +12,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-from geas.rustgen import PRELUDE  # noqa: E402
+PRELUDE = (ROOT / "crates/geas-core/src/assets/rust_prelude.txt").read_text(encoding="utf-8")
 
 CARGO = """[package]
 name = "prelude_proofs"
