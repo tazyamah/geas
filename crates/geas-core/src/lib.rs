@@ -12,6 +12,7 @@ pub mod names;
 pub mod rest;
 pub mod rawexpr;
 pub mod envreq;
+pub mod envlive;
 pub mod hints;
 pub mod pyrepr;
 pub mod testgen;
