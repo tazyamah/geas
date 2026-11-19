@@ -142,6 +142,10 @@ fn コーパスの出力が正解の指紋と一致する() {
         }
     });
     let got = results.into_inner().unwrap();
+    // 指紋を取り直すとき：GEAS_GOLDEN_DUMP=出力先 を付けると、得た指紋を JSON で書き出す
+    if let Ok(path) = std::env::var("GEAS_GOLDEN_DUMP") {
+        std::fs::write(path, serde_json::to_string(&got).unwrap()).unwrap();
+    }
     let want: BTreeMap<String, BTreeMap<String, Value>> = serde_json::from_str(&std::fs::read_to_string(root().join("tests").join("golden").join("hashes.json")).unwrap()).unwrap();
     let mut bad: Vec<String> = vec![];
     // corpus/29774ce42e3c は、Python 版の置き場所を絶対パスで指す（/home/user/geas/geas/std/num.geas）。
