@@ -15,6 +15,7 @@ pub mod envreq;
 pub mod envlive;
 pub mod envprobe;
 pub mod envdoctor;
+pub mod containergen;
 pub mod hints;
 pub mod pyrepr;
 pub mod testgen;
