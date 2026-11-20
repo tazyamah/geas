@@ -99,6 +99,9 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "env-checks", pos: &["code"], opts: &[("--json", false)] },
     Cmd { name: "env-facts", pos: &["plan"], opts: &[("--adapter", true), ("--service", true)] },
     Cmd { name: "env-verify", pos: &["code"], opts: &[("--facts", true), ("--plan", true), ("--adapter", true), ("--service", true), ("--json", false), ("--strict", false)] },
+    Cmd { name: "doctor", pos: &["code"], opts: &[("--db", true), ("--egress", true), ("--secrets", true), ("--json", false), ("--strict", false)] },
+    Cmd { name: "env-probe", pos: &[], opts: &[("--db", true), ("--egress", true)] },
+    Cmd { name: "env-live", pos: &["code"], opts: &[("--url", true), ("--facts", true), ("--json", false), ("--strict", false)] },
     Cmd { name: "review", pos: &["code"], opts: &[("--plan", true), ("--diff-o", true), ("--base", true), ("--base-git", true), ("-o", true)] },
     Cmd { name: "rust", pos: &["code"], opts: &[("-o", true), ("--standalone", false), ("--target", true), ("--plan", true), ("--host", false), ("--runtime", false), ("--seed", true), ("--server", true)] },
     Cmd { name: "compare", pos: &["code", "plan"], opts: &[("--no-run", false), ("-o", true)] },
@@ -108,7 +111,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "bench", pos: &["cases", "runs"], opts: &[("--no-run", false), ("--baseline", true), ("--json", true), ("-o", true)] },
 ];
 
-const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,review,rust,compare,mutate,receipt,trace,bench} ...";
+const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,review,rust,compare,mutate,receipt,trace,bench} ...";
 
 struct Args {
     cmd: &'static str,
@@ -198,6 +201,9 @@ fn parse_args(argv: &[String]) -> Result<Args, i32> {
     }
     if cmd.name == "env-verify" && a.vals.get("facts").is_none() == a.vals.get("plan").is_none() {
         return Err(arg_error(cmd.name, if a.vals.get("facts").is_some() { "argument --plan: not allowed with argument --facts" } else { "one of the arguments --facts --plan is required" }));
+    }
+    if cmd.name == "env-live" && a.vals.get("url").is_none() {
+        return Err(arg_error(cmd.name, "the following arguments are required: --url"));
     }
     if cmd.name == "rust" {
         if let Some(t) = a.vals.get("target") {
@@ -774,6 +780,81 @@ fn cmd_env_verify(a: &Args) -> i32 {
     if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
 }
 
+fn cmd_doctor(a: &Args) -> i32 {
+    use geas_core::envcheck as ec;
+    let path = a.v("code").unwrap();
+    let mut prog = match load(path) { Ok(p) => p, Err(c) => return c };
+    let ck = geas_core::check::defs::check(&mut prog, true);
+    if !ck.ok() {
+        for d in &ck.diags {
+            eprintln!("{}", d);
+        }
+        eprintln!("検査: エラーがあります（直してから診断してください）");
+        return 1;
+    }
+    let o = geas_core::envdoctor::Options {
+        db: a.v("db").map(|s| s.to_string()),
+        egress: a.v("egress").map(|s| s.split(',').filter(|x| !x.is_empty()).map(|x| x.to_string()).collect()).unwrap_or_default(),
+        secrets_file: a.v("secrets").map(|s| s.to_string()),
+    };
+    let (results, notes) = geas_core::envdoctor::run(&geas_core::envreq::items(ck.p), &o);
+    if a.f("json") {
+        println!("{}", geas_core::crategen::dumps_indent(&serde_json::json!({"results": ec::results_json(&results), "counts": ec::counts_json(&results), "notes": notes}), 2));
+    } else {
+        print!("{}", ec::to_text(&results));
+        for n in &notes {
+            println!("メモ：{}", n);
+        }
+    }
+    let c = ec::counts(&results);
+    let n = |k: &str| c.iter().find(|(x, _)| *x == k).map_or(0, |(_, v)| *v);
+    if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
+}
+
+fn cmd_env_probe(a: &Args) -> i32 {
+    let o = geas_core::envprobe::Options {
+        db: a.v("db").map(|s| s.to_string()),
+        egress: a.v("egress").map(|s| s.split(',').filter(|x| !x.is_empty()).map(|x| x.to_string()).collect()).unwrap_or_default(),
+    };
+    let (facts, notes) = geas_core::envprobe::collect(&o);
+    println!("{}", geas_core::crategen::dumps_indent(&serde_json::json!({"facts": facts, "notes": notes}), 2));
+    0
+}
+
+fn cmd_env_live(a: &Args) -> i32 {
+    use geas_core::envcheck as ec;
+    let path = a.v("code").unwrap();
+    let mut prog = match load(path) { Ok(p) => p, Err(c) => return c };
+    let ck = geas_core::check::defs::check(&mut prog, true);
+    if !ck.ok() {
+        for d in &ck.diags {
+            eprintln!("{}", d);
+        }
+        eprintln!("検査: エラーがあります（直してから確かめてください）");
+        return 1;
+    }
+    let mut results: Vec<ec::Res> = vec![];
+    if let Some(f) = a.v("facts") {
+        match std::fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())) {
+            Ok(v) => results.extend(ec::verify(&geas_core::envreq::items(ck.p), &v.get("facts").cloned().unwrap_or(v))),
+            Err(e) => {
+                eprintln!("事実を読めません: {}", e);
+                return 2;
+            }
+        }
+    }
+    let probes = geas_core::envlive::probes(ck.p);
+    results.extend(geas_core::envlive::run(&probes, a.v("url").unwrap(), &geas_core::envlive::fetch_default));
+    if a.f("json") {
+        println!("{}", geas_core::crategen::dumps_indent(&serde_json::json!({"results": ec::results_json(&results), "counts": ec::counts_json(&results)}), 2));
+    } else {
+        print!("{}", ec::to_text(&results));
+    }
+    let c = ec::counts(&results);
+    let n = |k: &str| c.iter().find(|(x, _)| *x == k).map_or(0, |(_, v)| *v);
+    if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
+}
+
 fn cmd_parts(a: &Args) -> i32 {
     use geas_core::partrun as pr;
     let path = a.v("code").unwrap();
@@ -881,6 +962,9 @@ fn main() {
         "env-facts" => cmd_env_facts(&a),
         "env-checks" => cmd_env_checks(&a),
         "env-verify" => cmd_env_verify(&a),
+        "env-probe" => cmd_env_probe(&a),
+        "doctor" => cmd_doctor(&a),
+        "env-live" => cmd_env_live(&a),
         "parts" => cmd_parts(&a),
         "check" => cmd_check(&a),
         "spec" => cmd_spec(&a),
