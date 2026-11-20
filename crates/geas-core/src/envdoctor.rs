@@ -5,6 +5,7 @@
 //! シークレットの値は読まず、出力にも出さない（有無だけ）。
 use crate::envcheck::{self, Res, FAIL, PASS, TRUST, UNKNOWN};
 use crate::envprobe;
+use crate::ast::Program;
 use crate::envreq::EnvItem;
 use std::path::Path;
 
@@ -73,10 +74,113 @@ fn in_container() -> bool {
     Path::new("/.dockerenv").exists() || std::fs::read_to_string("/proc/1/cgroup").map_or(false, |t| t.contains("docker") || t.contains("containerd") || t.contains("kubepods"))
 }
 
-pub fn run(items: &[EnvItem], o: &Options) -> (Vec<Res>, Vec<String>) {
+/// env_file の「名前=値」の行から、値が入っている名前の一覧（値は返さない）
+pub fn env_file_names(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.starts_with('#') {
+                return None;
+            }
+            let (k, v) = l.split_once('=')?;
+            if v.trim().trim_matches('"').is_empty() {
+                None
+            } else {
+                Some(k.trim().to_string())
+            }
+        })
+        .collect()
+}
+
+fn check_secret_in_file(item: &Res, file: &str, text: &Option<String>) -> Res {
+    let var = secret_var(item.id.trim_start_matches("secret."));
+    match text {
+        None => res(&item.id, &item.aspect, &item.text, UNKNOWN, format!("環境ファイル {} を読めなかった", file)),
+        Some(t) if env_file_names(t).contains(&var) => res(&item.id, &item.aspect, &item.text, PASS, format!("環境ファイル {} に {} の値がある（値は見ていない）", file, var)),
+        Some(_) => res(&item.id, &item.aspect, &item.text, FAIL, format!("環境ファイル {} に {} の値が無い", file, var)),
+    }
+}
+
+/// 宣言（container・infra）から導く確かめ。コンテナの中とホストで、見える物が違う
+fn declared(p: &Program, in_box: bool) -> Vec<Res> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let (Some(c), Some(i)) = (p.container.as_ref(), p.infra.as_ref()) else { return vec![] };
+    let mut out: Vec<Res> = vec![];
+    let tcp = ["/proc/net/tcp", "/proc/net/tcp6"].iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect::<String>();
+    let port = c.port as u16;
+    let listen = envprobe::listening_any(&tcp).into_iter().filter(|(q, _)| *q == port).collect::<Vec<_>>();
+    let t = format!("宣言した口 {} で待ち受けている", c.port);
+    out.push(if listen.is_empty() {
+        res("declared.port", "到達性", &t, FAIL, "待ち受けていない（サーバーが起動していない、または別の口で動いている）")
+    } else if in_box && listen.iter().all(|(_, lo)| *lo) {
+        res("declared.port", "到達性", &t, FAIL, "ループバックだけで待ち受けている（コンテナの外から届かない。--host 0.0.0.0 が要る）")
+    } else {
+        res("declared.port", "到達性", &t, PASS, format!("{} で待ち受けている", c.port))
+    });
+    if !listen.is_empty() {
+        let t = "サーバーの /api/health が 200 を返す";
+        out.push(match crate::envlive::fetch_default(&format!("http://127.0.0.1:{}", c.port), "/api/health") {
+            Ok(200) => res("declared.health", "到達性", t, PASS, "GET /api/health → 200"),
+            Ok(s) => res("declared.health", "到達性", t, FAIL, format!("GET /api/health → {}", s)),
+            Err(e) => res("declared.health", "到達性", t, UNKNOWN, format!("届かなかった：{}", e)),
+        });
+    }
+    if in_box {
+        return out;
+    }
+    // ホストの側：データフォルダ・環境ファイル・Docker
+    let t = format!("ホストのデータフォルダ {} が、番号 {} のユーザーに書ける", i.volume_host, crate::containergen::UID);
+    out.push(match std::fs::metadata(&i.volume_host) {
+        Err(e) => res("declared.volume", "安全性", &t, FAIL, format!("読めない：{}", e)),
+        Ok(m) if !m.is_dir() => res("declared.volume", "安全性", &t, FAIL, "フォルダではない"),
+        Ok(m) if m.uid() == crate::containergen::UID || m.permissions().mode() & 0o002 != 0 => res("declared.volume", "安全性", &t, PASS, format!("所有者 {}、権限 {:o}", m.uid(), m.permissions().mode() & 0o777)),
+        Ok(m) => res("declared.volume", "安全性", &t, FAIL, format!("所有者 {}、権限 {:o} で、番号 {} は書けない（chown するか、権限を見直す）", m.uid(), m.permissions().mode() & 0o777, crate::containergen::UID)),
+    });
+    if !i.env_file.is_empty() {
+        let t = format!("環境ファイル {} が、所有者以外に読めない", i.env_file);
+        out.push(match std::fs::metadata(&i.env_file) {
+            Err(e) => res("declared.env_file", "機密", &t, FAIL, format!("読めない：{}", e)),
+            Ok(m) if m.permissions().mode() & 0o077 != 0 => res("declared.env_file", "機密", &t, FAIL, format!("権限 {:o} で、ほかのユーザーにも読める（chmod 600 にする）", m.permissions().mode() & 0o777)),
+            Ok(m) => res("declared.env_file", "機密", &t, PASS, format!("権限 {:o}", m.permissions().mode() & 0o777)),
+        });
+    }
+    let t = "docker compose が使える";
+    let dv = std::process::Command::new("docker").args(["compose", "version", "--short"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    out.push(match dv {
+        Some(v) => res("declared.docker", "安全性", t, PASS, format!("docker compose {}", v)),
+        None => res("declared.docker", "安全性", t, UNKNOWN, "docker compose を実行できなかった（入っていない、または権限が無い）"),
+    });
+    out
+}
+
+pub fn run(p: &Program, items: &[EnvItem], o: &Options) -> (Vec<Res>, Vec<String>) {
+    let in_box = in_container();
+    // 宣言があれば、保存先は宣言から決まる（コンテナの中はコンテナ側のパス、ホストはホスト側のパス）
+    let mut o = Options { db: o.db.clone(), egress: o.egress.clone(), secrets_file: o.secrets_file.clone() };
+    if o.db.is_none() {
+        if let (Some(c), Some(i)) = (p.container.as_ref(), p.infra.as_ref()) {
+            o.db = Some(format!("{}/app.sqlite", if in_box { c.data.trim_end_matches('/') } else { i.volume_host.trim_end_matches('/') }));
+        }
+    }
+    let o = &o;
+    let env_file = p.infra.as_ref().filter(|i| !in_box && !i.env_file.is_empty()).map(|i| i.env_file.clone());
+    let env_text = env_file.as_ref().and_then(|f| std::fs::read_to_string(f).ok());
     let (facts, mut notes) = envprobe::collect(&envprobe::Options { db: o.db.clone(), egress: o.egress.clone() });
-    notes.insert(0, format!("実行場所：{}", if in_container() { "コンテナの中" } else { "ホスト（コンテナの外）" }));
-    let mut out: Vec<Res> = envcheck::verify(items, &facts).into_iter().map(|r| if r.id.starts_with("secret.") { check_secret(&r, &o.secrets_file) } else { r }).collect();
+    notes.insert(0, format!("実行場所：{}", if in_box { "コンテナの中" } else { "ホスト（コンテナの外）" }));
+    if let Some(db) = &o.db {
+        if o.secrets_file.is_none() && p.infra.is_some() {
+            notes.push(format!("保存先は宣言から {} とした", db));
+        }
+    }
+    let mut out: Vec<Res> = envcheck::verify(items, &facts)
+        .into_iter()
+        .map(|r| match (&env_file, r.id.starts_with("secret.")) {
+            (Some(f), true) => check_secret_in_file(&r, f, &env_text),
+            (None, true) => check_secret(&r, &o.secrets_file),
+            _ => r,
+        })
+        .collect();
+    out.extend(declared(p, in_box));
     // 領域：書き込みと空き
     if let Some(db) = &o.db {
         let dir = data_dir(db);
@@ -125,6 +229,12 @@ pub fn run(items: &[EnvItem], o: &Options) -> (Vec<Res>, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 環境ファイルは値のある名前だけ数える() {
+        let t = "# c\nGEAS_SECRET_A_B=xyz\nGEAS_SECRET_C_D=\nGEAS_SECRET_E_F=\"\"\n";
+        assert_eq!(env_file_names(t), vec!["GEAS_SECRET_A_B".to_string()]);
+    }
 
     #[test]
     fn シークレットの環境変数名() {

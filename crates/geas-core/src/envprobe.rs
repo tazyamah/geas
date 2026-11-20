@@ -29,6 +29,23 @@ pub fn listening_ports(tcp: &str) -> Vec<u16> {
     out
 }
 
+/// 待ち受け（LISTEN）中の口を、ループバックかどうかつきで返す（宣言した口が待ち受けているかの確かめ用）
+pub fn listening_any(tcp: &str) -> Vec<(u16, bool)> {
+    let mut out: Vec<(u16, bool)> = vec![];
+    for line in tcp.lines().skip(1) {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 4 || f[3] != "0A" {
+            continue;
+        }
+        let Some((addr, port)) = f[1].rsplit_once(':') else { continue };
+        let loopback = addr == "0100007F" || addr == "00000000000000000000000001000000" || addr.starts_with("0000000000000000FFFF00000100007F");
+        if let Ok(p) = u16::from_str_radix(port, 16) {
+            out.push((p, loopback));
+        }
+    }
+    out
+}
+
 /// /proc/self/mountinfo の本文から、path を含む一番深いマウントの（マウント先, 種類）
 pub fn mount_of(path: &str, mountinfo: &str) -> Option<(String, String)> {
     let mut best: Option<(String, String)> = None;
@@ -112,6 +129,11 @@ mod tests {
     use super::*;
 
     const TCP: &str = "  sl  local_address rem_address   st\n   0: 00000000:1F90 00000000:0000 0A 0 0\n   1: 0100007F:0050 00000000:0000 0A 0 0\n   2: 0A00000A:01BB 00000000:0000 01 0 0\n   3: 0A00000A:0016 00000000:0000 0A 0 0\n";
+
+    #[test]
+    fn 待ち受けの口はループバックかどうかも読める() {
+        assert_eq!(listening_any(TCP), vec![(8080, false), (80, true), (22, false)]);
+    }
 
     #[test]
     fn 待ち受けの口はループバックと接続中を除く() {
