@@ -99,6 +99,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "env-checks", pos: &["code"], opts: &[("--json", false)] },
     Cmd { name: "env-facts", pos: &["plan"], opts: &[("--adapter", true), ("--service", true)] },
     Cmd { name: "env-verify", pos: &["code"], opts: &[("--facts", true), ("--plan", true), ("--adapter", true), ("--service", true), ("--json", false), ("--strict", false)] },
+    Cmd { name: "container", pos: &["code"], opts: &[("-o", true)] },
     Cmd { name: "doctor", pos: &["code"], opts: &[("--db", true), ("--egress", true), ("--secrets", true), ("--json", false), ("--strict", false)] },
     Cmd { name: "env-probe", pos: &[], opts: &[("--db", true), ("--egress", true)] },
     Cmd { name: "env-live", pos: &["code"], opts: &[("--url", true), ("--facts", true), ("--json", false), ("--strict", false)] },
@@ -111,7 +112,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "bench", pos: &["cases", "runs"], opts: &[("--no-run", false), ("--baseline", true), ("--json", true), ("-o", true)] },
 ];
 
-const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,review,rust,compare,mutate,receipt,trace,bench} ...";
+const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,container,review,rust,compare,mutate,receipt,trace,bench} ...";
 
 struct Args {
     cmd: &'static str,
@@ -780,6 +781,45 @@ fn cmd_env_verify(a: &Args) -> i32 {
     if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
 }
 
+fn cmd_container(a: &Args) -> i32 {
+    let path = a.v("code").unwrap();
+    let mut prog = match load(path) { Ok(p) => p, Err(c) => return c };
+    let ck = geas_core::check::defs::check(&mut prog, true);
+    if !ck.ok() {
+        for d in &ck.diags {
+            eprintln!("{}", d);
+        }
+        eprintln!("検査: エラーがあります（直してから生成してください）");
+        return 1;
+    }
+    let files = match geas_core::containergen::generate(ck.p) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{}（`container {{ … }}` と `infra vm_docker \"名前\" {{ … }}` を書きます）", e);
+            return 2;
+        }
+    };
+    let Some(dest) = a.v("o") else {
+        for (n, body) in &files {
+            println!("==== {} ====\n{}", n, body);
+        }
+        return 0;
+    };
+    let dest = Path::new(dest);
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        eprintln!("{}: {}", dest.display(), e);
+        return 2;
+    }
+    for (n, body) in &files {
+        if let Err(e) = std::fs::write(dest.join(n), body) {
+            eprintln!("{}: {}", n, e);
+            return 2;
+        }
+        println!("生成しました: {}", dest.join(n).display());
+    }
+    0
+}
+
 fn cmd_doctor(a: &Args) -> i32 {
     use geas_core::envcheck as ec;
     let path = a.v("code").unwrap();
@@ -964,6 +1004,7 @@ fn main() {
         "env-verify" => cmd_env_verify(&a),
         "env-probe" => cmd_env_probe(&a),
         "doctor" => cmd_doctor(&a),
+        "container" => cmd_container(&a),
         "env-live" => cmd_env_live(&a),
         "parts" => cmd_parts(&a),
         "check" => cmd_check(&a),

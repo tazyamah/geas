@@ -809,6 +809,61 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// container（コンテナ層）と infra（基盤層）の検査
+    pub fn check_container_infra(&mut self) {
+        let p = self.p;
+        let abs = |s: &str| s.starts_with('/') && !s.split('/').any(|x| x == "..") && !s.contains(char::is_whitespace);
+        if let Some(i) = &p.infra {
+            if p.container.is_none() {
+                self.d(ERROR, "環境", "infra", "infra には container（コンテナ層）の宣言が要ります（`container { port 8080 / data \"/var/lib/app\" }`）", i.line);
+            }
+        }
+        let Some(c) = &p.container else { return };
+        let w = "container";
+        if c.port == 0 {
+            self.d(ERROR, "環境", w, "container には `port 8080` のように、サーバーが待ち受ける口を書きます", c.line);
+        }
+        if c.data.is_empty() {
+            self.d(ERROR, "環境", w, "container には `data \"/var/lib/app\"` のように、データを置くボリュームのパスを書きます（コンテナの中のパス。保存先のファイルはこの下に置く）", c.line);
+        } else if !abs(&c.data) {
+            self.d(ERROR, "環境", w, &format!("data「{}」は、/ で始まる絶対パスで書きます（.. や空白は使えません）", c.data), c.line);
+        }
+        let needs: Vec<String> = p.needs.iter().filter(|n| n.0 == "secret").map(|n| n.1.clone()).collect();
+        for s in &c.secrets {
+            if !needs.contains(s) {
+                self.d(ERROR, "環境", w, &format!("container の secret {} は、needs secret {} \"理由\" で宣言していません", s, s), c.line);
+            }
+        }
+        for n in &needs {
+            if !c.secrets.contains(n) {
+                self.d(ERROR, "環境", w, &format!("needs secret {} を、container が受けていません（container に `secret {}` を書きます）", n, n), c.line);
+            }
+        }
+        let Some(i) = &p.infra else { return };
+        let w = "infra";
+        if i.host_port == 0 {
+            self.d(ERROR, "環境", w, "infra には `host_port 443 via proxy`（または direct）を書きます", i.line);
+        }
+        if i.volume_host.is_empty() {
+            self.d(ERROR, "環境", w, "infra には `volume host \"/srv/shop/data\"` のように、ホストの側のパスを書きます（コンテナが作り直されても消えないようにするため）", i.line);
+        } else if !abs(&i.volume_host) {
+            self.d(ERROR, "環境", w, &format!("volume host「{}」は、/ で始まる絶対パスで書きます", i.volume_host), i.line);
+        }
+        if !c.secrets.is_empty() {
+            if i.env_file.is_empty() {
+                self.d(ERROR, "環境", w, "container がシークレットを受けるので、infra に `secrets_from env_file \"/etc/shop/secrets.env\"` を書きます（値は書かず、置き場所だけ）", i.line);
+            } else if !abs(&i.env_file) {
+                self.d(ERROR, "環境", w, &format!("secrets_from env_file「{}」は、/ で始まる絶対パスで書きます", i.env_file), i.line);
+            }
+        }
+        if !i.host_name.is_empty() && !i.host_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-') {
+            self.d(ERROR, "環境", w, &format!("host_name「{}」は、半角英数・. ・- だけで書きます", i.host_name), i.line);
+        }
+        if i.via == "direct" && p.needs.iter().any(|n| n.0 == "exposure" && matches!(&n.2, NeedVal::Str(v) if v == "internal")) {
+            self.d(ERROR, "環境", w, "needs exposure internal（公開しない）なのに、host_port が direct（ホストの口に直に出す）です。via proxy にするか、exposure を見直します", i.line);
+        }
+    }
+
     /// needs（アプリが環境に要求すること）の検査
     pub fn check_needs(&mut self) {
         static ENV: OnceLock<Regex> = OnceLock::new();

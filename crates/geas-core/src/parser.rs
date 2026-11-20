@@ -338,6 +338,18 @@ impl Parser {
                     p.data_folder = Some((n, line));
                     self.end_line()?;
                 }
+                "container" => {
+                    if p.container.is_some() {
+                        return Err(ParseError::new("container は 1 つだけ書けます", line));
+                    }
+                    p.container = Some(self.container_decl(line)?);
+                }
+                "infra" => {
+                    if p.infra.is_some() {
+                        return Err(ParseError::new("infra は 1 つだけ書けます", line));
+                    }
+                    p.infra = Some(self.infra_decl(line)?);
+                }
                 "resident" => {
                     if p.resident.is_some() {
                         return Err(ParseError::new("resident は 1 つだけ書けます", line));
@@ -926,6 +938,88 @@ impl Parser {
             self.end_line()?;
         }
         Ok(EffectDecl { name, params, line, failures, no_wait, joins, replies, http, file })
+    }
+
+    fn port_num(&mut self, what: &str) -> PResult<i64> {
+        let n = self.peek().clone();
+        if n.kind != "NUM" || !n.val.chars().all(|c| c.is_ascii_digit()) || !(1..=65535).contains(&parse_int(&n.val)) {
+            return Err(self.err0(format!("{} のあとには、1〜65535 の口の番号を書きます", what)));
+        }
+        self.i += 1;
+        Ok(parse_int(&n.val) as i64)
+    }
+
+    fn str_after(&mut self, what: &str, example: &str) -> PResult<String> {
+        let t = self.next();
+        if t.kind != "STR" {
+            return Err(self.err0(format!("{} のあとには、{} のように \"…\" で書きます", what, example)));
+        }
+        Ok(t.val)
+    }
+
+    /// `container { port 8080 / data "/var/lib/app" / secret 外部.名前 }`
+    fn container_decl(&mut self, line: i64) -> PResult<ContainerDecl> {
+        let mut c = ContainerDecl { line, ..Default::default() };
+        self.block_open()?;
+        while !self.accept("}") {
+            let kw = self.name()?;
+            match kw.as_str() {
+                "port" => {
+                    if c.port != 0 {
+                        return Err(self.err0("port は 1 つだけ書けます"));
+                    }
+                    c.port = self.port_num("port")?;
+                }
+                "data" => {
+                    if !c.data.is_empty() {
+                        return Err(self.err0("data は 1 つだけ書けます"));
+                    }
+                    c.data = self.str_after("data", "data \"/var/lib/app\"（ボリュームを付ける、コンテナの中のパス）")?;
+                }
+                "secret" => c.secrets.push(self.dotted()?),
+                _ => return Err(self.err0(format!("container の中に「{}」は書けません（port・data・secret）", kw))),
+            }
+            self.end_line()?;
+        }
+        self.end_line()?;
+        Ok(c)
+    }
+
+    /// `infra vm_docker "名前" { host_port 443 via proxy / volume host "…" / secrets_from env_file "…" / host_name "…" }`
+    fn infra_decl(&mut self, line: i64) -> PResult<InfraDecl> {
+        let kind = self.name()?;
+        if kind != "vm_docker" {
+            return Err(ParseError::new(format!("infra の基盤「{}」はありません（ある：vm_docker）", kind), line));
+        }
+        let name = self.str_after("infra vm_docker", "infra vm_docker \"お店アプリ\" { … }")?;
+        let mut f = InfraDecl { kind, name, line, ..Default::default() };
+        self.block_open()?;
+        while !self.accept("}") {
+            let kw = self.name()?;
+            match kw.as_str() {
+                "host_port" => {
+                    f.host_port = self.port_num("host_port")?;
+                    self.expect("via")?;
+                    f.via = self.name()?;
+                    if f.via != "proxy" && f.via != "direct" {
+                        return Err(self.err0("via のあとには proxy（前段のプロキシが受ける。コンテナは手元の口にだけ出す）か direct（ホストの口に直に出す）を書きます"));
+                    }
+                }
+                "volume" => {
+                    self.expect("host")?;
+                    f.volume_host = self.str_after("volume host", "volume host \"/srv/shop/data\"（ホストの側のパス）")?;
+                }
+                "secrets_from" => {
+                    self.expect("env_file")?;
+                    f.env_file = self.str_after("secrets_from env_file", "secrets_from env_file \"/etc/shop/secrets.env\"")?;
+                }
+                "host_name" => f.host_name = self.str_after("host_name", "host_name \"shop.example.com\"（利用者が開く名前。サーバーが Host として受ける）")?,
+                _ => return Err(self.err0(format!("infra の中に「{}」は書けません（host_port・volume・secrets_from・host_name）", kw))),
+            }
+            self.end_line()?;
+        }
+        self.end_line()?;
+        Ok(f)
     }
 
     fn resident_decl(&mut self, line: i64) -> PResult<ResidentDecl> {

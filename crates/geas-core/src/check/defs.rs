@@ -82,6 +82,7 @@ impl<'a> Checker<'a> {
         self.check_deletes();
         self.check_isolations();
         self.check_needs();
+        self.check_container_infra();
         self.check_resident();
         self.check_data_folders();
         self.check_states();

@@ -523,6 +523,30 @@ pub struct Resource {
     pub line: i64,
 }
 
+/// コンテナ層の宣言（基盤に依存しない。Dockerfile の元）
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(tag = "_")]
+pub struct ContainerDecl {
+    pub port: i64,
+    pub data: String,
+    pub secrets: Vec<String>,
+    pub line: i64,
+}
+
+/// 基盤層の宣言（いまは vm_docker だけ）
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(tag = "_")]
+pub struct InfraDecl {
+    pub kind: String,
+    pub name: String,
+    pub host_port: i64,
+    pub via: String,
+    pub host_name: String,
+    pub volume_host: String,
+    pub env_file: String,
+    pub line: i64,
+}
+
 /// needs の値：文字列（secret・exposure は名前か空）か整数（instances の上限）
 pub type NeedVal = IntOrStr;
 
@@ -557,6 +581,10 @@ pub struct Program {
     pub data_folders: Vec<(String, String, i64)>,
     pub resident: Option<ResidentDecl>,
     pub needs: Vec<(String, String, NeedVal, String, i64)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<ContainerDecl>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub infra: Option<InfraDecl>,
     pub title: String,
     pub tz_offset: i128,
     pub labels: Map<Map<String>>,

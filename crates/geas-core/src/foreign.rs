@@ -142,9 +142,9 @@ pub fn token_hint(toks: &[Tok], i: usize) -> String {
     String::new()
 }
 
-pub const TOP_KEYWORDS: [&str; 32] = [
+pub const TOP_KEYWORDS: [&str; 34] = [
     "app", "timezone", "use", "module", "ltype", "entity", "store", "storage", "state", "result", "effect", "reply", "library", "example", "convert", "invariant", "deed", "nexus", "flow",
-    "trigger", "rule", "migration", "query", "event", "screen", "resource", "actor", "scope", "needs", "resident", "path", "data_folder",
+    "trigger", "rule", "migration", "query", "event", "screen", "resource", "actor", "scope", "needs", "resident", "path", "data_folder", "container", "infra",
 ];
 
 pub fn top_keywords() -> Vec<&'static str> {

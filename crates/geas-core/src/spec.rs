@@ -610,6 +610,10 @@ pub fn build_raw(ck: &Checker) -> Spec {
         res.push(json!(["右クリックのメニュー「終了」", "アプリを終える（言語が常に足す）"]));
     }
     spec.insert("常駐".into(), Value::Array(res));
+    let cont = crate::containergen::rows(p);
+    if !cont.is_empty() {
+        spec.insert("コンテナと基盤".into(), Value::Array(cont.iter().map(|r| json!(r)).collect()));
+    }
     let mut evs: Vec<Value> = vec![];
     for ev in &p.events {
         for (k, q, d) in &ev.steps {
@@ -794,7 +798,7 @@ pub fn build_raw(ck: &Checker) -> Spec {
     spec.insert("部品".into(), Value::Array(parts));
     let mut spec2: Spec = Map::new();
     // 項目の並びは Python 版の挿入順に合わせる（部品 → 保証の強さ の順にしない）
-    for k in ["アプリ", "データ", "状態", "遷移", "拒否", "流れ", "処理", "問い合わせ", "トリガ", "応答", "合流", "模擬", "決め方", "外部作用", "通信", "データ用フォルダ", "ファイル", "常駐", "出来事", "画面", "画面遷移", "削除", "人の保証", "保存の形", "保存先", "動かす前提", "拡張", "画面デザイン", "不変条件", "部品", "保証の強さ"] {
+    for k in ["アプリ", "データ", "状態", "遷移", "拒否", "流れ", "処理", "問い合わせ", "トリガ", "応答", "合流", "模擬", "決め方", "外部作用", "通信", "データ用フォルダ", "ファイル", "常駐", "出来事", "画面", "画面遷移", "削除", "人の保証", "保存の形", "保存先", "動かす前提", "コンテナと基盤", "拡張", "画面デザイン", "不変条件", "部品", "保証の強さ"] {
         if let Some(v) = spec.get(k) {
             spec2.insert(k.to_string(), v.clone());
         }
@@ -1065,6 +1069,10 @@ pub fn render(ck: &Checker, spec: &Spec, name: &str) -> String {
         push_head(&mut out, "## 動かす前提（アプリが実行環境に要求すること。環境の実際は書かず、plan や実環境から読んで照合する。照合は geas env-verify（plan の JSON から。読めなかった事実は「確かめられなかった」で、合格にはしない））", "| 番号 | 観点 | 要求 | 由来 | 確かめ方 |", 5, true);
         // Python 版は見出しと表の間に空行を 1 つ入れ、表の見出しは同じ要領で続ける
         table(&mut out, spec, "動かす前提", 5);
+    }
+    if has(spec, "コンテナと基盤") {
+        push_head(&mut out, "## コンテナと基盤（container・infra の宣言。geas container が Dockerfile・compose.yaml を生成する。ホストの OS・Docker・前段・バックアップ・シークレットの値は人の保証）", "| 項目 | 内容 | 由来 |", 3, true);
+        table(&mut out, spec, "コンテナと基盤", 3);
     }
     if has(spec, "削除") {
         push_head(&mut out, "## 削除（消してよい状態と、消したときの参照元の扱い）", "| データ | 消してよい状態 | 参照元の扱い |", 3, true);
