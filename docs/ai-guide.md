@@ -57,6 +57,7 @@ geas env-checks アプリ.geas [--json]              # 動かす前提（アプ�
 geas env-facts plan.json [--adapter aws-ecs] [--service アドレス]   # terraform show -json の出力から、環境の事実（クラウドに依存しない形）を作る。読めなかった事実は null
 geas env-verify アプリ.geas (--plan plan.json | --facts 事実.json) [--strict] [--json]   # 動かす前提と環境の事実を照合。不合格があれば終了コード 1（--strict は「確かめられなかった」も 1）
 geas env-probe [--db 保存先ファイル] [--egress ホスト:口,…]   # 動いている機械の上で環境の事実を読む（serverspec 的な収集器。Linux の /proc を読む）。開いている口、保存先のファイルが載るマウントの種類（消えるか）、宛先への TCP 到達。読めないものは null。出力は env-facts と同じ形なので、`> 事実.json` にして env-verify --facts で照合する
+geas doctor アプリ.geas [--db 保存先ファイル] [--egress ホスト:口,…] [--secrets ファイル] [--strict] [--json]   # 動いている機械（ホスト・コンテナの中）で、動かす前提を一度に診断する。env-probe の事実の収集と env-verify の照合に、保存先の書き込みと空き・同じ DB を開いているプロセスの数・時刻同期・シークレットの有無（値は見ない。環境変数 GEAS_SECRET_外部_名前）を足し、最後に「人の保証」（OS・Docker・前段・バックアップ・シークレットの値）の一覧を出す。不合格があれば終了コード 1
 geas env-live アプリ.geas --url http://ホスト:口 [--facts 事実.json] [--strict] [--json]   # 動いているサーバーを外から確かめる（serverspec 的）。仕様書のルートから GET だけを作って送り、HTTP の状態が仕様どおりか見る（書き込みは送らない）。届かなければ「確かめられなかった」。--facts を足すと env-verify の照合も同じ表に並べる。https は curl で送る
 geas review アプリ.geas [--plan 計画書.md] -o 出力.html  # 人が読む仕様書（スマホ幅の HTML）。計画書を渡すと突合の結果も載る
 geas compare アプリ.geas 計画書.md [--no-run] [-o 結果.md]  # 計画書とコードの突合。具体例は、生成した Rust で実際に動かして確かめる

@@ -99,6 +99,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "env-checks", pos: &["code"], opts: &[("--json", false)] },
     Cmd { name: "env-facts", pos: &["plan"], opts: &[("--adapter", true), ("--service", true)] },
     Cmd { name: "env-verify", pos: &["code"], opts: &[("--facts", true), ("--plan", true), ("--adapter", true), ("--service", true), ("--json", false), ("--strict", false)] },
+    Cmd { name: "doctor", pos: &["code"], opts: &[("--db", true), ("--egress", true), ("--secrets", true), ("--json", false), ("--strict", false)] },
     Cmd { name: "env-probe", pos: &[], opts: &[("--db", true), ("--egress", true)] },
     Cmd { name: "env-live", pos: &["code"], opts: &[("--url", true), ("--facts", true), ("--json", false), ("--strict", false)] },
     Cmd { name: "review", pos: &["code"], opts: &[("--plan", true), ("--diff-o", true), ("--base", true), ("--base-git", true), ("-o", true)] },
@@ -110,7 +111,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "bench", pos: &["cases", "runs"], opts: &[("--no-run", false), ("--baseline", true), ("--json", true), ("-o", true)] },
 ];
 
-const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,review,rust,compare,mutate,receipt,trace,bench} ...";
+const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,review,rust,compare,mutate,receipt,trace,bench} ...";
 
 struct Args {
     cmd: &'static str,
@@ -779,6 +780,37 @@ fn cmd_env_verify(a: &Args) -> i32 {
     if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
 }
 
+fn cmd_doctor(a: &Args) -> i32 {
+    use geas_core::envcheck as ec;
+    let path = a.v("code").unwrap();
+    let mut prog = match load(path) { Ok(p) => p, Err(c) => return c };
+    let ck = geas_core::check::defs::check(&mut prog, true);
+    if !ck.ok() {
+        for d in &ck.diags {
+            eprintln!("{}", d);
+        }
+        eprintln!("検査: エラーがあります（直してから診断してください）");
+        return 1;
+    }
+    let o = geas_core::envdoctor::Options {
+        db: a.v("db").map(|s| s.to_string()),
+        egress: a.v("egress").map(|s| s.split(',').filter(|x| !x.is_empty()).map(|x| x.to_string()).collect()).unwrap_or_default(),
+        secrets_file: a.v("secrets").map(|s| s.to_string()),
+    };
+    let (results, notes) = geas_core::envdoctor::run(&geas_core::envreq::items(ck.p), &o);
+    if a.f("json") {
+        println!("{}", geas_core::crategen::dumps_indent(&serde_json::json!({"results": ec::results_json(&results), "counts": ec::counts_json(&results), "notes": notes}), 2));
+    } else {
+        print!("{}", ec::to_text(&results));
+        for n in &notes {
+            println!("メモ：{}", n);
+        }
+    }
+    let c = ec::counts(&results);
+    let n = |k: &str| c.iter().find(|(x, _)| *x == k).map_or(0, |(_, v)| *v);
+    if n(ec::FAIL) > 0 || (a.f("strict") && n(ec::UNKNOWN) > 0) { 1 } else { 0 }
+}
+
 fn cmd_env_probe(a: &Args) -> i32 {
     let o = geas_core::envprobe::Options {
         db: a.v("db").map(|s| s.to_string()),
@@ -931,6 +963,7 @@ fn main() {
         "env-checks" => cmd_env_checks(&a),
         "env-verify" => cmd_env_verify(&a),
         "env-probe" => cmd_env_probe(&a),
+        "doctor" => cmd_doctor(&a),
         "env-live" => cmd_env_live(&a),
         "parts" => cmd_parts(&a),
         "check" => cmd_check(&a),
