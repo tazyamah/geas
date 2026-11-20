@@ -94,3 +94,67 @@ fn 仕様書にコンテナと基盤の表が出る() {
     assert!(out.contains("## コンテナと基盤") && out.contains("parcel.example.com"), "{}", out);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn doctorは宣言した口とボリュームと環境ファイルと応答を確かめる() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for st in l.incoming() {
+            let Ok(mut st) = st else { break };
+            let mut b = [0u8; 512];
+            let _ = st.read(&mut b);
+            let _ = st.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+    });
+    let d = tmp("doctor");
+    let vol = d.join("data");
+    std::fs::create_dir_all(&vol).unwrap();
+    std::fs::set_permissions(&vol, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let envf = d.join("secrets.env");
+    std::fs::write(&envf, "GEAS_SECRET_PAY_API_KEY=abc\n").unwrap();
+    std::fs::set_permissions(&envf, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let src = base()
+        + "\nneeds secret Pay.api_key \"決済の鍵\"\n"
+        + &format!(
+            "container {{\n  port {}\n  data \"/var/lib/app\"\n  secret Pay.api_key\n}}\ninfra vm_docker \"小包\" {{\n  host_port 443 via proxy\n  volume host \"{}\"\n  secrets_from env_file \"{}\"\n}}\n",
+            port,
+            vol.display(),
+            envf.display()
+        );
+    let f = d.join("a.geas");
+    std::fs::write(&f, src).unwrap();
+    let (_, out) = run(&["doctor", f.to_str().unwrap()]);
+    assert!(out.contains("[合格] declared.port"), "{}", out);
+    assert!(out.contains("[合格] declared.health"), "{}", out);
+    if out.contains("ホスト（コンテナの外）") {
+        assert!(out.contains("[合格] declared.volume"), "{}", out);
+        assert!(out.contains("[合格] declared.env_file"), "{}", out);
+        assert!(out.contains("[合格] secret.Pay.api_key"), "{}", out);
+        // 環境ファイルが誰にでも読めると不合格
+        std::fs::set_permissions(&envf, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (_, out2) = run(&["doctor", f.to_str().unwrap()]);
+        assert!(out2.contains("[不合格] declared.env_file"), "{}", out2);
+        // 値のないシークレットは不合格（値は出力に出ない）
+        std::fs::write(&envf, "GEAS_SECRET_PAY_API_KEY=\n").unwrap();
+        let (_, out3) = run(&["doctor", f.to_str().unwrap()]);
+        assert!(out3.contains("[不合格] secret.Pay.api_key"), "{}", out3);
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn doctorは待ち受けていない口を不合格にする() {
+    let d = tmp("doctor-down");
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    drop(l);
+    let f = d.join("a.geas");
+    std::fs::write(&f, base() + &format!("\ncontainer {{\n  port {}\n  data \"/var/lib/app\"\n}}\ninfra vm_docker \"小包\" {{\n  host_port 443 via proxy\n  volume host \"{}\"\n}}\n", port, d.display())).unwrap();
+    let (code, out) = run(&["doctor", f.to_str().unwrap()]);
+    assert_eq!(code, 1, "{}", out);
+    assert!(out.contains("[不合格] declared.port"), "{}", out);
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -837,7 +837,7 @@ fn cmd_doctor(a: &Args) -> i32 {
         egress: a.v("egress").map(|s| s.split(',').filter(|x| !x.is_empty()).map(|x| x.to_string()).collect()).unwrap_or_default(),
         secrets_file: a.v("secrets").map(|s| s.to_string()),
     };
-    let (results, notes) = geas_core::envdoctor::run(&geas_core::envreq::items(ck.p), &o);
+    let (results, notes) = geas_core::envdoctor::run(ck.p, &geas_core::envreq::items(ck.p), &o);
     if a.f("json") {
         println!("{}", geas_core::crategen::dumps_indent(&serde_json::json!({"results": ec::results_json(&results), "counts": ec::counts_json(&results), "notes": notes}), 2));
     } else {
