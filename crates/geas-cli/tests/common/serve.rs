@@ -118,11 +118,24 @@ pub struct Srv {
 impl Srv {
     /// 新しい DB で起こす。args はサーバーへの追加の引数（--test など）
     pub fn start(app: &App, args: &[&str]) -> Srv {
+        Srv::start_env(app, args, &[], &[])
+    }
+
+    /// 環境変数つきで起こす。drop_prefix で始まる名前の環境変数は引き継がない
+    pub fn start_env(app: &App, args: &[&str], env: &[(&str, &str)], drop_prefix: &[&str]) -> Srv {
         let port = free_port();
         let tmp = std::env::temp_dir().join(format!("geas-srv-{}-{}", std::process::id(), port));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut cmd = Command::new(&app.exe);
         cmd.args(["--port", &port.to_string(), "--db"]).arg(tmp.join("a.sqlite")).arg("--pwa").arg(app.dir.join("ui")).args(args).stdout(Stdio::null()).stderr(Stdio::null());
+        for (k, _) in std::env::vars() {
+            if drop_prefix.iter().any(|p| k.starts_with(p)) {
+                cmd.env_remove(k);
+            }
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
         let child = cmd.spawn().unwrap();
         let mut s = Srv { port, child: Some(child), tmp };
         for _ in 0..100 {
