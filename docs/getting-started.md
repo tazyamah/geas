@@ -136,8 +136,10 @@ geas check tests/fixtures/tutorial/memo.geas
 ```
 
 ```
-検査: 通りました
+Check: passed
 ```
+
+表示は、何も指定しないと英語です。日本語にするには `--lang ja`（いつも日本語なら `export GEAS_LANG=ja`）を付けます（[i18n.md](i18n.md)）。日本語だと `検査: 通りました` と出ます。
 
 エラーが出たら、コードに書いた名前と行番号が出ます。試しに `publish_note` の `if note.status != Draft { return NotDraft }` を消して、もう一度検査してください。宣言した「読む `Note.status`」を本体で使っていない、結果 `NotDraft` を返す箇所がない、と指摘されて止まります。宣言と本体が食い違うコードは通らず、**通らないコードは先へ進めません。**
 

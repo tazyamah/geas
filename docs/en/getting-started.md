@@ -2,7 +2,7 @@
 
 In about 15 minutes you will install geas, build one small app, and produce the specification that a human reads. In geas, **an AI writes the `.geas` code and humans do not read it**; here you will look inside once, just to see how it works.
 
-> The documents in `docs/en/` are English translations of the Japanese originals, which remain the source of truth. The generated specifications and the checker's messages are currently in Japanese, so the sample code below uses Japanese display names. An English mode for them is planned.
+> The documents in `docs/en/` are English translations of the Japanese originals, which remain the source of truth. The checker's messages and the generated specifications are in English by default (`--lang ja` switches to Japanese); the sample code below uses Japanese display names, which the Japanese mode shows as is.
 
 ## 1. Install
 
@@ -136,8 +136,10 @@ geas check tests/fixtures/tutorial/memo.geas
 ```
 
 ```
-検査: 通りました        (= "Check: passed")
+Check: passed
 ```
+
+Output is in English by default. Add `--lang ja` (or `export GEAS_LANG=ja`) for Japanese, which prints `検査: 通りました`.
 
 When something is wrong, the checker reports the name and line number in your code. As an experiment, delete the line `if note.status != Draft { return NotDraft }` from `publish_note` and check again. The checker stops you: the declared read of `Note.status` is not used in the body, and nothing returns the result `NotDraft`. Code whose declaration and body disagree does not pass, and **code that does not pass cannot go any further.**
 
