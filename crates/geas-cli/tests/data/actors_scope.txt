@@ -1,0 +1,211 @@
+
+scope own_parcels on Parcel {
+  filter refund_ref equals caller
+}
+
+scope live on Parcel {
+  where status != Canceled
+}
+
+scope canceled on Parcel {
+  where status == Canceled
+}
+
+scope in_hand on Parcel {
+  where status in [Received, Waiting]
+}
+
+/// 手元にある小包
+query parcels_in_hand {
+  from Parcel.in_hand
+  where fee in [0, 300, 500]
+  select parcel_id
+  reads Parcel.status, Parcel.fee, Parcel.parcel_id
+}
+
+resource ParcelsInHand {
+  index parcels_in_hand for anyone
+}
+
+/// 自分の小包
+query my_parcels {
+  from Parcel.own_parcels
+  select parcel_id, kind
+  reads Parcel.refund_ref, Parcel.parcel_id, Parcel.kind
+}
+
+/// 自分の、取り消していない小包
+query my_live_parcels {
+  from Parcel.own_parcels.live
+  select parcel_id
+  reads Parcel.refund_ref, Parcel.status, Parcel.parcel_id
+}
+
+/// 自分の、取り消した小包
+query my_canceled_parcels {
+  from Parcel.canceled.own_parcels
+  select parcel_id
+  reads Parcel.refund_ref, Parcel.status, Parcel.parcel_id
+}
+
+/// 取り消していない小包
+query live_parcels {
+  from Parcel.live
+  select parcel_id
+  reads Parcel.status, Parcel.parcel_id
+}
+
+scope of_kind(k: Kind) on Parcel {
+  filter kind equals k
+}
+
+/// 種類ごとの、自分の小包
+query my_parcels_of_kind {
+  input kind: Kind required
+  from Parcel.of_kind(kind).own_parcels
+  select parcel_id
+  reads Parcel.kind, Parcel.refund_ref, Parcel.parcel_id
+}
+
+resource MyParcelsOfKinds key kind {
+  show my_parcels_of_kind for Customer
+}
+
+/// 種類と、料金の幅で絞った小包（種類はパスのキー。料金の下限は必ず、上限は指定したときだけ）
+query parcels_by_kind_and_fee {
+  input kind: Kind required
+  input min_fee: Fee required
+  input max_fee: Fee
+  from Parcel.of_kind(kind)
+  filter fee at_least min_fee
+  filter fee at_most max_fee
+  select parcel_id
+  reads Parcel.kind, Parcel.fee, Parcel.parcel_id
+}
+
+resource ParcelsByKindAndFees key kind {
+  show parcels_by_kind_and_fee for anyone
+}
+
+/// 小包を 2 件ずつ（料金の大きい順。同じ料金の中は ID の大きい順）
+query parcels_paged {
+  input kind: Kind
+  from Parcel
+  filter kind equals kind
+  order fee desc
+  page 2
+  select parcel_id, kind
+  reads Parcel.parcel_id, Parcel.kind, Parcel.fee
+}
+
+resource ParcelPages {
+  index parcels_paged for anyone
+}
+
+/// 小包の ID を 1 件ずつ
+query parcel_ids_paged {
+  from Parcel
+  order fee asc
+  order fee desc
+  page 1
+  reads Parcel.fee
+}
+
+resource ParcelIdPages {
+  index parcel_ids_paged for anyone
+}
+
+/// 小包の ID の一覧
+screen ParcelIdList entry {
+  show parcel_ids_paged
+  design {
+    layout list
+    accent "#0b5cad"
+    mode light
+  }
+}
+
+/// 種類と料金で小包を探す（条件を URL に載せない）
+query parcels_quietly {
+  input kind: Kind required
+  input min_fee: Fee
+  from Parcel.of_kind(kind)
+  filter fee at_least min_fee
+  order fee asc
+  page 1
+  select parcel_id
+  reads Parcel.kind, Parcel.fee, Parcel.parcel_id
+}
+
+resource QuietParcelSearches {
+  index parcels_quietly for Staff post "探している種類を、URL とログに残さない"
+}
+
+resource MyParcels {
+  index my_parcels for Customer
+}
+
+resource MyLiveParcels {
+  index my_live_parcels for Customer
+}
+
+resource MyCanceledParcels {
+  index my_canceled_parcels for Customer
+}
+
+resource LiveParcels {
+  index live_parcels for anyone
+}
+
+result ClaimResult { Claimed, NoParcel }
+
+/// 持ち主を決める
+deed claim {
+  input parcel_id: id required
+  input owner: id required
+  reads Parcel
+  writes Parcel.refund_ref
+  result ClaimResult
+  effects none
+
+  let p = Parcel[parcel_id] else { return NoParcel }
+  p.refund_ref = owner
+  return Claimed
+}
+
+nexus Claiming {
+  claim: Claimed → reply, NoParcel → reply
+}
+
+resource Claims {
+  create claim for Staff {
+    Claimed → 201
+    NoParcel → 404
+  }
+}
+
+result RelabelResult { Relabeled, NotMine }
+
+/// 自分の小包の種類を書き換える
+deed relabel_mine {
+  input parcel_id: id required, kind: Kind required
+  reads Parcel.refund_ref, Parcel.status
+  writes Parcel.kind
+  result RelabelResult
+  effects none
+
+  let p = Parcel.own_parcels.live[parcel_id] else { return NotMine }
+  p.kind = kind
+  return Relabeled
+}
+
+nexus Relabeling {
+  relabel_mine: Relabeled → reply, NotMine → reply
+}
+
+resource MyParcelLabels {
+  update relabel_mine for Customer {
+    Relabeled → 200
+    NotMine → 404
+  }
+}

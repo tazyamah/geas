@@ -151,3 +151,5 @@ pub fn with_check<R>(src: &str, strict: bool, f: impl FnOnce(&geas_core::check::
 pub fn errors_loose(src: &str) -> Vec<String> {
     with_check(src, false, |ck| ck.diags.iter().filter(|d| d.level == ERROR).map(|d| d.msg.clone()).collect())
 }
+
+pub mod serve;
