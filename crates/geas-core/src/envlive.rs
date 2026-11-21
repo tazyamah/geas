@@ -111,7 +111,9 @@ fn http_get(hostport: &str, path: &str) -> Result<u16, String> {
     let sa = addr.to_socket_addrs().map_err(|e| format!("{}（{}）", e, addr))?.next().ok_or_else(|| format!("名前を引けない：{}", addr))?;
     let mut s = TcpStream::connect_timeout(&sa, Duration::from_secs(5)).map_err(|e| format!("{}（{}）", e, addr))?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
-    write!(s, "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: geas-env-live\r\n\r\n", path, hostport).map_err(|e| e.to_string())?;
+    // 要求は 1 回で送る（write! は断片ごとに送るので、相手の読み方次第で途中で切られうる）
+    let req = format!("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: geas-env-live\r\n\r\n", path, hostport);
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut buf = vec![];
     let mut chunk = [0u8; 1024];
     // 状態行だけあればよい。ヘッダの終わりまで読んで打ち切る
