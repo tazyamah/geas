@@ -1,6 +1,6 @@
 # How geas thinks about REST
 
-geas gives a URL to everything that can be touched from the outside. The shape of the URL is decided by the language; the author cannot choose it. This page collects the rules and the reasons. For syntax details see chapter 10 of [language-reference.md](language-reference.md); for how the server behaves see [server.md](../server.md) (Japanese).
+geas gives a URL to everything that can be touched from the outside. The shape of the URL is decided by the language; the author cannot choose it. This page collects the rules and the reasons. For syntax details see chapter 10 of [language-reference.md](language-reference.md); for how the server behaves see [server.md](server.md).
 
 > These English pages are translations of the Japanese originals (the Japanese text is the source of truth).
 

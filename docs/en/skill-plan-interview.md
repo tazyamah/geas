@@ -1,0 +1,45 @@
+# Building a plan in the first conversation (plan-interview)
+
+> This page is a translation of the Japanese skill [skills/plan-interview/SKILL.md](../../skills/plan-interview/SKILL.md) (the Japanese text is the source of truth, and the Japanese file is the one an AI actually loads as a skill). Use: how to proceed when starting to build an app's specification (plan) through one-question-at-a-time conversation: ask with Cockburn's use cases, sort additional information, and ask for behavioral requirements before writing code.
+
+Source: this skill is based on the use-case method proposed by Cockburn. Alistair Cockburn, *Writing Effective Use Cases*, Addison-Wesley, 2000.
+
+From what the person first said (what they want from the app), repeat short one-question-at-a-time exchanges to build the plan's specification (①). The tool is a ledger (JSON), and uses `geas interview`'s `status` (what to ask next) and `render` (the plan's Markdown). The ledger is the source of the plan, and is not made from code.
+
+## Promises
+
+- **Ask one question at a time.** Keep it short. Do not show a long list and make them answer everything.
+- **Do not write what the AI decided.** Make undecided things questions. If deliberately not deciding, set the status to `unspec` (unspecified). Do not mix "not asked yet" with "decided not to decide".
+- **Use plain words for the person.** Put technical terms in parentheses. Example: not "operating requirements (the platform it runs on)" but "the environment it runs in (operating requirements)"; not "the platform it runs on" but "what it runs on (the platform)". Ask in a way that people without IT knowledge can answer.
+- Confirm vague answers with a concrete example ("for example, in the case of …?"). For an answer that is only a number, say back which one was taken.
+- A judgment (J) is **one per rule the AI interpreted**. People do not answer one question at a time neatly, so several Js can come from one reply, and several replies can make one J. In judgments, write "the rule, the original statement (several allowed), who, when".
+- **Treat what has not appeared in the conversation as not existing.** Do not dig up concerns (stakeholders) other than the people who operate it. However, when a new requirement **conflicts with the rule of an existing judgment (J)**, ask the person "this conflicts with that judgment; what shall we do?".
+- Always use the term "use case" (based on Cockburn's method), and do not rephrase it as "goal" or "scenario".
+- **Steer toward few, strong rules** (the goal: being able to explain all of the specification by a combination of few rules). For each question, include in the options a **proposal that aligns** with an existing judgment (J) or with well-known behavior in the world (for example, Gmail's undo send), make it the recommendation and add the reason. Example: "Since it can be written offline (J28), editing and deleting are aligned in the same way." If an answer adds an individual exception, first ask back "can it be aligned with an existing rule?". When rules increase, review whether similar ones can be merged into one rule.
+- **Do not mix reports with questions**: a report of results can be written normally, but when there is something to confirm or an unresolved question after the report, do not line them all up; ask only one (get the answer before the next one). Do not list "arrangements to confirm" or "new questions" at the end of a report.
+- **The form of a question**: a form that can be answered with either an option (a number) or a free answer, with one recommendation and its reason. If the intent of the person's answer (for example, "I want to prevent not being able to undo because of a bad signal") lies outside the options, do not squeeze it into the options; propose a better way that satisfies the intent (example: settle the delete operation first inside the device and reflect it outside after holding).
+- Do not mix the build procedure (this way of asking) with the app's behavior. In the ledger's use cases, write only the app's behavior.
+
+## How to proceed (from the outside of Cockburn's model to the inside)
+
+1. **Scope**: one phrase for what is being built (summary) and what is out of scope (out_of_scope). Out of scope follows the idea of PMBOK's scope statement.
+2. **List of actors and use cases**: "who wants to do what", one line each. Ask "who else uses it? what else do they want to do?" for what is missing. Attach the granularity of the use case (summary / user goal / sub-function). Make the user goal the basis.
+3. **Fleshing out each use case** (one use case at a time; repeat this):
+   1. The main flow (the success path) in 3 to 9 steps.
+   2. Failures, exceptions and branches (extensions): ask "what if this step does not go well?" for each step.
+   3. Ask by sorting into rules (blue) → examples (green) → unresolved questions (red). Write examples as premise, operation and expectation.
+   4. When unresolved questions reach 0 (or are deliberately unspecified), that use case is finished.
+4. **Sorting additional information**: in a reply to one use case, people mix in other use cases, operating requirements, constraints and qualities (speed, etc.). When you notice, write it in extras, sort it by `kind` (runtime / constraint / quality / other), and do not leave it in the original use case. What corresponds to another use case is added to usecases.
+5. **Operating requirements** (before starting to write code): once the use cases are firm, `status` shows R1 to R7. Show the accumulated extras first, and ask for what is missing one question at a time. At least **settle R1 (the platform it runs on)**. R8 onward are not handled for now (specifications on the framework side after v0.1.0). The source is notes/spec-runtime-requirements-checklist.md.
+6. **The review operation panel**: a small panel floating at the bottom of the screen (a field to choose the operation, [Restart] [Back] [Next], and at the end [OK] [NG]. NG can have a reason written. For an operation already marked NG, the NG button becomes "NG✎", and hovering or pressing it lets you confirm and edit the reason already entered. With the reason, the screen's state at that time (device, situation, steps, input) is saved together. The first [Back] of each operation returns to the last state of the previous operation). It advances one step at a time while lighting up where to press. Make it so that how to operate can be understood just by pressing buttons repeatedly. Emphasis is in a thick yellow that is not in the UI. If there are separate operations per device, put them in the list too, and always show how many of all the operations have been reviewed (whether all are done). Keep text short. Write the use case's ID small and faint in the corner of diagrams and lists so it does not stand out.
+7. **Write the screens' behavior in the ledger** (screens): for each screen, write what it shows, the display per state (empty, loading, out of range, failure, etc.), what happens when something is pressed, and what happens on events (opened, connected, time passed), with the numbers of judgments (J). Once the operating requirements decide there are screens, `status` asks about the screens' behavior. An event later becomes the code's trigger.
+8. **What is shown to the person is diagrams and screen behavior**: a list of text is easy to overlook. Make and show a use case diagram and touchable screen wireframes (both phone and PC; add "try it" and "right / wrong" to the list of actual operations that execute the use case; with switching of states such as empty, loading, failure and out of range, and what happens when pressed). Put the numbers of judgments in each place. Mark clearly inside the diagram the places that are the AI's proposals or interpretations.
+9. When `status` says "may start writing code: yes", output the plan with `render` and show it to the person. Turn it into code after review.
+
+## From the ledger to the plan
+
+The ledger's render is the conversational part of the plan (sections C0 to C5). Sections 1 to 7 of the plan template (data, states and transitions, deeds, specified matters, tables of examples) are written up from this content in conversation **before the code** and shown to the person. Do not make the tables from the code (the independence of the matching would collapse). Do not decide the sorting of additional information (kind) by the AI; confirm it with the person. After writing sections 1 to 7, ask also the points the person should judge (unresolved questions) **one at a time, not shown together**. Even if the person says "just build it for now", ask about R1 (the platform it runs on) at least. For operating requirements, status is held as `open` / `unspec` / `answered`, and R1 cannot be `unspec`.
+
+## How to write the ledger
+
+Make it with `interview init ledger.json --title title`. For the shape, see the head of crates/geas-core/src/interview.rs. The JSON may be fixed directly with Edit. After writing, always run `status` and confirm what to ask next.

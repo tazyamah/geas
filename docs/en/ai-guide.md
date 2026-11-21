@@ -4,7 +4,7 @@ This is the first file an AI agent (Claude Code, etc.) should read when starting
 
 geas is a tool that matches a plan (a specification built through conversation) against code in the `.geas` language written by an AI, and guarantees mechanically that what was asked for has been built. **The AI writes `.geas`; humans do not read it.** What humans read is the specification (Markdown / HTML) generated from the code.
 
-> These English pages are translations of the Japanese originals (the Japanese text is the source of truth). Links marked "(Japanese)" go to Japanese pages that have not been translated yet.
+> These English pages are translations of the Japanese originals (the Japanese text is the source of truth). Links marked "(Japanese)" go to the Japanese originals.
 
 ## Reading order
 
@@ -14,16 +14,16 @@ geas is a tool that matches a plan (a specification built through conversation) 
 | Mistakes easy to make from other languages (`&&`, `else`, `string`, `;`, …) | [Section 12 of language-reference.md](language-reference.md#12-mistakes-easy-to-make-when-coming-from-other-languages) |
 | A complete worked example (a shop that also sells overseas: screens, REST, extension, server) | [tests/fixtures/overseas_shop/overseas_shop.geas](../../tests/fixtures/overseas_shop/overseas_shop.geas), and in the same folder `overseas_shop_plan.md` (plan) and `overseas_shop_spec.md` (generated specification) |
 | Small examples | [tests/fixtures/shop/shop.geas](../../tests/fixtures/shop/shop.geas); the delete example `tests/fixtures/delete_demo/` |
-| How to build a plan (the interview procedure) | [skills/plan-interview/SKILL.md](../../skills/plan-interview/SKILL.md) |
-| How to write `.geas`, check it and show the specification to a person (questions to ask, reviewer-perspective questions, surviving mutants) | [skills/geas-develop/SKILL.md](../../skills/geas-develop/SKILL.md) |
-| Behavior tests per language feature (which features are verified by actually running them) | [language-test-map.md](../language-test-map.md) (Japanese) |
-| The basic idea of geas and how the specification and the code stay in sync (how far the guarantee goes) | [why-spec-and-code-dont-drift.md](../why-spec-and-code-dont-drift.md) (Japanese) |
+| How to build a plan (the interview procedure) | [skills/plan-interview](skill-plan-interview.md) |
+| How to write `.geas`, check it and show the specification to a person (questions to ask, reviewer-perspective questions, surviving mutants) | [skills/geas-develop](skill-geas-develop.md) |
+| Behavior tests per language feature (which features are verified by actually running them) | [language-test-map.md](language-test-map.md) |
+| The basic idea of geas and how the specification and the code stay in sync (how far the guarantee goes) | [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md) |
 | Naming rules | Chapter 1 of [language-reference.md](language-reference.md) |
 | History, proposals and records of how things were decided (no need to read) | [history/](../history/README.md) (Japanese) |
-| Modules (`use` / `module`) | [modules.md](../modules.md) (Japanese) |
-| How dates and times are handled | [datetime.md](../datetime.md) (Japanese) |
+| Modules (`use` / `module`) | [modules.md](modules.md) |
+| How dates and times are handled | [datetime.md](datetime.md) |
 | List of documents | [README.md](README.md) |
-| What is not done yet | [roadmap.md](../roadmap.md) (Japanese) |
+| What is not done yet | [roadmap.md](roadmap.md) |
 
 When in doubt, **the checker (`geas check`) is the source of truth.** If the documentation and the checker disagree, trust the checker and fix the documentation.
 
@@ -52,7 +52,7 @@ Files geas reads and writes, and its standard output and standard error, are UTF
 
 ## Commands
 
-The output language is **English** unless you specify otherwise. To get Japanese, add `--lang ja` (accepted by every command) or set the environment variable `GEAS_LANG=ja`. See [i18n.md](../i18n.md) (Japanese) for details.
+The output language is **English** unless you specify otherwise. To get Japanese, add `--lang ja` (accepted by every command) or set the environment variable `GEAS_LANG=ja`. See [i18n.md](i18n.md) for details.
 
 ```sh
 geas check app.geas [--json]               # Check. Prints errors, warnings and questions with the names and line numbers used in the code, and a count on the last line. Exit code 1 if there are errors, 2 for syntax errors and missing files. --json adds line and hint (the section to read and how to fix) to each finding
@@ -81,14 +81,14 @@ The options of `rust` are:
 
 - Nothing: only the Rust crate (the body of the checked deeds).
 - `--host`: also produces screens (PWA), the development mock panel (served only when the server is started with `--test`), the entry point `host.rs`, the definitions `DEFS_JSON`, and, if a screen has `page`, the browser extension (`ext/`). As an entry point for AIs it also produces the MCP tool definitions (`mcp/tools.json`, derived mechanically from the URL definitions), a generic bridge that relays to the server (`mcp/bridge.py`) and a registration example (`mcp/mcp.json`).
-- `--host --runtime`: also places the server runtime (`server/`, SQLite and HTTP). Build it with `cd out-dir/server && cargo build --release`. How to run it, its arguments and what to put in front when publishing (nginx, etc.) are in [docs/server.md](../server.md) (Japanese). `--standalone` also places a windowed exe (`window/`) that puts the screens and the deeds in one executable without a transport ([docs/standalone.md](../standalone.md), Japanese). `--seed` is the initial data inserted only when the DB is empty (JSON of `{"entity": {"key": {row}}}`), embedded into the output. Rows are checked against the types' ranges before insertion (if a row is out of range, it stops without inserting).
+- `--host --runtime`: also places the server runtime (`server/`, SQLite and HTTP). Build it with `cd out-dir/server && cargo build --release`. How to run it, its arguments and what to put in front when publishing (nginx, etc.) are in [server.md](server.md). `--standalone` also places a windowed exe (`window/`) that puts the screens and the deeds in one executable without a transport ([standalone.md](standalone.md)). `--seed` is the initial data inserted only when the DB is empty (JSON of `{"entity": {"key": {row}}}`), embedded into the output. Rows are checked against the types' ranges before insertion (if a row is out of range, it stops without inserting).
 - `--plan`: also produces a bin that runs the plan's examples. Together with `--host --runtime`, it produces the HTTP end-to-end tests `tests/test_url_examples.py` from the plan's "URL examples" (below) and the screen end-to-end tests `tests/test_screen_examples.py` from the plan's "screen examples" (below) (build the server, then `python -m pytest out-dir/tests`).
 
 If the check has errors or leftover "questions", `rust` and `compare` do not proceed.
 
 ## Working flow (how an AI should proceed)
 
-The way of asking in steps 2–4 (questions one at a time, reading the specification first from a reviewer's perspective, showing survivors of the mutation check) is collected in [skills/geas-develop](../../skills/geas-develop/SKILL.md).
+The way of asking in steps 2–4 (questions one at a time, reading the specification first from a reviewer's perspective, showing survivors of the mutation check) is collected in [skills/geas-develop](skill-geas-develop.md).
 
 1. **Build the plan** (`skills/plan-interview`). Ask use cases one question at a time, and ask for the behavioral requirements before writing code. The plan is Markdown.
 2. **Write the `.geas`**, with [language-reference.md](language-reference.md) and the nearest example (the shop) at hand. Names are ASCII; write the Japanese display name in the `///` just before.
@@ -131,7 +131,7 @@ End-to-end tests of screens (PWA) and the Chrome extension are not written by ha
 - Humans do not read `.geas`. Do not ask people about syntax preferences; ask only questions that change promises (definitions, guarantees, meaning).
 - Names are ASCII (start with a letter, then letters, digits and `_`). Types, entities, states, results, triggers, flows and events are UpperCamel; fields, variables, deeds, queries, inputs and parts are lower_snake.
 - Names that appear in the specification get a Japanese display name in a preceding `///` (a warning if missing).
-- REST URLs (`resource`) have their rationale in [rest.md](../rest.md) (Japanese): only `index` / `show` / `create` / `update` / `destroy`, no PATCH, POST only for creation, the only query string is the filter condition `q[name]=value`, and an HTTP status must be decided for every result kind. URLs of mid-flow deeds (nexus, trigger destinations) are "internal"; the server answers them only under `--test` (they cannot be screen actions either). To distinguish who may call, declare `actor role` and write `for role, …` on every externally callable action (`for anyone` for open ones). Authentication of the person is the job of the proxy in front; the server compares the header `X-Geas-Actor` (401 if absent, 403 if it does not match). A query that returns only the caller's own rows declares `scope range on data { filter field equals caller }` and is written `from data.range` (`caller` is not an input; the person's ID does not go in the URL either). A range is a set of rows; it can have `where` and arguments (`scope name(arg: type)`, used as `data.range(input)`), and `from data.range1.range2` gives only the rows that are in all of them.
+- REST URLs (`resource`) have their rationale in [rest.md](rest.md): only `index` / `show` / `create` / `update` / `destroy`, no PATCH, POST only for creation, the only query string is the filter condition `q[name]=value`, and an HTTP status must be decided for every result kind. URLs of mid-flow deeds (nexus, trigger destinations) are "internal"; the server answers them only under `--test` (they cannot be screen actions either). To distinguish who may call, declare `actor role` and write `for role, …` on every externally callable action (`for anyone` for open ones). Authentication of the person is the job of the proxy in front; the server compares the header `X-Geas-Actor` (401 if absent, 403 if it does not match). A query that returns only the caller's own rows declares `scope range on data { filter field equals caller }` and is written `from data.range` (`caller` is not an input; the person's ID does not go in the URL either). A range is a set of rows; it can have `where` and arguments (`scope name(arg: type)`, used as `data.range(input)`), and `from data.range1.range2` gives only the rows that are in all of them.
 - External effects (`request`) require an idempotency key.
 - Split changes into small PRs. Do not stack PRs; go to the next after the merge.
 - Do not commit generated outputs (`tests/fixtures/*/app/generated/`, etc.; already in `.gitignore`). The specifications (`*_spec.md`, `*_review.html`) are fixed as samples for the tests, so regenerate them when you change the `.geas`:
