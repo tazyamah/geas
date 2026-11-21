@@ -287,3 +287,27 @@ pub fn std_main(timeout: u64, jobs: u32, record: bool, print_source: bool) -> Re
     Ok(r.status.code().unwrap_or(1))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 元は Python 版の tests/test_proofs.py。Kani が無い環境でも、証明が使う関数が前置きにあり、証明が 1 件以上あることを確かめる
+    #[test]
+    fn 証明が使う関数は前置きにあり_証明は1件以上ある() {
+        let root = repo_root();
+        let src = std::fs::read_to_string(root.join("proofs/prelude_proofs.rs")).unwrap();
+        let prelude = std::fs::read_to_string(root.join("crates/geas-core/src/assets/rust_prelude.txt")).unwrap();
+        let re = Regex::new(r"#\[kani::proof\](?:\s*#\[[^\]]*\])*\s*fn (\w+)").unwrap(); // unwind などの属性が付いた証明も拾う
+        let names: Vec<String> = re.captures_iter(&src).map(|c| c[1].to_string()).collect();
+        assert!(names.len() >= 6 && names.iter().any(|n| n == "first_bad_char_exact") && names.iter().any(|n| n == "fold_width_kana_exact"), "{:?}", names);
+        let used = Regex::new(r"\b(range_ok|ratio_ok|floor|ceil|half_up|mul_ratio|scale|first_bad_in|fold_width_kana)\(").unwrap();
+        let mut fs: Vec<String> = used.captures_iter(&src).map(|c| c[1].to_string()).collect();
+        fs.sort();
+        fs.dedup();
+        for f in fs {
+            // ジェネリクスの関数は < が続く
+            assert!(Regex::new(&format!(r"pub fn {}[(<]", f)).unwrap().is_match(&prelude), "{}", f);
+        }
+    }
+}

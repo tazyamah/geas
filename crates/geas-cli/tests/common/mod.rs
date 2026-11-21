@@ -134,3 +134,20 @@ pub fn cargo_run(dir: &Path, release: bool) -> Vec<String> {
     assert!(r.status.success(), "{}", tail(&String::from_utf8_lossy(&r.stderr), 2500));
     String::from_utf8_lossy(&r.stdout).lines().map(|s| s.to_string()).collect()
 }
+
+/// 構文の誤りの文言（構文が通れば None）
+pub fn parse_err(src: &str) -> Option<String> {
+    parse(src, None).err().map(|e| format!("{}", e))
+}
+
+/// 検査して、結果を closure に渡す（Checker はプログラムを借りるので、この形にする。名前の厳密な検査は strict）
+pub fn with_check<R>(src: &str, strict: bool, f: impl FnOnce(&geas_core::check::Checker) -> R) -> R {
+    let mut prog = parse(src, None).unwrap_or_else(|e| panic!("構文の誤り: {}", e));
+    let ck = check(&mut prog, strict);
+    f(&ck)
+}
+
+/// 厳密でない検査のエラーの文言
+pub fn errors_loose(src: &str) -> Vec<String> {
+    with_check(src, false, |ck| ck.diags.iter().filter(|d| d.level == ERROR).map(|d| d.msg.clone()).collect())
+}
