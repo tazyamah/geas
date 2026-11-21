@@ -2,7 +2,7 @@
 
 書き方の一覧は [language-reference.md](language-reference.md) です。ここには、考え方と例を読み物の形で置きます（食い違ったら検査器が正本）。名前は半角英数、日本語の表示名は `///` で付けます。
 
-名前の規則は [v0.1.0-scope.md](v0.1.0-scope.md) の「名前の書き方」。以下の例は、書き方の説明のため日本語の名前を使っている（実際の検査は通らない）。お店の例は `tests/fixtures/shop/shop.geas`。
+名前の規則は [language-reference.md](language-reference.md) の 1 章。以下の例は、書き方の説明のため日本語の名前を使っている（実際の検査は通らない）。お店の例は `tests/fixtures/shop/shop.geas`。
 
 ```
 ltype 数量 = int 1..99                                    // 論理型：範囲や組み合わせは、必ず名前を付けてから使う（使う場所より前に書く）

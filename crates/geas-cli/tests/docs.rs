@@ -17,7 +17,7 @@ fn はじめかたの例は検査を通り_日英の文書に載せた中身と�
         let text = std::fs::read_to_string(root().join(doc)).unwrap();
         assert!(text.contains(memo.trim_end_matches('\n')), "{} に載せた memo.geas が実物と違います", doc);
     }
-    let r = Command::new(BIN).args(["check", memo_path.to_str().unwrap()]).output().unwrap();
+    let r = Command::new(BIN).args(["check", memo_path.to_str().unwrap(), "--lang", "ja"]).output().unwrap();
     let out = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
     assert!(r.status.success() && out.contains("検査: 通りました"), "{}", out);
 }

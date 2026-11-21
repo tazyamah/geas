@@ -1,6 +1,6 @@
 # 言語機能と動作テストの対応表
 
-> **注意（2026-11、Rust 化のあと）**：下の表が指す `tests/test_*.py`（pytest）は、Rust 化のときに本体の Python 版と一緒に削除し、git のタグ `python-final` に残してある（そのタグを取り出せば、そのまま動く）。いまのリポジトリで同じ保証を見張るのは、`crates/geas-cli/tests/` の `golden.rs`（コーパス 3,894 件の出力が Python 版と一致）・`spec_coverage.rs`（「コードの変更は仕様書に必ず出る」）・`e2e.rs`（具体例を生成したコードで動かす・サーバーの起動）。表の「確かめているテスト」の列は、動かす確認の中身を知るための記録として読む。生成物はバイト単位で Python 版と同じなので、動きは変わらない。
+> **この表の「動かすテスト」の列は、Python 版のテストの名前です**（Rust 化のときに本体の Python 版と一緒に削除し、git のタグ `python-final` に残してある。取り出せばそのまま動く）。いまのリポジトリで同じ保証を見張るのは、`crates/geas-cli/tests/` の `golden.rs`（コーパス 3,894 件の出力が Python 版と一致）・`spec_coverage.rs`（コードの変更は仕様書に必ず出る）・`e2e.rs`（具体例を生成したコードで動かす・サーバーの起動）・`lang.rs`（日本語・英語モード）・`container.rs`（container・infra）です。生成物はバイト単位で Python 版と同じなので、動きは変わりません。表の列は、動かす確認の中身を知るための記録として読みます。
 
 geas の保証は、「生成器が正しければ、どのアプリも `.geas` どおりに動く」ことに置きます。そのために、[language-reference.md](language-reference.md) の項目ごとに、**生成した Rust を実際に動かして確かめるテスト**があるかを、この表で管理します。新しい機能を足したら、この表に行を足し、動かすテストを書いてください。
 
@@ -10,10 +10,10 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 - **○**：検査器（静的）で誤りを止めるテストだけがある。実行時の動きは、別の項目のテストが間接的に通している。
 - **✕**：動かす確認がまだ無い。
 
-小さな `.geas` を書いて動かすテストは、次の 4 か所にあります（お店アプリを使わずに、機能ごとに確かめます）。
+小さな `.geas` を書いて動かすテスト（Python 版）は、タグ `python-final` の次の所にあります。お店アプリを使わずに、機能ごとに確かめます。
 
-- [tests/test_behavior.py](../tests/test_behavior.py)：生成した Rust（処理・問い合わせ・削除・金額）を直接動かす。
-- [tests/test_runtime.py](../tests/test_runtime.py)：サーバーの実行部まで組み、並列・待ち合わせ・期限・出来事・rule・冪等キー・REST の状態・再起動・画面・拡張を動かす（題材は `tests/fixtures/runtime_demo`）。
+- `tests/test_behavior.py`：生成した Rust（処理・問い合わせ・削除・金額）を直接動かす。
+- `tests/test_runtime.py`：サーバーの実行部まで組み、並列・待ち合わせ・期限・出来事・rule・冪等キー・REST の状態・再起動・画面・拡張を動かす（題材は `tests/fixtures/runtime_demo`）。
 - `tests/test_geas.py`・`tests/test_delete.py`：ホストの境界・型・部品・モジュールなど。
 
 お店アプリ（`tests/fixtures/overseas_shop`）の `tests/test_shop_app.py`（以下「お店の通し」）は、機能ごとの確認ではなく、実アプリの通しの確認（E2E）です。

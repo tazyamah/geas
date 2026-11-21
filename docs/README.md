@@ -36,14 +36,13 @@
 |---|---|
 | [roadmap.md](roadmap.md) | 未着手・保留の一覧。やり残しはここ |
 | [handoff.md](handoff.md) | 次に扱う人が最初に読むメモ |
-| [open-questions.md](open-questions.md) | 後で検証すること |
 
-## 経緯・記録（強制力なし）
+## ライセンス
 
 | 文書 | 内容 |
 |---|---|
-| [naming.md](naming.md) | 名前と用語の選定理由 |
 | [license.md](license.md) | ライセンスの考え方 |
-| [v0.1.0-scope.md](v0.1.0-scope.md) | v0.1.0 の範囲と、未決だった項目の扱い |
-| [records/review-2026-11.md](records/review-2026-11.md) | 全体のレビュー（2026-11-10） |
-| [records/review-2026-11-constraints.md](records/review-2026-11-constraints.md) | 制約と部品のレビュー（2026-11-10） |
+
+## 経緯・記録（現在の仕様ではない）
+
+決めた経緯、取り下げた案、済んだ議論、当時のレビューは [history/](history/README.md) にまとめてあります。本文の文書には、いまの仕様と使い方だけを書きます。

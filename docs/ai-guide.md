@@ -16,12 +16,12 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 | `.geas` を書いて検査し、人に仕様書を見せるまでの聞き方（問い・レビュアー目線の質問・変異検査の生き残り） | [skills/geas-develop/SKILL.md](../skills/geas-develop/SKILL.md) |
 | 言語機能ごとの動作テスト（どの機能が実際に動かして確かめられているか） | [language-test-map.md](language-test-map.md) |
 | geas の基本の考えと、仕様書とコードがずれない仕組み（どこまで保証しているか） | [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md) |
-| 名前の付け方 | [naming.md](naming.md)、[v0.1.0-scope.md](v0.1.0-scope.md) の「名前の書き方」 |
-| 決まった設計の経緯（par・待ち合わせ・金額の単位・検査数字など） | [v0.1.0-scope.md](v0.1.0-scope.md) |
+| 名前の付け方 | [language-reference.md](language-reference.md) の 1 章 |
+| 決めた経緯・案・済みの記録（読まなくてよい） | [history/](history/README.md) |
 | モジュール（`use`／`module`） | [modules.md](modules.md) |
 | 日時の考え方 | [datetime.md](datetime.md) |
 | 文書の一覧 | [README.md](README.md) |
-| 未決の事柄 | [open-questions.md](open-questions.md) |
+| やっていないこと | [roadmap.md](roadmap.md) |
 
 迷ったら、**検査器（`geas check`）が正本**です。書き方の説明と検査器が食い違ったら、検査器の動きを信じて、説明のほうを直してください。
 

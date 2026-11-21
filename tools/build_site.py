@@ -30,6 +30,7 @@ NAV = [
         ("docs/modules.md", "modules"),
         ("docs/rest.md", "rest"),
         ("docs/datetime.md", "datetime"),
+        ("docs/i18n.md", "i18n"),
     ]),
     ("動かす", [
         ("docs/server.md", "server"),
@@ -48,17 +49,22 @@ NAV = [
         (f"{FIX}/overseas_shop_spec.md", "sample-spec-md"),
         (f"{FIX}/overseas_shop_mutation.md", "sample-mutation"),
     ]),
-    ("これからのこと", [
+    ("これからのこと・ライセンス", [
         ("docs/roadmap.md", "roadmap"),
         ("docs/handoff.md", "handoff"),
-        ("docs/open-questions.md", "open-questions"),
-    ]),
-    ("経緯・記録", [
-        ("docs/naming.md", "naming"),
         ("docs/license.md", "license"),
-        ("docs/v0.1.0-scope.md", "v0.1.0-scope"),
-        ("docs/records/review-2026-11.md", "review-2026-11"),
-        ("docs/records/review-2026-11-constraints.md", "review-2026-11-constraints"),
+    ]),
+    ("経緯・記録（現在の仕様ではない）", [
+        ("docs/history/README.md", "history"),
+        ("docs/history/v0.1.0-scope.md", "v0.1.0-scope"),
+        ("docs/history/naming.md", "naming"),
+        ("docs/history/rest-decisions.md", "rest-decisions"),
+        ("docs/history/modules-history.md", "modules-history"),
+        ("docs/history/proof-ideas.md", "proof-ideas"),
+        ("docs/history/roadmap-done.md", "roadmap-done"),
+        ("docs/history/open-questions.md", "open-questions"),
+        ("docs/history/reviews/review-2026-11.md", "review-2026-11"),
+        ("docs/history/reviews/review-2026-11-constraints.md", "review-2026-11-constraints"),
     ]),
 ]
 # 仕様書の HTML（別に生成する）。サイドバーの先頭に出す。
