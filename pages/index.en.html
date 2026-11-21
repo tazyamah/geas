@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geas</title>
+<meta name="description" content="An AI writes the code; a human reviews only the specification. A language that guarantees it mechanically.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<style>
+:root {
+  --bg: #f4f6f6; --surface: #ffffff; --ink: #18252a; --muted: #5a6b71; --line: #d3dcde;
+  --accent: #0d6870; --accent-soft: #dff0f1; --on-accent: #ffffff;
+  --font-display: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --font-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #101618; --surface: #172024; --ink: #e2eaec; --muted: #98a9ae; --line: #2b393d;
+  --accent: #5cc0c8; --accent-soft: #15353a; --on-accent: #0b1a1c;
+} }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); line-height: 1.8; }
+a { color: var(--accent); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+header.hero { padding: 72px 0 56px; background:
+  radial-gradient(900px 300px at 15% -10%, var(--accent-soft), transparent 70%); border-bottom: 1px solid var(--line); }
+.brand { font-family: var(--font-mono); font-size: 14px; letter-spacing: .12em; color: var(--accent); margin: 0 0 20px; }
+h1 { font-family: var(--font-display); font-size: clamp(26px, 5.6vw, 40px); line-height: 1.35; margin: 0 0 20px; }
+h1 em { font-style: normal; color: var(--accent); }
+.lead { font-size: clamp(16px, 2.4vw, 19px); color: var(--muted); max-width: 40em; margin: 0 0 32px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-block; padding: 12px 22px; border-radius: 999px; text-decoration: none; font-weight: 600; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.ghost { color: var(--accent); background: transparent; }
+.btn:hover { filter: brightness(1.08); }
+section { padding: 56px 0 0; }
+h2 { font-family: var(--font-display); font-size: 26px; margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 0 0 28px; }
+.grid { display: grid; gap: 16px; }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.card h3 { margin: 0 0 8px; font-size: 18px; font-family: var(--font-display); }
+.card p { margin: 0; color: var(--muted); }
+.step { counter-increment: s; position: relative; padding-top: 52px; }
+.step::before { content: counter(s); position: absolute; top: 18px; left: 22px; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 600; font-family: var(--font-mono); }
+.steps { counter-reset: s; }
+.doc { display: block; text-decoration: none; color: inherit; transition: transform .15s, border-color .15s; }
+.doc:hover { transform: translateY(-2px); border-color: var(--accent); }
+.doc .tag { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.doc h3 { font-size: 20px; margin: 6px 0 8px; }
+.doc .go { margin-top: 14px; display: inline-block; color: var(--accent); font-weight: 600; }
+footer { margin-top: 72px; padding: 28px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+footer a { margin-right: 18px; }
+</style></head>
+<body>
+<header class="hero"><div class="wrap">
+  <p class="brand">GEAS</p>
+  <h1>The AI writes the code.<br>Humans <em>never read it</em> — they review the specification.</h1>
+  <p class="lead">Geas binds the specification and the code together. Behavior that does not appear in the specification cannot be written in the code, and whether the code does what was asked is shown mechanically by the checker, not confirmed by reading.</p>
+  <div class="cta">
+    <a class="btn primary" href="../overseas_shop.html">Open the sample specification (Japanese)</a>
+    <a class="btn ghost" href="../overseas_shop_changes.html">Changes only (Japanese)</a>
+    <a class="btn ghost" href="docs/getting-started.html">Getting started</a>
+    <a class="btn ghost" href="docs/how-it-works.html">How it works</a>
+    <a class="btn ghost" href="../">日本語</a>
+    <a class="btn ghost" href="https://github.com/tazyamah/geas">GitHub</a>
+  </div>
+</div></header>
+
+<main class="wrap">
+<section>
+  <h2>The flow</h2>
+  <p class="sub">A human only ever reads the generated specification.</p>
+  <div class="grid g3 steps">
+    <div class="card step"><h3>Build a plan by conversation</h3><p>An AI asks one question at a time and builds a plan (Markdown) from the use cases.</p></div>
+    <div class="card step"><h3>The AI writes the code</h3><p>It turns the plan into <code>.geas</code>. Humans do not read it.</p></div>
+    <div class="card step"><h3>Review the specification</h3><p>The code is checked, a specification is generated from it and compared with the plan. The examples are run against the generated Rust.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Sample specification</h2>
+  <p class="sub">Generated from the <code>.geas</code> of an online-shop example. The specification itself is currently in Japanese.</p>
+  <div class="grid g2">
+    <a class="card doc" href="../overseas_shop.html"><span class="tag">FULL</span><h3>The full specification</h3>
+      <p>Use cases, screen transitions, examples, states, storage, human guarantees and the runtime environment.</p><span class="go">Open →</span></a>
+    <a class="card doc" href="../overseas_shop_changes.html"><span class="tag">DIFF</span><h3>Changes since the previous version</h3>
+      <p>After each update, this is all a human looks at: what changed, and what needs a human decision.</p><span class="go">Open →</span></a>
+  </div>
+</section>
+
+<section>
+  <h2>How it is guaranteed</h2>
+  <p class="sub">The heavier the promise you make it keep, the stronger the guarantee.</p>
+  <div class="grid g3">
+    <div class="card"><h3>No behavior outside the specification</h3><p>External effects, storage, transitions and who may call what can only be written in forms that appear in the specification.</p></div>
+    <div class="card"><h3>Value ranges are proved by the checker</h3><p>That calculations and writes fit the type's range is shown by the checker. If it cannot be shown, it is an error.</p></div>
+    <div class="card"><h3>Generated code fails in a defined way</h3><p>The generated Rust has no constructs that can panic, and abnormal cases are returned in a fixed form.</p></div>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <a href="https://github.com/tazyamah/geas">GitHub</a>
+  <a href="docs/how-it-works.html">What can be trusted</a>
+  <a href="docs/">Documentation</a>
+</div></footer>
+</body></html>

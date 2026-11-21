@@ -8,4 +8,4 @@
 - `.geas` を書いて検査し、人に仕様書を見せるまでの聞き方：[skills/geas-develop/SKILL.md](skills/geas-develop/SKILL.md)
 - 検査：`geas check ファイル.geas`（書き方の説明と食い違ったら、検査器が正本）
 - テスト：`cargo test`
-- 返答・コメント・説明文は日本語で書く。
+- 返答・コメント・説明文は日本語で書く。ただし `docs/en/` と `README.en.md` は、日本語の原文の英訳（原文が正）で、英語で書く。
