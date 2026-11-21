@@ -111,8 +111,17 @@ fn doctorは宣言した口とボリュームと環境ファイルと応答を�
     std::thread::spawn(move || {
         for st in l.incoming() {
             let Ok(mut st) = st else { break };
+            // 要求をヘッダの終わりまで読んでから答える。1 回の read だけだと、
+            // 要求が複数の断片で届いたときに残りを読まないまま閉じて RST になり、
+            // 相手の送信が Broken pipe で落ちる（タイミング次第で落ちる原因）
+            let mut req = Vec::new();
             let mut b = [0u8; 512];
-            let _ = st.read(&mut b);
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                match st.read(&mut b) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => req.extend_from_slice(&b[..n]),
+                }
+            }
             let _ = st.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         }
     });

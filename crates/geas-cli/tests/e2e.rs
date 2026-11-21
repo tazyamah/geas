@@ -49,7 +49,7 @@ fn get(port: u16, path: &str) -> Option<String> {
     use std::io::{Read, Write};
     let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
     s.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok()?;
-    write!(s, "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", path).ok()?;
+    s.write_all(format!("GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", path).as_bytes()).ok()?;
     let mut out = String::new();
     s.read_to_string(&mut out).ok()?;
     Some(out)
