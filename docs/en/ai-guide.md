@@ -29,13 +29,12 @@ When in doubt, **the checker (`geas check`) is the source of truth.** If the doc
 
 ## Installing
 
-The geas core (checker, generator, CLI) is written in Rust. (The earlier Python version is kept under the git tag `python-final`.)
+The geas core (checker, generator, CLI) and the maintenance tools (generating the documentation site, running the Kani proofs: `crates/geas-tools`) are written in Rust. No Python is used. (The earlier Python version is kept under the git tag `python-final`.)
 
 | Tool | Needed? | Purpose |
 |---|---|---|
 | Rust (cargo) | Required | `cargo install --path crates/geas-cli` installs `geas`. Also used to run code built with `rust`, to run examples, and for tests (`cargo test`) |
-| Python 3 and pytest | Only to run the generated end-to-end tests (`tests/test_url_examples.py`, `tests/test_screen_examples.py`) | Not needed for geas itself. The generated app's tests are written in pytest |
-| node and Playwright | Only for end-to-end checks of screens and the extension (skipped if absent) | The generated `tests/test_screen_examples.py` (the runner is the generated `tests/screen_runner.js`) |
+| node and Playwright | Only for end-to-end checks of screens and the extension (skipped if absent) | The generated `server/tests/screen_examples.rs` (the runner is the generated `server/tests/screen_runner.js`) |
 
 ```sh
 git clone https://github.com/tazyamah/geas.git
@@ -71,8 +70,8 @@ geas parts app.geas [--all] [--record]                # Actually call parts (lib
 geas receipt app.geas --base-git HEAD~1 [--plan plan.md] [-o receipt.md]  # A per-change receipt: trust-related changes compared with the previous version (weakened guarantees, added human guarantees, deeds whose behavior may change, URLs, screens, use cases, survivors). Paste it into the PR description
 geas trace app.geas server-log [--plan plan.md] [-o result.md]  # Tie operational logs (the geas.route lines on the generated server's standard error) to the specification's routes, deeds, results and use cases. Exit code 1 if some lines cannot be tied
 geas bench cases/ results-dir/ [--no-run] [--baseline previous.json] [--json current.json]  # Score `.geas` files an AI wrote from plans (check, mismatches with the plan, examples, number of fix-ups). Not called by the AI. Once right before a PR or a build
-python proofs/run.py [--timeout seconds]                          # Proofs of the generated prelude (needs Kani; not part of the normal tests)
-python proofs/std_proofs.py [--timeout seconds] [--jobs n] [--record]   # Proofs of the standard parts (needs Kani). Shows for all inputs that they do not panic and that they equal their expressions. --record writes the bundled ledger
+cargo run -p geas-tools -- proofs [--timeout seconds]                          # Proofs of the generated prelude (needs Kani; not part of the normal tests)
+cargo run -p geas-tools -- std-proofs [--timeout seconds] [--jobs n] [--record]   # Proofs of the standard parts (needs Kani). Shows for all inputs that they do not panic and that they equal their expressions. --record writes the bundled ledger
 geas rust app.geas -o out-dir [--plan plan.md] [--host] [--runtime] [--standalone] [--seed initial-data.json] [--server URL]
 geas interview init|status|render ledger.json     # The ledger of the first interview (aid for building a plan)
 ```
@@ -82,7 +81,7 @@ The options of `rust` are:
 - Nothing: only the Rust crate (the body of the checked deeds).
 - `--host`: also produces screens (PWA), the development mock panel (served only when the server is started with `--test`), the entry point `host.rs`, the definitions `DEFS_JSON`, and, if a screen has `page`, the browser extension (`ext/`). As an entry point for AIs it also produces the MCP tool definitions (`mcp/tools.json`, derived mechanically from the URL definitions), a generic bridge that relays to the server (`mcp/bridge.py`) and a registration example (`mcp/mcp.json`).
 - `--host --runtime`: also places the server runtime (`server/`, SQLite and HTTP). Build it with `cd out-dir/server && cargo build --release`. How to run it, its arguments and what to put in front when publishing (nginx, etc.) are in [server.md](server.md). `--standalone` also places a windowed exe (`window/`) that puts the screens and the deeds in one executable without a transport ([standalone.md](standalone.md)). `--seed` is the initial data inserted only when the DB is empty (JSON of `{"entity": {"key": {row}}}`), embedded into the output. Rows are checked against the types' ranges before insertion (if a row is out of range, it stops without inserting).
-- `--plan`: also produces a bin that runs the plan's examples. Together with `--host --runtime`, it produces the HTTP end-to-end tests `tests/test_url_examples.py` from the plan's "URL examples" (below) and the screen end-to-end tests `tests/test_screen_examples.py` from the plan's "screen examples" (below) (build the server, then `python -m pytest out-dir/tests`).
+- `--plan`: also produces a bin that runs the plan's examples. Together with `--host --runtime`, it produces the HTTP end-to-end tests `server/tests/url_examples.rs` from the plan's "URL examples" (below) and the screen end-to-end tests `server/tests/screen_examples.rs` from the plan's "screen examples" (below) (`cd out-dir/server && cargo test --release`; the screen test does nothing if node and Playwright are absent).
 
 If the check has errors or leftover "questions", `rust` and `compare` do not proceed.
 
@@ -163,10 +162,10 @@ The core is a Cargo workspace of two crates: `crates/geas-core` (library) and `c
 | `spec.rs`, `review.rs`, `svg.rs`, `plan.rs` | Generation of the specification (Markdown / HTML; diagrams are the in-house SVG of `svg.rs`; look and structure follow specgap's review screen), reading and matching the plan, coverage of checks |
 | `rustgen.rs`, `hostgen.rs` | Rust generation of deeds, the entry point and definitions (`DEFS_JSON`) |
 | `rest.rs`, `screengen.rs` | REST URLs and statuses, screen definitions |
-| `mcp.rs`, `assets/mcp_bridge.py` | MCP tool definitions (from the URL definitions) and the standard-I/O bridge (generic, only reads the definitions; a small Python script placed in the output) |
+| `mcp.rs`, `mcpbridge.rs` | MCP tool definitions (from the URL definitions) and the standard-I/O bridge (`geas mcp-bridge tools.json server-url`; generic, only reads the definitions, and called by the output's `mcp/mcp.json`) |
 | `crategen.rs` | Writes out the tree of generated outputs (crate, server runtime, windowed exe, extension, development mock panel, MCP). The parts live in `assets/` (`ext`, `dev`, `server`, `window`, `ui`, `e2e`, `std`) and are embedded with `include_dir` |
-| `testgen.rs`, `examples.rs` | Generate the HTTP end-to-end tests (pytest) from the plan's "URL examples" and the screen / extension end-to-end tests (pytest + Playwright) from the "screen examples". Build the bin for running from the "examples" tables, run it and compare with the plan |
-| `assets/e2e/screen_runner.js` | The generic runner of the screen end-to-end tests (placed in the output's `tests/`; it does not know the app) |
+| `testgen.rs`, `examples.rs` | Generate the HTTP end-to-end tests (Rust, in the generated server crate's `tests/`) from the plan's "URL examples" and the screen / extension end-to-end tests (Rust + Playwright) from the "screen examples". Build the bin for running from the "examples" tables, run it and compare with the plan |
+| `assets/e2e/screen_runner.js` | The generic runner of the screen end-to-end tests (placed in the output's `server/tests/`; it does not know the app) |
 | `receipt.rs` | The per-change receipt (`geas receipt`, the "trust receipt" section of `review --diff-o`): change of guarantee strength, impact, survivors of the mutation check compared with the previous version |
 | `hints.rs` | The hint of `check --json` (the section to read and how to fix per kind of finding). When you add a kind of finding to the checker, add it here too |
 | `trace.rs` | `geas trace`. Ties the server's structured logs to the specification's rows |

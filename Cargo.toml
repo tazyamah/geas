@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/geas-core", "crates/geas-cli"]
+members = ["crates/geas-core", "crates/geas-cli", "crates/geas-tools"]
 exclude = ["tests", "out", "proofs", "crates/geas-core/assets/server", "crates/geas-core/assets/window"]
 
 [workspace.package]

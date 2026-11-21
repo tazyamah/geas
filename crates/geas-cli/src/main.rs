@@ -161,10 +161,11 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "mutate", pos: &["code"], opts: &[("--base", true), ("--base-git", true), ("--run", false), ("--plan", true), ("-o", true)] },
     Cmd { name: "receipt", pos: &["code"], opts: &[("--base", true), ("--base-git", true), ("--plan", true), ("-o", true)] },
     Cmd { name: "trace", pos: &["code", "log"], opts: &[("--plan", true), ("-o", true)] },
+    Cmd { name: "mcp-bridge", pos: &["tools", "url"], opts: &[] },
     Cmd { name: "bench", pos: &["cases", "runs"], opts: &[("--no-run", false), ("--baseline", true), ("--json", true), ("-o", true)] },
 ];
 
-const USAGE: &str = "usage: geas [-h] [--lang {ja,en}]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,container,review,rust,compare,mutate,receipt,trace,bench} ...";
+const USAGE: &str = "usage: geas [-h] [--lang {ja,en}]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,container,review,rust,compare,mutate,receipt,trace,bench,mcp-bridge} ...";
 
 struct Args {
     cmd: &'static str,
@@ -700,6 +701,19 @@ fn cmd_trace(a: &Args) -> i32 {
     if t.unknown.is_empty() { 0 } else { 1 }
 }
 
+/// MCP の橋渡し：標準入出力の JSON-RPC を、動いているサーバーの REST に中継する
+fn cmd_mcp_bridge(a: &Args) -> i32 {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    match geas_core::mcpbridge::serve(a.v("tools").unwrap(), a.v("url").unwrap(), &mut stdin.lock(), &mut stdout.lock()) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{}", e);
+            1
+        }
+    }
+}
+
 fn cmd_bench(a: &Args) -> i32 {
     use geas_core::bench;
     let (cases, runs) = (Path::new(a.v("cases").unwrap()), Path::new(a.v("runs").unwrap()));
@@ -1061,6 +1075,7 @@ fn main() {
         "receipt" => cmd_receipt(&a),
         "trace" => cmd_trace(&a),
         "bench" => cmd_bench(&a),
+        "mcp-bridge" => cmd_mcp_bridge(&a),
         "env-facts" => cmd_env_facts(&a),
         "env-checks" => cmd_env_checks(&a),
         "env-verify" => cmd_env_verify(&a),

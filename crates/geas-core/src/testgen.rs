@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const HEADER: &str = include_str!("assets/testgen_header.txt");
+const URL_TEST: &str = include_str!("assets/testgen_url_test.txt");
 const SCREEN_TEST: &str = include_str!("assets/testgen_screen_test.txt");
 
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
@@ -87,21 +87,19 @@ pub fn url_rows(ck: &Checker, plan: &Plan) -> Result<Vec<UrlRow>, String> {
     Ok(out)
 }
 
-fn repr_row(r: &UrlRow) -> String {
-    let keep = if r.7.is_empty() { "[]".to_string() } else { format!("[{}]", r.7.iter().map(|(a, b)| format!("({}, {})", repr_str(a), repr_str(b))).collect::<Vec<_>>().join(", ")) };
-    format!("({}, {}, {}, {}, {}, {}, {}, {}, {})", repr_str(&r.0), repr_str(&r.1), repr_str(&r.2), repr_opt(&r.3), repr_str(&r.4), r.5, repr_opt(&r.6), keep, repr_str(&r.8))
-}
-
 pub fn write_url_tests(ck: &Checker, plan: &Plan, dest: &Path) -> Result<Option<PathBuf>, String> {
     let rows = url_rows(ck, plan)?;
     if rows.is_empty() {
         return Ok(None);
     }
-    let out = dest.join("tests");
+    // 生成したサーバーのクレート（server/）の通しテストにする（cargo test で、そのクレート自身の geas_server を起こして動かす）
+    let out = dest.join("server").join("tests");
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-    let f = out.join("test_url_examples.py");
-    let body = format!("[\n{}]", rows.iter().map(|r| format!("    {},\n", repr_row(r))).collect::<String>());
-    fs::write(&f, HEADER.replacen("%s", &body, 1)).map_err(|e| e.to_string())?;
+    // (ID, メソッド, 経路, 入力, 期待する結果, 期待する状態, 期待する本文, 控える, 書き換える行の実体)
+    let data: Vec<Value> = rows.iter().map(|r| json!([r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(), r.8])).collect();
+    fs::write(out.join("url_examples.json"), dumps_indent(&Value::Array(data), 1) + "\n").map_err(|e| e.to_string())?;
+    let f = out.join("url_examples.rs");
+    fs::write(&f, URL_TEST).map_err(|e| e.to_string())?;
     Ok(Some(f))
 }
 
@@ -396,12 +394,12 @@ pub fn write_screen_tests(ck: &Checker, plan: &Plan, dest: &Path) -> Result<Opti
     if cases.is_empty() {
         return Ok(None);
     }
-    let out = dest.join("tests");
+    let out = dest.join("server").join("tests");
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     fs::write(out.join("screen_cases.json"), dumps_indent(&Value::Array(cases), 1) + "\n").map_err(|e| e.to_string())?;
     let runner = ASSETS.get_file("e2e/screen_runner.js").ok_or("e2e/screen_runner.js")?;
     fs::write(out.join("screen_runner.js"), runner.contents()).map_err(|e| e.to_string())?;
-    let f = out.join("test_screen_examples.py");
+    let f = out.join("screen_examples.rs");
     fs::write(&f, SCREEN_TEST).map_err(|e| e.to_string())?;
     Ok(Some(f))
 }

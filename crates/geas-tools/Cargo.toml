@@ -1,0 +1,15 @@
+[package]
+name = "geas-tools"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+description = "リポジトリの保守用の道具（文書サイトの生成・Kani による証明の実行）。geas 本体の依存ではない"
+
+[[bin]]
+name = "geas-tools"
+path = "src/main.rs"
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"

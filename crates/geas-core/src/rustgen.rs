@@ -1199,7 +1199,16 @@ impl<'a, 'b> ProcGen<'a, 'b> {
         };
         let mut lines: Vec<String> = vec![];
         let mut cargs: Vec<String> = vec![];
-        for ((n, t), a) in pt.params.iter().zip(args.iter()) {
+        // 省いた引数は、デフォルト値で補う（検査と同じ。Python 版は検査が呼びの引数を書き換えていた）
+        let mut full: Vec<Expr> = args.to_vec();
+        if full.len() < pt.params.len() {
+            for (pn, _) in &pt.params[full.len()..] {
+                if let Some(d) = pt.defaults.get(pn) {
+                    full.push(d.clone());
+                }
+            }
+        }
+        for ((n, t), a) in pt.params.iter().zip(full.iter()) {
             lines.push(format!("let {}: {} = {};", n, local(t), self.rx(a)));
             cargs.push(if t.kind == "整数" || t.kind == "金額" { self.conv(t, n, &format!("{}の{}", name, n), false) } else { format!("{}.clone()", n) });
         }

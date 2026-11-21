@@ -13,7 +13,6 @@ on:
       - "pages/**"
       - "docs/**"
       - "skills/**"
-      - "tools/**"
       - "tests/fixtures/overseas_shop/*.md"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -35,9 +34,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: 仕様書を生成する
         run: |
           F=tests/fixtures/overseas_shop
@@ -49,8 +45,7 @@ jobs:
           cp pages/index.html site/index.html
           mkdir -p site/en
           cp pages/index.en.html site/en/index.html
-          pip install -q markdown
-          python tools/build_site.py site
+          cargo run --release -q -p geas-tools -- site site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

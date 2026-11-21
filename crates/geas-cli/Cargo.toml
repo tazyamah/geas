@@ -18,3 +18,4 @@ sha2 = "0.10"
 tar = "0.4"
 lzma-rs = "0.3"
 regex = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }

@@ -27,13 +27,12 @@ geas は、会話で作る計画書（plan）と、AI が書く言語 `.geas` �
 
 ## 入れる
 
-geas 本体（検査器・生成器・CLI）は Rust です（以前の Python 版は、git のタグ `python-final` に残してあります）。
+geas 本体（検査器・生成器・CLI）と、保守の道具（文書サイトの生成・Kani の証明の実行、`crates/geas-tools`）は Rust です。Python は使いません（以前の Python 版は、git のタグ `python-final` に残してあります）。
 
 | 道具 | 要るか | 用途 |
 |---|---|---|
 | Rust（cargo） | 必須 | `cargo install --path crates/geas-cli` で `geas` を入れる。`rust` で作ったコードの実行・具体例の実行・テスト（`cargo test`）にも使う |
-| Python 3 と pytest | 生成した通しテスト（`tests/test_url_examples.py`・`tests/test_screen_examples.py`）を回すときだけ | geas 本体には要らない。生成したアプリのテストの書き方が pytest |
-| node と Playwright | 画面・拡張の通しの確認をするとき（無ければその確認は飛ばされる） | 生成した `tests/test_screen_examples.py`（実行部は生成物の `tests/screen_runner.js`） |
+| node と Playwright | 画面・拡張の通しの確認をするとき（無ければその確認は飛ばされる） | 生成した `server/tests/screen_examples.rs`（実行部は生成物の `server/tests/screen_runner.js`） |
 
 ```sh
 git clone https://github.com/tazyamah/geas.git
@@ -69,8 +68,8 @@ geas parts アプリ.geas [--all] [--record]                # 部品（library�
 geas receipt アプリ.geas --base-git HEAD~1 [--plan 計画書.md] [-o レシート.md]  # 変更ごとのレシート：前の版と比べた、信頼に関わる変化（保証が弱くなったもの・増えた人の保証・動きが変わるかもしれない処理・URL・画面・ユースケース・生き残り）。PR の本文に貼る
 geas trace アプリ.geas サーバーのログ [--plan 計画書.md] [-o 結果.md]  # 運用のログ（生成サーバーの標準エラーに出る geas.route の行）を、仕様書のルート・処理・結果・ユースケースに結ぶ。結べない行があれば終了コード 1
 geas bench ケース集/ 結果の置き場/ [--no-run] [--baseline 前回.json] [--json 今回.json]  # AI が計画書から書いた .geas の採点（検査・計画書との食い違い・具体例・直した回数）。AI は呼ばない。PR の直前・ビルドの直前に 1 回
-python proofs/run.py [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
-python proofs/std_proofs.py [--timeout 秒] [--jobs 数] [--record]   # 標準部品の証明（Kani が要る）。全部の入力で、panic しないことと、式どおりであることを示す。--record で同梱の台帳に書く
+cargo run -p geas-tools -- proofs [--timeout 秒]                          # 生成物の前置きの証明（Kani が要る。通常のテストには入らない）
+cargo run -p geas-tools -- std-proofs [--timeout 秒] [--jobs 数] [--record]   # 標準部品の証明（Kani が要る）。全部の入力で、panic しないことと、式どおりであることを示す。--record で同梱の台帳に書く
 geas rust アプリ.geas -o 出力先 [--plan 計画書.md] [--host] [--runtime] [--standalone] [--seed 最初のデータ.json] [--server URL]
 geas interview init|status|render 台帳.json     # 初回の対話の台帳（計画書づくりの補助）
 ```
@@ -80,7 +79,7 @@ geas interview init|status|render 台帳.json     # 初回の対話の台帳（�
 - 何も付けない：Rust の crate（検査済みの処理の本体）だけ。
 - `--host`：画面（PWA）・開発用の模擬パネル（サーバーを `--test` で起こしたときだけ配る）・窓口 `host.rs`・定義 `DEFS_JSON`、そして `page` を持つ screen があればブラウザ拡張（`ext/`）も作る。AI から使う口として、MCP のツール定義（`mcp/tools.json`、URL の定義から機械的に作る）と、サーバーへ中継する汎用の橋渡し `mcp/bridge.py`・登録例 `mcp/mcp.json` も作る。
 - `--host --runtime`：サーバーの実行部（`server/`、SQLite と HTTP）も置く。`cd 出力先/server && cargo build --release` でビルドできる。動かし方・引数・公開するときの前置き（nginx など）は [docs/server.md](server.md)。`--standalone` は、窓つき exe（`window/`）も置く（画面と処理を 1 つの実行ファイルにし、通信路を使わない。[docs/standalone.md](standalone.md)）。`--seed` は、DB が空のときだけ入れる最初のデータ（`{"実体名": {"キー": {行}}}` の JSON）で、生成物に埋め込む。行は、入れる前に型の範囲で確かめる（範囲の外の行があると、入れずに止まる）。
-- `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `tests/test_url_examples.py` 、計画書の「画面の具体例」（下）から画面の通しテスト `tests/test_screen_examples.py` も作る（サーバーをビルドしてから `python -m pytest 出力先/tests`）。
+- `--plan`：計画書の具体例を実行する bin も作る。`--host --runtime` と一緒なら、計画書の「URL の具体例」（下）から HTTP の通しテスト `server/tests/url_examples.rs` 、計画書の「画面の具体例」（下）から画面の通しテスト `server/tests/screen_examples.rs` も作る（`cd 出力先/server && cargo test --release`。画面のほうは node と Playwright が無ければ何もせず終わる）。
 
 検査にエラーか「問い」が残っていると、`rust` と `compare` は先へ進みません。
 
@@ -161,10 +160,10 @@ geas mutate $F/overseas_shop.geas -o $F/overseas_shop_mutation.md
 | `spec.rs`・`review.rs`・`svg.rs`・`plan.rs` | 仕様書（Markdown／HTML）の生成（図は `svg.rs` の自前 SVG。見た目・構造は specgap のレビュー画面に合わせる）、計画書の読み取りと突合、確認の網羅 |
 | `rustgen.rs`・`hostgen.rs` | 処理の Rust 生成、窓口と定義（`DEFS_JSON`） |
 | `rest.rs`・`screengen.rs` | REST の URL と状態、画面の定義 |
-| `mcp.rs`・`assets/mcp_bridge.py` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（定義を読むだけの汎用。生成物に置かれる Python の小さなスクリプト） |
+| `mcp.rs`・`mcpbridge.rs` | MCP のツール定義（URL の定義から）と、標準入出力の橋渡し（`geas mcp-bridge tools.json サーバーのURL`。定義を読むだけの汎用で、生成物の `mcp/mcp.json` が呼ぶ） |
 | `crategen.rs` | 生成物の木（crate・サーバー実行部・窓つき exe・拡張・開発用の模擬パネル・MCP）を書き出す。部品は `assets/`（`ext`・`dev`・`server`・`window`・`ui`・`e2e`・`std`）に置き、`include_dir` で埋め込む |
-| `testgen.rs`・`examples.rs` | 計画書の「URL の具体例」から HTTP の通しテスト（pytest）を、「画面の具体例」から画面・拡張の通しテスト（pytest＋Playwright）を生成。「具体例」の表から実行用の bin を作って動かし、計画と比べる |
-| `assets/e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `tests/` に置かれる）。アプリを知らない |
+| `testgen.rs`・`examples.rs` | 計画書の「URL の具体例」から HTTP の通しテスト（Rust。生成したサーバーの crate の `tests/`）を、「画面の具体例」から画面・拡張の通しテスト（Rust＋Playwright）を生成。「具体例」の表から実行用の bin を作って動かし、計画と比べる |
+| `assets/e2e/screen_runner.js` | 画面の通しテストの汎用の実行部（生成物の `server/tests/` に置かれる）。アプリを知らない |
 | `receipt.rs` | 変更ごとのレシート（`geas receipt`、`review --diff-o` の「信頼のレシート」の節）。前の版との、保証の強さの変化・影響範囲・変異検査の生き残り |
 | `hints.rs` | `check --json` の hint（指摘の種類ごとの、見る節と直し方）。検査器の指摘の種類を足したら、ここにも足す |
 | `trace.rs` | `geas trace`。サーバーの構造化ログを仕様書の行に結ぶ |

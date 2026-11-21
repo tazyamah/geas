@@ -35,6 +35,7 @@ pub mod rustgen;
 pub mod screengen;
 pub mod review;
 pub mod mcp;
+pub mod mcpbridge;
 pub mod plan;
 pub mod pynum;
 pub mod svg;

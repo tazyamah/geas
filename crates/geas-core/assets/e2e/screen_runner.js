@@ -10,7 +10,7 @@ const { chromium } = require("playwright");
 
 const [casesFile, base, work, flag] = process.argv.slice(2);
 const cases = JSON.parse(fs.readFileSync(casesFile, "utf8"));
-const EXT = path.resolve(path.dirname(casesFile), "../ext");
+const EXT = path.resolve(path.dirname(casesFile), "../../ext");
 
 async function getJson(p) { return (await fetch(base + p)).json(); }
 
