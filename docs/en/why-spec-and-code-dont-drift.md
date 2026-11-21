@@ -1,8 +1,10 @@
 # How the specification and the code stay in sync: geas's thinking and how far it can be trusted
 
-> This page is a translation of the Japanese original (the Japanese text is the source of truth). Names of tests and files quoted below (such as `tests/test_geas.py`, `cli.py`, `servergen.py`) are as in the original, and some of them refer to the Python-era implementation (kept at the git tag `python-final`).
+> This page is a translation of the Japanese original (the Japanese text is the source of truth). Test names quoted below are English glosses of the Python version's Japanese test names (kept at the git tag `python-final`).
 
 This file is an explanation for a person to judge whether geas can be trusted. It describes not only "what is guaranteed and how" but also **what is not yet guaranteed**. The claims are based on the repository's implementation and tests (the location of the evidence is attached to each section). The entry point for AI agents is [ai-guide.md](ai-guide.md).
+
+The test names in the text (`test_…`, `tests/test_*.py`) are those of the Python version before the Rust port (kept at the git tag `python-final`; if you take them out, they run as they are). In the current Rust, the same guarantees are watched, in `crates/geas-cli/tests/`, by `golden.rs` (the corpus outputs match the Python version), `spec_coverage.rs` (a change in the code always appears in the specification), `e2e.rs` (run the examples with generated code, start the server), `lang.rs` (Japanese / English mode) and `container.rs` (container and infra).
 
 ## 1. The basic idea
 
@@ -33,19 +35,19 @@ In other words, a drift of the form "the specification is right but the code doe
 
 ### 2.2 No hand-written code that does not appear in the specification
 
-The generated outputs, down to the screens (PWA), the browser extension, the development panel, the server runtime (SQLite and HTTP), the MCP tool definitions and the end-to-end tests, are all made from the `.geas` and the plan. The head of a generated file says "automatically generated; do not edit by hand", and the descriptions of `servergen.py`, `extgen.py`, `screengen.py` and `mcp.py` also say "there is no hand-written code". The server runtime does not know the app and runs only on the generated definitions (`DEFS_JSON`).
+The generated outputs, down to the screens (PWA), the browser extension, the development panel, the server runtime (SQLite and HTTP), the MCP tool definitions and the end-to-end tests, are all made from the `.geas` and the plan. The head of a generated file says "automatically generated; do not edit by hand", and the descriptions of `crategen.rs`, `hostgen.rs`, `screengen.rs` and `mcp.rs` also say "there is no hand-written code". The server runtime does not know the app and runs only on the generated definitions (`DEFS_JSON`).
 
 The exception is **parts that call a root-language library (`library`)**. The code being called lies outside geas, and the checker cannot see its content. So the call is confined to one module of the output (`mod library`), and the declared range and guarantee (`guarantee`) are checked on every call (a violation or a panic stops the deed before anything is written). A `trust` with a reason is required, and what is called and the level of checking appear under "human guarantees" in the specification. The earlier `part`, where the app implemented `trait Parts`, has been abolished.
 
 ### 2.3 What does not pass is not allowed to go forward
 
-`geas check` outputs errors and "questions" (QUESTION). A question is "something to ask a person, which the checker found 'not decided'" (the direction of rounding, how to handle the case where something does not exist, how to handle deletion, etc.). If errors or questions remain, `rust` and `compare` do not proceed (the `ck.ready` judgment in `cli.py`). An AI silently deciding and proceeding is stopped by the mechanism. That Rust is not generated from code with errors is also confirmed by a test (`test_do_not_generate_from_code_with_errors`).
+`geas check` outputs errors and "questions" (QUESTION). A question is "something to ask a person, which the checker found 'not decided'" (the direction of rounding, how to handle the case where something does not exist, how to handle deletion, etc.). If errors or questions remain, `rust` and `compare` do not proceed (the `ck.ready()` judgment in `crates/geas-cli/src/main.rs`). An AI silently deciding and proceeding is stopped by the mechanism. That Rust is not generated from code with errors is also confirmed by a test (`test_do_not_generate_from_code_with_errors`).
 
 ### 2.4 Increase the "ways of writing that cannot be written" and make them guarantees
 
-In geas, a way of writing that cannot be shown to be safe cannot be written in the first place. The main ones are as follows (the checker is `geas/check.py`).
+In geas, a way of writing that cannot be shown to be safe cannot be written in the first place. The main ones are as follows (the checker is `crates/geas-core/src/check/`).
 
-| Promise | What the checker does | Tests of examples that are stopped |
+| Promise | What the checker does | Tests of examples that are stopped (Python version) |
 |---|---|---|
 | Invariants (stock does not fall below 0, etc.) | On every write to a field, it shows on the spot from the value ranges that the promise is kept. An error if it cannot show it. Whether it is "proved" appears in the specification | `test_removing_the_stock_check_means_the_invariant_cannot_be_shown`, `test_decreasing_stock_by_a_field_update_shows_neither_range_nor_invariant` |
 | State transitions | They advance only in the declared order. Changing without checking the original state is an error | `test_a_transition_not_in_the_declaration_is_stopped`, `test_without_a_check_of_the_original_state_it_is_stopped` |
@@ -65,12 +67,12 @@ We do not stop at "the check passed"; the generated Rust is actually run.
 
 - **Behavior tests per language feature**: [language-test-map.md](language-test-map.md) lists, for each item of the reference, whether there is a test that runs the output and confirms it (◎ confirmed by running / ○ only stopped statically / ✕ not yet there). When a feature is added, a row is added to the table.
 - **Determinism**: the same `.geas` produces the same Rust. A test confirms that it matches the committed outputs (`test_generation_is_deterministic_and_matches_the_committed_outputs`).
-- **The shop app end to end**: waiting for payment and warehouse replies, expiry, restoration after a restart, re-charging with idempotency keys and so on are run with the server built (`tests/test_shop_app.py`, `tests/test_runtime.py`).
-- **The plan's examples**: from the "examples", "URL examples" and "screen examples" tables of the plan (the specification built through conversation), the HTTP end-to-end tests and the real-browser (Playwright) screen tests are **generated** (`testgen.py`). The expected values are on the plan's side and independent of the code. Tests are not written by hand, and when fixing them, you fix the plan's tables.
+- **The shop app end to end**: waiting for payment and warehouse replies, expiry, restoration after a restart, re-charging with idempotency keys and so on are run with the server built (in Rust, `crates/geas-cli/tests/e2e.rs`; in the Python version, `tests/test_shop_app.py` and `tests/test_runtime.py`).
+- **The plan's examples**: from the "examples", "URL examples" and "screen examples" tables of the plan (the specification built through conversation), the HTTP end-to-end tests and the real-browser (Playwright) screen tests are **generated** (`testgen.rs`). The expected values are on the plan's side and independent of the code. Tests are not written by hand, and when fixing them, you fix the plan's tables.
 
 ### 2.7 Matching against the plan (an optional extra net)
 
-`geas compare` matches the plan's ◆ columns against the specification generated from the code, and outputs "in the plan but not in the code", "in the code but not in the plan", "values differ", "examples disagree" and "unspecified" (`plan.py`). This is **an optional check, not a mandatory gate**, because the thing a person reviews is "the whole of the generated specification" in any flow. However, test generation from the plan's examples remains, as expected values independent of the code.
+`geas compare` matches the plan's ◆ columns against the specification generated from the code, and outputs "in the plan but not in the code", "in the code but not in the plan", "values differ", "examples disagree" and "unspecified" (`plan.rs`). This is **an optional check, not a mandatory gate**, because the thing a person reviews is "the whole of the generated specification" in any flow. However, test generation from the plan's examples remains, as expected values independent of the code.
 
 When updating, you can compare with the specification generated from the previous version (the previous git commit, etc.) and output the differences (`geas review --diff-o … --base-git HEAD~1`).
 
@@ -113,7 +115,7 @@ The main gaps are as follows.
 
 The binding of the generation rules (removing from the output the syntax that can panic, and enforcing it with clippy settings) is in place.
 
-**The prelude is proved**: the fixed prelude that goes at the head of every output (the calculation of `Ratio`, `floor`, `ceil`, `half_up`, the judgments of range, ratio, characters and GTIN, and case/width folding) does not change from app to app, so once shown with Kani it holds for every app. The proofs are in `proofs/prelude_proofs.rs`, and run with `python proofs/run.py` (only in an environment where Kani is installed. They are not part of the normal tests; `tests/test_proofs.py` calls them in an environment with Kani). The eight shown are as follows.
+**The prelude is proved**: the fixed prelude that goes at the head of every output (the calculation of `Ratio`, `floor`, `ceil`, `half_up`, the judgments of range, ratio, characters and GTIN, and case/width folding) does not change from app to app, so once shown with Kani it holds for every app. The proofs are in `proofs/prelude_proofs.rs`, and run with `python proofs/run.py` (only in an environment where Kani is installed. They are not part of the normal tests). The eight shown are as follows.
 - The range judgment `range_ok` is equivalent to "at least the lower limit and at most the upper limit".
 - If the ratio judgment `ratio_ok` passes, the denominator is at least 1 and at most 10⁹.
 - For a ratio whose denominator is 0 or less, `floor`, `ceil` and `half_up` all return an abnormality.
