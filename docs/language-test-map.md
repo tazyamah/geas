@@ -1,6 +1,6 @@
 # 言語機能と動作テストの対応表
 
-> **「動かすテスト」の列は Python 版のテストの名前で、「Rust 版（いま）」の列が、いまのリポジトリで同じ確認をする所です。** Python 版は Rust 化のときに削除し、git のタグ `python-final` に残してあります。Rust 版の動かすテストは `crates/geas-cli/tests/` の `behavior.rs`（処理・問い合わせ・削除・金額）・`host.rs`（ホストの境界・型・部品・モジュール）・`numbers.rs`・`reliability.rs`・`delete.rs`・`rest.rs`・`actors.rs`・`parts.rs`・`security.rs`・`screens.rs`・`effects_check.rs`・`effects_run.rs`・`env.rs`・`messages.rs`・`spec_steps.rs`・`user_path.rs`・`window.rs`・`runtime.rs`（サーバーまで組んだ通し）・`migration.rs`・`mcp_bridge.rs`・`e2e.rs` で、生成したコード側の通しテストは生成物の `server/tests/` に出ます。そのほか、`golden.rs`（コーパス 3,894 件の出力が Python 版と一致）・`spec_coverage.rs`・`lang.rs`・`container.rs` が見張ります。**「未移植」と書いた行や、下の「まだ無いもの」にある Python 版のテストは、まだ Rust に移していないもの**で、その動きの確認は、いまは golden（出力の一致）だけが間接的に支えています（残件）。
+> **「動かすテスト」の列は Python 版のテストの名前で、「Rust 版（いま）」の列が、いまのリポジトリで同じ確認をする所です。** Python 版は Rust 化のときに削除し、git のタグ `python-final` に残してあります。Rust 版の動かすテストは `crates/geas-cli/tests/` の `behavior.rs`（処理・問い合わせ・削除・金額）・`host.rs`（ホストの境界・型・部品・モジュール）・`numbers.rs`・`reliability.rs`・`delete.rs`・`rest.rs`・`actors.rs`・`parts.rs`・`security.rs`・`screens.rs`・`effects_check.rs`・`effects_run.rs`・`env.rs`・`messages.rs`・`spec_steps.rs`・`user_path.rs`・`window.rs`・`runtime.rs`（サーバーまで組んだ通し）・`migration.rs`・`mcp_bridge.rs`・`e2e.rs`、そして Python 版の `test_geas.py` の個別ケースを移した `shop_checks.rs`・`shop_flow.rs`・`shop_effects.rs`・`shop_types.rs`・`shop_lang.rs`・`shop_modules.rs`・`shop_gen.rs`・`shop_tools.rs`・`shop_app.rs` で、生成したコード側の通しテストは生成物の `server/tests/` に出ます。そのほか、`golden.rs`（コーパス 3,894 件の出力が Python 版と一致）・`spec_coverage.rs`・`lang.rs`・`container.rs` が見張ります。Python 版のテストは、標準部品の束の生成器（stdgen）の 2 件を除いてすべて Rust に移しました（stdgen は Python 版にしか無かった生成器で、コミットした `num.geas` の台帳は `parts.rs` が見張ります）。
 
 geas の保証は、「生成器が正しければ、どのアプリも `.geas` どおりに動く」ことに置きます。そのために、[language-reference.md](language-reference.md) の項目ごとに、**生成した Rust を実際に動かして確かめるテスト**があるかを、この表で管理します。新しい機能を足したら、この表に行を足し、動かすテストを書いてください。
 
@@ -83,5 +83,4 @@ geas の保証は、「生成器が正しければ、どのアプリも `.geas` 
 ## まだ無いもの（✕）
 
 - `event` の `external → 処理`（外から渡す入力で動く形）。
-- Python 版の `test_geas.py`（検査器の個別ケース）・`test_reliability.py`・`test_numbers.py`・`test_shop_app.py` のうち、Rust 版にまだ移していない個別のケース（タグ `python-final` に残してある）。
 - `now`・`tz_offset` を使う処理（時刻の計算は `test_geas.py` の時刻の項目で動かしている）。
