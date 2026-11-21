@@ -92,6 +92,13 @@ fn 仕様書にコンテナと基盤の表が出る() {
     let (c, out) = run(&["spec", f.to_str().unwrap()]);
     assert_eq!(c, 0, "{}", out);
     assert!(out.contains("## コンテナと基盤") && out.contains("parcel.example.com"), "{}", out);
+    assert!(out.contains("```mermaid\nflowchart LR") && out.contains("subgraph host") && out.contains("proxy -->|\"8080\"| app"), "{}", out);
+    // レビュー画面には SVG の構成図が出る
+    let html = d.join("r.html");
+    let (c, msg) = run(&["review", f.to_str().unwrap(), "-o", html.to_str().unwrap()]);
+    assert_eq!(c, 0, "{}", msg);
+    let h = std::fs::read_to_string(&html).unwrap();
+    assert!(h.contains("aria-label=\"構成図\"") && h.contains("/srv/parcel/data"), "レビュー画面に構成図が出ていません");
     let _ = std::fs::remove_dir_all(&d);
 }
 
