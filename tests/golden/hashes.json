@@ -61558,7 +61558,7 @@
 "fixtures/overseas_shop/overseas_shop.geas": {
 "ast": [
 0,
-"37d0fb111a04c9c97b8b",
+"5cb40a7b55568288c6e3",
 "e3b0c44298fc1c149afb"
 ],
 "check": [
@@ -61568,7 +61568,7 @@
 ],
 "review": [
 0,
-"b814530ebe53d1f8950b",
+"4c4c621ba66b90c5c4db",
 "e3b0c44298fc1c149afb"
 ],
 "rust": [
@@ -61578,7 +61578,7 @@
 ],
 "spec": [
 0,
-"2f543221166d6ff61d62",
+"ed8c77206f8a54799083",
 "e3b0c44298fc1c149afb"
 ]
 },

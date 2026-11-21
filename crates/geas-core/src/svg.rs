@@ -686,10 +686,14 @@ pub fn deploy(d: &Deploy, title: &str) -> String {
     let proxy_w = node_w(&proxy_a, &proxy_b);
 
     let pad = PAD;
-    let cont_w = srv_w + 40;
+    let cont_label = "コンテナ（非 root・読み取り専用）";
+    let cont_w = pymax(N::I(srv_w + 40), tw(cont_label) + 28).d0().parse::<i64>().unwrap_or(srv_w + 40);
     let cont_h = nh + 48;
     let low_w = vol_w + if env_w > 0 { 30 + env_w } else { 0 };
-    let inner_w = pymax(N::I(cont_w), N::I(low_w)).d0().parse::<i64>().unwrap_or(cont_w);
+    // 矢印の横のラベルが、ホストの枠からはみ出さないようにする
+    let vol_label_right = vol_w / 2 + 10 + tw(&format!("{}/app.sqlite", d.data.trim_end_matches('/'))).d0().parse::<i64>().unwrap_or(0);
+    let env_label_right = if env_w > 0 { vol_w + 30 + env_w / 2 + 10 + tw("シークレット（環境変数）").d0().parse::<i64>().unwrap_or(0) } else { 0 };
+    let inner_w = [cont_w, low_w, vol_label_right, env_label_right].into_iter().max().unwrap_or(cont_w);
     let host_w = inner_w + 40;
     let host_h = 40 + cont_h + 56 + nh + 24;
     let top = pad;
@@ -714,7 +718,7 @@ pub fn deploy(d: &Deploy, title: &str) -> String {
     let host_x = x;
     parts.push(frame(host_x, host_y, host_w, host_h, &d.host_title));
     let cont_x = host_x + 20;
-    parts.push(frame(cont_x, cont_y, cont_w, cont_h, "コンテナ（非 root・読み取り専用）"));
+    parts.push(frame(cont_x, cont_y, cont_w, cont_h, cont_label));
     let srv_x = cont_x + 20;
     parts.push(node("", srv_x, srv_y, srv_w, &srv_a, &srv_b));
     parts.push(edge(last_right, mid_y, host_x - 2, mid_y));
