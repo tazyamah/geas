@@ -184,7 +184,9 @@ name = "geas-cli"
 version = "0.0.0"
 dependencies = [
  "geas-core",
+ "indexmap",
  "lzma-rs",
+ "num-bigint",
  "regex",
  "rusqlite",
  "serde_json",
