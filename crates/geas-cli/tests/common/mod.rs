@@ -153,3 +153,16 @@ pub fn errors_loose(src: &str) -> Vec<String> {
 }
 
 pub mod serve;
+
+/// 検査して closure に渡す。path があれば、use の相対参照・標準モジュールの探索はそのファイルの隣から行う
+pub fn with_check_at<R>(src: &str, path: Option<&Path>, strict: bool, f: impl FnOnce(&geas_core::check::Checker) -> R) -> R {
+    let mut prog = parse(src, path).unwrap_or_else(|e| panic!("構文の誤り: {}", e));
+    let ck = check(&mut prog, strict);
+    f(&ck)
+}
+
+/// old が 1 回だけ置き換わる（無ければ失敗）
+pub fn mutate(src: &str, old: &str, new: &str) -> String {
+    assert!(src.contains(old), "{}", old);
+    src.replacen(old, new, 1)
+}
