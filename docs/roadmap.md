@@ -4,7 +4,6 @@
 
 ## 本体の実装
 
-- 生成したアプリの通しテスト（`test_url_examples.py` など）、MCP の橋渡し（`mcp_bridge.py`）、Kani の証明の道具（`proofs/std_proofs.py`）、文書サイトの生成（`tools/build_site.py`）は Python のまま。Rust に移す。
 - **raw から convert で境界の値を変換する書き方**の残り：入れ子の形、`dangerous` の画面でのエスケープ省略（画面に `raw` を出す書き方が決まってから）、`unsafe` を使う場面（いまの生成物には無い）。
 - **言語側の標準部品**（ハッシュなど、geas の式で書けない純粋な計算）の残り：`pow` の証明（繰り返しの上限を付ける）、ビット演算の式、時間切れと式の食い違いの区別、文字列（str・String）・char・他のクレート・Option を返す関数の扱い。
 

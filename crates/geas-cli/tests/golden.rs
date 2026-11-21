@@ -4,7 +4,7 @@
 //! 正解は、Rust 化の前の Python 版（git のタグ python-final）の出力から作った。入力は tests/corpus.tar.xz（テストに直書きされた
 //! .geas と、そこから作られた変種）と tests/fixtures/ の実物。比べるもの：astdump、check --json、spec、review（HTML）、
 //! rust --host --runtime --standalone の生成物の木（実物だけ）。
-//! 正解を作り直すときは、タグ python-final を取り出して `python tools/golden.py make` を走らせる。
+//! 正解を意図して作り直すときは、環境変数 GEAS_GOLDEN_DUMP=出力先 を付けてこのテストを走らせ、書き出した JSON で tests/golden/hashes.json を置き換える。
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

@@ -227,8 +227,8 @@ pub fn write_mcp(ck: &Checker, dest: &Path, server: &str) -> R {
     let out = dest.join("mcp");
     mkdirs(&out)?;
     write(&out.join("tools.json"), &(dumps_indent(&Value::Array(tool_defs(ck)?), 1) + "\n"))?;
-    write(&out.join("bridge.py"), asset_text("mcp_bridge.py")?)?;
-    let reg = json!({"mcpServers": {"geas": {"command": "python3", "args": ["bridge.py", "tools.json", server]}}});
+    // 橋渡しは geas 本体の `geas mcp-bridge`（定義を読むだけの汎用のもの）。生成物に別の実行部は置かない
+    let reg = json!({"mcpServers": {"geas": {"command": "geas", "args": ["mcp-bridge", "tools.json", server]}}});
     write(&out.join("mcp.json"), &(dumps_indent(&reg, 2) + "\n"))
 }
 

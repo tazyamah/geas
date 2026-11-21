@@ -47,7 +47,7 @@ The exception is **parts that call a root-language library (`library`)**. The co
 
 In geas, a way of writing that cannot be shown to be safe cannot be written in the first place. The main ones are as follows (the checker is `crates/geas-core/src/check/`).
 
-| Promise | What the checker does | Tests of examples that are stopped (Python version) |
+| Promise | What the checker does | Tests of examples that are stopped (Python version names; the Rust counterparts are in [language-test-map.md](language-test-map.md)) |
 |---|---|---|
 | Invariants (stock does not fall below 0, etc.) | On every write to a field, it shows on the spot from the value ranges that the promise is kept. An error if it cannot show it. Whether it is "proved" appears in the specification | `test_removing_the_stock_check_means_the_invariant_cannot_be_shown`, `test_decreasing_stock_by_a_field_update_shows_neither_range_nor_invariant` |
 | State transitions | They advance only in the declared order. Changing without checking the original state is an error | `test_a_transition_not_in_the_declaration_is_stopped`, `test_without_a_check_of_the_original_state_it_is_stopped` |
@@ -115,7 +115,7 @@ The main gaps are as follows.
 
 The binding of the generation rules (removing from the output the syntax that can panic, and enforcing it with clippy settings) is in place.
 
-**The prelude is proved**: the fixed prelude that goes at the head of every output (the calculation of `Ratio`, `floor`, `ceil`, `half_up`, the judgments of range, ratio, characters and GTIN, and case/width folding) does not change from app to app, so once shown with Kani it holds for every app. The proofs are in `proofs/prelude_proofs.rs`, and run with `python proofs/run.py` (only in an environment where Kani is installed. They are not part of the normal tests). The eight shown are as follows.
+**The prelude is proved**: the fixed prelude that goes at the head of every output (the calculation of `Ratio`, `floor`, `ceil`, `half_up`, the judgments of range, ratio, characters and GTIN, and case/width folding) does not change from app to app, so once shown with Kani it holds for every app. The proofs are in `proofs/prelude_proofs.rs`, and run with `cargo run -p geas-tools -- proofs` (only in an environment where Kani is installed. They are not part of the normal tests). The eight shown are as follows.
 - The range judgment `range_ok` is equivalent to "at least the lower limit and at most the upper limit".
 - If the ratio judgment `ratio_ok` passes, the denominator is at least 1 and at most 10⁹.
 - For a ratio whose denominator is 0 or less, `floor`, `ceil` and `half_up` all return an abnormality.

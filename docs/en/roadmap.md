@@ -6,7 +6,6 @@ Only things not yet done are placed here. Finished things, and the history and p
 
 ## Core implementation
 
-- The end-to-end tests of generated apps (`test_url_examples.py`, etc.), the MCP bridge (`mcp_bridge.py`), the Kani proof tool (`proofs/std_proofs.py`) and the generation of the documentation site (`tools/build_site.py`) are still Python. Move them to Rust.
 - What remains of **converting boundary values from raw with convert**: nested shapes, omitting escaping on screens for `dangerous` (after it is decided how to show `raw` on screens), and the situations where `unsafe` is used (none in the current outputs).
 - What remains of the **language-side standard parts** (pure calculations that cannot be written in geas expressions, such as hashes): the proof of `pow` (adding an upper bound on repetition), bit-operation expressions, telling a timeout apart from a disagreement with the expression, and handling of strings (str, String), char, other crates and functions returning Option.
 

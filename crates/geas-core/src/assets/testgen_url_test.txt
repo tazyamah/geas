@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! 計画書の「URL の具体例」から geas が生成したテスト。手で直さない（計画書を直して作り直す）。
+//! 具体例の行は url_examples.json。サーバーは、このクレート自身（geas_server）を新しい DB で起こす。
+//! 環境変数 GEAS_BASE_URL があれば、起こさずにそのサーバーに対して実行する（流れの途中の URL の具体例は、そのサーバーが --test で起きているときだけ通る）。
+use serde_json::Value;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+fn app() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+/// (状態, 本文, ETag)。Connection: close で 1 回ずつつなぐ
+fn request(port: u16, method: &str, path: &str, body: Option<&str>, if_match: Option<&str>) -> (u16, Value, Option<String>) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut req = format!("{} {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\n", method, path);
+    if let Some(t) = if_match {
+        req.push_str(&format!("If-Match: {}\r\n", t));
+    }
+    if let Some(b) = body {
+        req.push_str(&format!("Content-Length: {}\r\n", b.len()));
+    }
+    req.push_str("\r\n");
+    s.write_all(req.as_bytes()).unwrap();
+    if let Some(b) = body {
+        s.write_all(b.as_bytes()).unwrap();
+    }
+    let mut raw = vec![];
+    s.read_to_end(&mut raw).unwrap();
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("HTTP の返事を読めません");
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let status: u16 = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let chunked = head.to_ascii_lowercase().contains("transfer-encoding: chunked");
+    let mut data = raw[split + 4..].to_vec();
+    if chunked {
+        let (mut out, mut i) = (vec![], 0);
+        while let Some(e) = data[i..].windows(2).position(|w| w == b"\r\n") {
+            let n = usize::from_str_radix(String::from_utf8_lossy(&data[i..i + e]).trim(), 16).unwrap_or(0);
+            i += e + 2;
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&data[i..i + n]);
+            i += n + 2;
+        }
+        data = out;
+    }
+    let etag = head.lines().find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("etag")).map(|(_, v)| v.trim().to_string()));
+    (status, serde_json::from_slice(&data).unwrap_or(Value::Null), etag)
+}
+
+struct Server {
+    port: u16,
+    child: Option<Child>,
+    work: Option<PathBuf>,
+}
+
+impl Server {
+    fn start() -> Server {
+        if let Ok(u) = std::env::var("GEAS_BASE_URL") {
+            let port: u16 = u.trim_end_matches('/').rsplit(':').next().and_then(|p| p.parse().ok()).expect("GEAS_BASE_URL は http://127.0.0.1:ポート の形");
+            return Server { port, child: None, work: None };
+        }
+        let port = free_port();
+        let work = std::env::temp_dir().join(format!("geas-url-{}-{}", std::process::id(), port));
+        std::fs::create_dir_all(&work).unwrap();
+        // 流れの途中の処理の URL（仕様書の URL の表で「内部」）も具体例で確かめるので、テスト用の口を開く（--test）
+        let child = Command::new(env!("CARGO_BIN_EXE_geas_server"))
+            .args(["--port", &port.to_string(), "--db"])
+            .arg(work.join("app.sqlite"))
+            .arg("--pwa")
+            .arg(app().join("ui"))
+            .args(["--test", "--dev"])
+            .arg(app().join("dev"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let sv = Server { port, child: Some(child), work: Some(work) };
+        for _ in 0..100 {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        sv
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(c) = &mut self.child {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        if let Some(w) = &self.work {
+            let _ = std::fs::remove_dir_all(w);
+        }
+    }
+}
+
+fn fill(text: &str, vars: &[(String, String)]) -> String {
+    let mut t = text.to_string();
+    for (k, v) in vars {
+        t = t.replace(&format!("{{{}}}", k), v);
+    }
+    t
+}
+
+fn dig<'a>(mut j: &'a Value, path: &str) -> &'a Value {
+    for p in path.split('.') {
+        j = match j {
+            Value::Array(a) => &a[p.parse::<usize>().expect("控えの道すじの添字が数ではありません")],
+            _ => &j[p],
+        };
+    }
+    j
+}
+
+fn subset(want: &Value, got: &Value) -> bool {
+    match (want, got) {
+        (Value::Object(w), Value::Object(g)) => w.iter().all(|(k, v)| g.get(k).map_or(false, |x| subset(v, x))),
+        (Value::Array(w), Value::Array(g)) => w.len() == g.len() && w.iter().zip(g).all(|(a, b)| subset(a, b)),
+        _ => want == got,
+    }
+}
+
+fn text_of(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+#[test]
+fn url_examples_pass_in_order() {
+    let rows: Vec<Value> = serde_json::from_str(include_str!("url_examples.json")).unwrap();
+    let sv = Server::start();
+    let mut vars: Vec<(String, String)> = vec![];
+    for row in &rows {
+        // [ID, メソッド, 経路, 入力, 期待する結果, 期待する状態, 期待する本文, 控える, 書き換える行の実体]
+        let rid = text_of(&row[0]);
+        let method = text_of(&row[1]);
+        let path = fill(&text_of(&row[2]), &vars);
+        let mut tag = None;
+        let entity = text_of(&row[8]);
+        if !entity.is_empty() {
+            // PUT・DELETE：その行をいま読んだ人として呼ぶ（行の版を If-Match に載せる。行が無ければ、どの行の版でもない値）
+            let id = path.rsplit('/').next().unwrap();
+            let (_, j, _) = request(sv.port, "GET", &format!("/api/test/row_version/{}/{}", entity, id), None, None);
+            tag = Some(j["etag"].as_str().map(|s| s.to_string()).unwrap_or_else(|| "\"none\"".to_string()));
+        }
+        let body = row[3].as_str().map(|b| fill(b, &vars));
+        let (code, j, _) = request(sv.port, &method, &path, body.as_deref(), tag.as_deref());
+        assert_eq!(code as i64, row[5].as_i64().unwrap(), "{} {} {}: 状態が違います: {}", rid, method, path, j);
+        if let Some(res) = row[4].as_str().filter(|r| !r.is_empty()) {
+            assert_eq!(j["result"].as_str(), Some(res), "{}: 結果が違います: {}", rid, j);
+        }
+        if let Some(e) = row[6].as_str() {
+            let want: Value = serde_json::from_str(&fill(e, &vars)).unwrap();
+            assert!(subset(&want, &j), "{}: 期待する本文と合いません\n期待 {}\n実際 {}", rid, want, j);
+        }
+        for k in row[7].as_array().unwrap() {
+            let (name, src) = (text_of(&k[0]), text_of(&k[1]));
+            vars.push((name, text_of(dig(&j, &src))));
+        }
+    }
+}
