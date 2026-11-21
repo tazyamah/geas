@@ -47,6 +47,8 @@ jobs:
             --diff-o site/overseas_shop_changes.html \
             --base $F/overseas_shop_before.geas
           cp pages/index.html site/index.html
+          mkdir -p site/en
+          cp pages/index.en.html site/en/index.html
           pip install -q markdown
           python tools/build_site.py site
       - uses: actions/configure-pages@v5

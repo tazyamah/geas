@@ -64,7 +64,24 @@ NAV = [
 # 仕様書の HTML（別に生成する）。サイドバーの先頭に出す。
 SPEC_LINKS = [("仕様書の全体", "../overseas_shop.html"), ("前の版からの変更", "../overseas_shop_changes.html")]
 
+NAV_EN = [
+    ("Start here", [
+        ("docs/en/getting-started.md", "getting-started"),
+        ("docs/en/how-it-works.md", "how-it-works"),
+        ("docs/en/README.md", "index"),
+    ]),
+]
+SPEC_LINKS_EN = [("Sample specification (Japanese)", "../../overseas_shop.html"), ("Changes since the previous version (Japanese)", "../../overseas_shop_changes.html")]
+
 PAGES = {p: out for _, items in NAV for p, out in items}
+PAGES_EN = {p: out for _, items in NAV_EN for p, out in items}
+# 言語ごとの設定：ナビ、ページの表、出力先、サイドバーの見出し、ページ上部の文言
+LANGS = {
+    "ja": dict(nav=NAV, pages=PAGES, sub="docs", spec=SPEC_LINKS, spec_h="仕様書の見本", other="en", other_label="English",
+               root="../", menu="メニュー", brand="<b>Geas</b> ギアス", src="元の Markdown："),
+    "en": dict(nav=NAV_EN, pages=PAGES_EN, sub="en/docs", spec=SPEC_LINKS_EN, spec_h="Sample specification", other="ja", other_label="日本語",
+               root="../", menu="Menu", brand="<b>Geas</b>", src="Source Markdown: "),
+}
 
 
 def slugify(value, sep):
@@ -78,7 +95,7 @@ def title_of(text, fallback):
     return m.group(1).strip() if m else fallback
 
 
-def fix_links(body, src):
+def fix_links(body, src, lang="ja"):
     """相対リンクを直す。src は変換元のリポジトリ内のパス"""
     def sub(m):
         url = m.group(2)
@@ -86,8 +103,14 @@ def fix_links(body, src):
             return m.group(0)
         path, _, frag = url.partition("#")
         target = posixpath.normpath(posixpath.join(posixpath.dirname(src), path))
-        if target in PAGES:
-            new = PAGES[target] + ".html" + ("#" + frag if frag else "")
+        own = LANGS[lang]["pages"]
+        other = LANGS[LANGS[lang]["other"]]
+        if target in own:
+            new = own[target] + ".html" + ("#" + frag if frag else "")
+        elif target in other["pages"]:
+            # もう一方の言語のページ：サイトの中で相対で行く（docs/ と en/docs/ は 1 段ずれる）
+            up = "../../docs/" if lang == "en" else "../en/docs/"
+            new = up + other["pages"][target] + ".html" + ("#" + frag if frag else "")
         elif (ROOT / target).is_dir():
             new = f"{REPO}/tree/main/{target}"
         else:
@@ -109,6 +132,7 @@ a{color:var(--accent)}
 .top .brand{font-family:var(--font-display);font-size:18px;color:var(--ink);text-decoration:none}
 .top .brand b{color:var(--accent)}
 .top .gh{margin-left:auto;font-size:14px}
+.top .gh2{font-size:14px}
 #nav-toggle{display:none}
 .burger{display:none;cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;border:1px solid var(--line);border-radius:8px}
 .layout{display:flex;align-items:flex-start;max-width:1200px;margin:0 auto}
@@ -145,12 +169,13 @@ FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="
          '&family=Zen+Kaku+Gothic+New:wght@700&display=swap">')
 
 
-def sidebar(cur, titles):
+def sidebar(cur, titles, lang="ja"):
+    cfg = LANGS[lang]
     out = ['<nav class="side">']
-    out.append("<h4>仕様書の見本</h4>")
-    for label, href in SPEC_LINKS:
+    out.append(f"<h4>{html.escape(cfg['spec_h'])}</h4>")
+    for label, href in cfg["spec"]:
         out.append(f'<a class="spec" href="{href}">{html.escape(label)}</a>')
-    for group, items in NAV:
+    for group, items in cfg["nav"]:
         out.append(f"<h4>{html.escape(group)}</h4>")
         for p, name in items:
             c = ' class="cur"' if name == cur else ""
@@ -159,30 +184,42 @@ def sidebar(cur, titles):
     return "\n".join(out)
 
 
-def page(title, nav, body, src):
+def page(title, nav, body, src, lang="ja", counterpart=None):
+    cfg = LANGS[lang]
     return f"""<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} - Geas</title>{FONTS}<style>{CSS}</style></head>
 <body><input type="checkbox" id="nav-toggle">
-<div class="top"><label class="burger" for="nav-toggle" aria-label="メニュー">☰</label>
-<a class="brand" href="../"><b>Geas</b> ギアス</a><a class="gh" href="{REPO}">GitHub</a></div>
+<div class="top"><label class="burger" for="nav-toggle" aria-label="{cfg['menu']}">☰</label>
+<a class="brand" href="{cfg['root']}">{cfg['brand']}</a><a class="gh" href="{counterpart}">{cfg['other_label']}</a><a class="gh2" href="{REPO}">GitHub</a></div>
 <div class="layout">{nav}<main><article>{body}
-<p class="src">元の Markdown：<a href="{REPO}/blob/main/{src}">{src}</a></p></article></main></div></body></html>"""
+<p class="src">{cfg['src']}<a href="{REPO}/blob/main/{src}">{src}</a></p></article></main></div></body></html>"""
+
+
+def build(out_dir, lang):
+    cfg = LANGS[lang]
+    pages = cfg["pages"]
+    other = LANGS[cfg["other"]]
+    out = Path(out_dir) / cfg["sub"]
+    out.mkdir(parents=True, exist_ok=True)
+    texts = {p: (ROOT / p).read_text(encoding="utf-8") for p in pages}
+    titles = {p: title_of(t, Path(p).stem) for p, t in texts.items()}
+    # 同じ名前のページがもう一方の言語にもあれば、そこへ切り替える。無ければ、その言語の入口へ
+    other_names = set(other["pages"].values())
+    for p, text in texts.items():
+        name = pages[p]
+        md = markdown.Markdown(extensions=["tables", "fenced_code", "toc", "sane_lists"],
+                               extension_configs={"toc": {"slugify": slugify}})
+        body = fix_links(md.convert(text), p, lang)
+        target = name if name in other_names else "index"
+        counterpart = (("../en/docs/" if lang == "ja" else "../../docs/") + target + ".html")
+        (out / f"{name}.html").write_text(page(titles[p], sidebar(name, titles, lang), body, p, lang, counterpart), encoding="utf-8")
+    print(f"{lang}: {len(texts)} pages -> {out}")
 
 
 def main(out_dir):
-    out = Path(out_dir) / "docs"
-    out.mkdir(parents=True, exist_ok=True)
-    texts = {p: (ROOT / p).read_text(encoding="utf-8") for p in PAGES}
-    titles = {p: title_of(t, Path(p).stem) for p, t in texts.items()}
-    nav_cache = {}
-    for p, text in texts.items():
-        name = PAGES[p]
-        md = markdown.Markdown(extensions=["tables", "fenced_code", "toc", "sane_lists"],
-                               extension_configs={"toc": {"slugify": slugify}})
-        body = fix_links(md.convert(text), p)
-        (out / f"{name}.html").write_text(page(titles[p], sidebar(name, titles), body, p), encoding="utf-8")
-    print(f"文書 {len(texts)} 枚を {out} に作りました")
+    build(out_dir, "ja")
+    build(out_dir, "en")
 
 
 if __name__ == "__main__":
