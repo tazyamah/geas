@@ -618,7 +618,7 @@ impl Program {
         name_word_re().replace_all(text, |c: &regex::Captures| table.get(&c[0]).cloned().unwrap_or_else(|| c[0].to_string())).into_owned()
     }
 
-    /// 人に見せる文字列の中の名前を表示名（日本語、無ければ既定）に置き換える。生成する Rust には使わない
+    /// 人に見せる文字列の中の名前を表示名（言語に合うもの、無ければ既定）に置き換える。生成する Rust には使わない
     pub fn show_names(&self, text: &str) -> String {
         if self.labels.is_empty() && self.origin.is_empty() {
             return text.to_string();
@@ -632,7 +632,9 @@ impl Program {
         self.show_table_cache.get_or_init(|| {
             let mut table: IndexMap<String, String> = self.origin.iter().map(|(m, (module, n))| (m.clone(), format!("{}.{}", module, n))).collect();
             for (n, ls) in &self.labels {
-                let v = ls.get("ja").filter(|s| !s.is_empty()).or_else(|| ls.get("").filter(|s| !s.is_empty()));
+                // 英語モードは @en、日本語モードは @ja を先に使い、無ければ既定（タグなし）、最後にもう一方の言語
+                let (first, last) = if crate::i18n::lang() == crate::i18n::Lang::En { ("en", "ja") } else { ("ja", "en") };
+                let v = ls.get(first).filter(|s| !s.is_empty()).or_else(|| ls.get("").filter(|s| !s.is_empty())).or_else(|| ls.get(last).filter(|s| !s.is_empty()));
                 if let Some(v) = v {
                     table.insert(n.clone(), v.clone());
                 }

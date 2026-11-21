@@ -78,20 +78,20 @@ impl Diag {
     }
     /// 名前をコードに書いたとおりに出す（check の出力）
     pub fn for_code(&self) -> String {
-        format!(
+        crate::i18n::tr(&format!(
             "[{}] {}{}: {}（{}）",
             self.level,
             if self.code_where.is_empty() { &self.where_ } else { &self.code_where },
             self.at(),
             if self.code_msg.is_empty() { &self.msg } else { &self.code_msg },
             self.code
-        )
+        ))
     }
 }
 
 impl std::fmt::Display for Diag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}{}: {}（{}）", self.level, self.where_, self.at(), self.msg, self.code)
+        write!(f, "{}", crate::i18n::tr(&format!("[{}] {}{}: {}（{}）", self.level, self.where_, self.at(), self.msg, self.code)))
     }
 }
 

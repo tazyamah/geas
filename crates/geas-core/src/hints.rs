@@ -102,7 +102,7 @@ fn pretty(v: &Value) -> String {
 }
 
 pub fn to_json(ok: bool, ready: bool, diags: &[Diag], path: &str) -> String {
-    pretty(&json!({"file": path, "ok": ok, "ready": ready, "diagnostics": diags.iter().map(as_dict).collect::<Vec<_>>()}))
+    pretty(&crate::i18n::tr_value(json!({"file": path, "ok": ok, "ready": ready, "diagnostics": diags.iter().map(as_dict).collect::<Vec<_>>()})))
 }
 
 /// 構文エラー（検査まで進めない）の JSON
@@ -125,5 +125,5 @@ pub fn syntax_json(path: &str, e: &Error) -> String {
     if col != 0 {
         diag.insert("col".into(), json!(col));
     }
-    pretty(&json!({"file": path, "ok": false, "ready": false, "diagnostics": [Value::Object(diag)]}))
+    pretty(&crate::i18n::tr_value(json!({"file": path, "ok": false, "ready": false, "diagnostics": [Value::Object(diag)]})))
 }

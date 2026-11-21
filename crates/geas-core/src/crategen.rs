@@ -27,7 +27,7 @@ fn io<T>(r: std::io::Result<T>) -> Result<T, String> {
 }
 
 fn write(path: &Path, text: &str) -> R {
-    io(fs::write(path, text.as_bytes()))
+    io(fs::write(path, crate::i18n::tr_bytes(text.as_bytes())))
 }
 
 fn mkdirs(p: &Path) -> R {
@@ -40,7 +40,7 @@ fn copy_dir(dir: &str, out: &Path) -> R {
     let d = ASSETS.get_dir(dir).ok_or_else(|| format!("同梱のフォルダがありません: {}", dir))?;
     for f in d.files() {
         let name = f.path().file_name().unwrap();
-        io(fs::write(out.join(name), f.contents()))?;
+        io(fs::write(out.join(name), crate::i18n::tr_bytes(f.contents())))?;
     }
     Ok(())
 }
@@ -85,7 +85,7 @@ const WINDOW_CARGO: &str = "[package]\nname = \"geas_window\"\nversion = \"0.1.0
 pub fn write_window(dest: &Path, resident: bool) -> R {
     let out = dest.join("window");
     mkdirs(&out.join("src"))?;
-    io(fs::write(out.join("src").join("main.rs"), ASSETS.get_file("window/src/main.rs").ok_or("window/src/main.rs")?.contents()))?;
+    io(fs::write(out.join("src").join("main.rs"), &crate::i18n::tr_bytes(ASSETS.get_file("window/src/main.rs").ok_or("window/src/main.rs")?.contents())))?;
     if let Some(l) = ASSETS.get_file("window/Cargo.lock") {
         io(fs::write(out.join("Cargo.lock"), l.contents()))?;
     }
