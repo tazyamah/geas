@@ -803,3 +803,17 @@ resource Reconnections {
 // 動かす前提：アプリが実行環境に要求すること（環境の実際は書かない）
 needs exposure public "海外のお客さんがブラウザから買う"
 needs secret Payment.api_key "決済事業者の API 鍵"
+
+// コンテナと基盤：コンテナの要求（基盤に依存しない）と、VM＋Docker での置き方。
+// geas container が Dockerfile・compose.yaml を生成し、仕様書に構成図が出る
+container {
+  port 8080
+  data "/var/lib/shop"
+  secret Payment.api_key
+}
+infra vm_docker "海外にも売るお店" {
+  host_port 443 via proxy
+  volume host "/srv/shop/data"
+  secrets_from env_file "/etc/shop/secrets.env"
+  host_name "shop.example.com"
+}

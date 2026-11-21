@@ -432,6 +432,45 @@ flowchart LR
 | exposure | 到達性 | インターネットに公開する口は、リソース 17 件の経路を出すものだけ | 人が書いた（海外のお客さんがブラウザから買う） | plan・実環境 |
 | limits | 資源 | 前段（LB・プロキシ）が、遅い読み込みを切る時間切れを持つ | 導出（生成サーバーは本文が 16 MiB を超えると 413 で断り、JSON の入れ子は 64 段まで。読み込みの時間切れだけは部品に口がなく、前段に任せる。前段の本文上限は、低くても無くても、サーバーが守るので要求しない） | 人の保証 |
 
+## コンテナと基盤（container・infra の宣言。geas container が Dockerfile・compose.yaml を生成する。ホストの OS・Docker・前段・バックアップ・シークレットの値は人の保証）
+
+| 項目 | 内容 | 由来 |
+|---|---|---|
+| 基盤 | vm_docker「海外にも売るお店」 | infra |
+| コンテナの待ち受け口 | 8080 | container |
+| データのボリューム（コンテナの中） | /var/lib/shop（保存先のファイルは /var/lib/shop/app.sqlite） | container |
+| データのボリューム（ホストの側） | /srv/shop/data | infra |
+| 公開 | ホストの 443 を前段のプロキシが受け、127.0.0.1:8080 へ渡す。コンテナの口はホストの手元にだけ出す（プロキシと TLS は人の保証） | infra |
+| 利用者が開く名前 | shop.example.com（サーバーが Host として受ける） | infra |
+| シークレット | GEAS_SECRET_PAYMENT_API_KEY（値は /etc/shop/secrets.env から環境変数で受ける。geas は値を持たない） | container／infra |
+| 同時に動く台数 | 1（入れ替えは、古いコンテナを止めてから新しいものを起動する） | infra |
+| 実行の形 | 非 root（番号 10001）・ルートは読み取り専用・権限は全部外す | geas が固定 |
+
+構成図（宣言から生成。破線の枠は人の保証）
+
+```mermaid
+flowchart LR
+  user["利用者"]
+  proxy["前段のプロキシ<br>ホストの 443（人の保証）"]
+  user --> proxy
+  subgraph host["ホスト（vm_docker「海外にも売るお店」）"]
+    subgraph box["コンテナ（非 root・読み取り専用）"]
+      app["geas サーバー<br>口 8080（台数 1）"]
+    end
+    vol[("データフォルダ<br>/srv/shop/data")]
+    envf["環境ファイル<br>/etc/shop/secrets.env"]
+  end
+  proxy -->|"8080"| app
+  vol ---|"/var/lib/shop/app.sqlite"| app
+  envf -.->|"シークレット（環境変数）"| app
+  ext0["Payment<br>外部システム"]
+  app --> ext0
+  ext1["Warehouse<br>外部システム"]
+  app --> ext1
+  ext2["Shipping<br>外部システム"]
+  app --> ext2
+```
+
 ## 削除（消してよい状態と、消したときの参照元の扱い）
 
 | データ | 消してよい状態 | 参照元の扱い |

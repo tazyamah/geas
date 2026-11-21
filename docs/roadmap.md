@@ -57,6 +57,7 @@ PDD Kit は「AI が書いたコードを、一行ずつ読まずに信頼する
 - `geas env-live` を、HTTPS の実サーバーに向けて走らせる（https は curl で送る）。役割（actor）つきのアプリの 401・403
 - `geas env-probe` の宛先到達（`--egress`）を、実際にファイアウォールで絞った環境で
 - aws-ecs のアダプタを、実物の `terraform show -json` で（見本は手書きのまま）
+- 仕様書（.md）の構成図（mermaid）が、GitHub や仕様書のビューアで実際に描画されるか
 - 窓つき exe の Windows 実機での確認は、別（2026-11-10 に済み。roadmap の常駐の項を参照）
 
 ## AIネイティブ開発ガイド（OpenAI）との比較から取り込んだもの

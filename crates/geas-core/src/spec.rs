@@ -1073,6 +1073,12 @@ pub fn render(ck: &Checker, spec: &Spec, name: &str) -> String {
     if has(spec, "コンテナと基盤") {
         push_head(&mut out, "## コンテナと基盤（container・infra の宣言。geas container が Dockerfile・compose.yaml を生成する。ホストの OS・Docker・前段・バックアップ・シークレットの値は人の保証）", "| 項目 | 内容 | 由来 |", 3, true);
         table(&mut out, spec, "コンテナと基盤", 3);
+        out.push(String::new());
+        out.push("構成図（宣言から生成。破線の枠は人の保証）".into());
+        out.push(String::new());
+        out.push("```mermaid".into());
+        out.extend(crate::containergen::mermaid(p));
+        out.push("```".into());
     }
     if has(spec, "削除") {
         push_head(&mut out, "## 削除（消してよい状態と、消したときの参照元の扱い）", "| データ | 消してよい状態 | 参照元の扱い |", 3, true);

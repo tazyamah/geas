@@ -1106,7 +1106,7 @@ pub fn review(ck: &Checker, plan_md: Option<&str>, findings: &[Finding], name: &
         add("needs", Some("動かす前提"), lead("アプリが実行環境に要求することです。環境の実際（いま何台か、どのポートが開いているか）は geas に書かず、plan や実環境から読んで照合します。照合は `geas env-verify` で行います（plan の JSON から。読めなかった事実は「確かめられなかった」で、合格にはしません）。由来が「人が書いた」の行は、`needs` に書かれた理由つきの要求です。") + &table(&["番号", "観点", "要求", "由来", "確かめ方"], &srows(rows(&spec, "動かす前提"))));
     }
     if has(&spec, "コンテナと基盤") {
-        add("container", Some("コンテナと基盤"), lead("container（基盤に依存しない）と infra（基盤ごと）の宣言です。`geas container` が Dockerfile と compose.yaml を生成します。ホストの OS・Docker・前段のプロキシ・バックアップ・シークレットの値は、geas の外（人の保証）です。") + &table(&["項目", "内容", "由来"], &srows(rows(&spec, "コンテナと基盤"))));
+        add("container", Some("コンテナと基盤"), lead("container（基盤に依存しない）と infra（基盤ごと）の宣言です。`geas container` が Dockerfile と compose.yaml を生成します。ホストの OS・Docker・前段のプロキシ・バックアップ・シークレットの値は、geas の外（人の保証）です。") + &crate::containergen::deploy_of(ck.p).map(|d| fig(&svg::deploy(&d, "構成図"))).unwrap_or_default() + &table(&["項目", "内容", "由来"], &srows(rows(&spec, "コンテナと基盤"))));
     }
     if has(&spec, "人の保証") {
         add("trusts", Some("人の保証"), lead("範囲の確認や直列化を、人が引き受けた（または範囲を限った）ものです。入力は、外れると範囲外の値がそのまま入ります。足し引き（+= -=）の saturating は範囲の端で止まり、trust assume は届くと異常で止まります。途中の計算は、収まると示せたものだけが何も書かずに通ります。示せない計算を人が引き受けたものは、ここに「途中の計算」として出ます（check は溢れたら異常で止まり、verify は検証ビルドだけ確かめ、assume は確かめません）。検査器は、宣言した範囲を事実として使っています。") + &table(&["処理", "入力・足し引きする項目", "型・範囲", "実行時の確認", "理由"], &srows(rows(&spec, "人の保証"))));

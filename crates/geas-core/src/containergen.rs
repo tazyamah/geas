@@ -72,6 +72,51 @@ ENTRYPOINT [{entry}]\n",
     Ok(out)
 }
 
+/// 構成図の材料。宣言が無ければ None
+pub fn deploy_of(p: &Program) -> Option<crate::svg::Deploy> {
+    let (c, i) = (p.container.as_ref()?, p.infra.as_ref()?);
+    Some(crate::svg::Deploy {
+        proxy: i.via == "proxy",
+        host_port: i.host_port,
+        port: c.port,
+        host_title: format!("ホスト（{}「{}」）", i.kind, i.name),
+        volume_host: i.volume_host.clone(),
+        data: c.data.clone(),
+        env_file: if c.secrets.is_empty() { String::new() } else { i.env_file.clone() },
+        externals: crate::envreq::effect_namespaces(p),
+    })
+}
+
+/// 構成図（mermaid。仕様書の .md 用）。ラベルは文字列、ノードの名前は半角英数
+pub fn mermaid(p: &Program) -> Vec<String> {
+    let Some(d) = deploy_of(p) else { return vec![] };
+    let q = |s: &str| s.replace('"', "'");
+    let mut o: Vec<String> = vec!["flowchart LR".into(), "  user[\"利用者\"]".into()];
+    if d.proxy {
+        o.push(format!("  proxy[\"前段のプロキシ<br>ホストの {}（人の保証）\"]", d.host_port));
+        o.push("  user --> proxy".into());
+    }
+    o.push(format!("  subgraph host[\"{}\"]", q(&d.host_title)));
+    o.push("    subgraph box[\"コンテナ（非 root・読み取り専用）\"]".into());
+    o.push(format!("      app[\"geas サーバー<br>口 {}（台数 1）\"]", d.port));
+    o.push("    end".into());
+    o.push(format!("    vol[(\"データフォルダ<br>{}\")]", q(&d.volume_host)));
+    if !d.env_file.is_empty() {
+        o.push(format!("    envf[\"環境ファイル<br>{}\"]", q(&d.env_file)));
+    }
+    o.push("  end".into());
+    o.push(if d.proxy { format!("  proxy -->|\"{}\"| app", d.port) } else { format!("  user -->|\"{} → {}\"| app", d.host_port, d.port) });
+    o.push(format!("  vol ---|\"{}/app.sqlite\"| app", q(d.data.trim_end_matches('/'))));
+    if !d.env_file.is_empty() {
+        o.push("  envf -.->|\"シークレット（環境変数）\"| app".into());
+    }
+    for (k, e) in d.externals.iter().enumerate() {
+        o.push(format!("  ext{}[\"{}<br>外部システム\"]", k, q(e)));
+        o.push(format!("  app --> ext{}", k));
+    }
+    o
+}
+
 /// 仕様書の「コンテナと基盤」の表（項目・内容・由来）。宣言が無ければ空
 pub fn rows(p: &Program) -> Vec<[String; 3]> {
     let (Some(c), Some(i)) = (p.container.as_ref(), p.infra.as_ref()) else { return vec![] };

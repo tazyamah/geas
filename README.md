@@ -10,7 +10,7 @@
 
 「海外にも売るお店」を題材にした、`.geas` から生成した仕様書です（人が読むのは、これだけ）。
 
-- [仕様書の全体](https://tazyamah.github.io/geas/overseas_shop.html)：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証まで。
+- [仕様書の全体](https://tazyamah.github.io/geas/overseas_shop.html)：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証、実行環境（コンテナと基盤の構成図）まで。構成図も表も、`.geas` の宣言から機械で生成しています（手で描いた図は 1 枚もありません）。
 - [前の版からの変更と、答えてほしいこと](https://tazyamah.github.io/geas/overseas_shop_changes.html)：更新のたびに、人が見るのはここだけ。
 
 ## 流れ

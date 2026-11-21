@@ -633,3 +633,121 @@ pub fn steps(tree: &[Step], title: &str) -> String {
     let (right, bottom) = (s.right, bottom);
     svg(right + N::I(PAD) / 2, bottom + N::I(PAD) / 2, &s.parts, title)
 }
+
+/// 構成図の材料（container・infra の宣言から作る）
+#[derive(Clone, Debug, Default)]
+pub struct Deploy {
+    pub proxy: bool,
+    pub host_port: i64,
+    pub port: i64,
+    pub host_title: String,
+    pub volume_host: String,
+    pub data: String,
+    pub env_file: String,
+    pub externals: Vec<String>,
+}
+
+/// 構成図：利用者 → （前段のプロキシ）→ ホストの中のコンテナ。ボリューム・環境ファイルがコンテナにつながり、外部システムへ依頼が出る
+pub fn deploy(d: &Deploy, title: &str) -> String {
+    let nh = NODE_H + 12;
+    let node_w = |a: &str, b: &str| -> i64 { (pymax(tw(a), text_width(b, N::F(11.5))).d0().parse::<i64>().unwrap_or(80)) + 32 };
+    let node = |cls: &str, x: i64, y: i64, w: i64, a: &str, b: &str| -> String {
+        format!(
+            "<g class=\"node {}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"8\"/><text x=\"{}\" y=\"{}\" text-anchor=\"middle\">{}</text><text class=\"sub\" x=\"{}\" y=\"{}\" text-anchor=\"middle\">{}</text></g>",
+            cls,
+            x,
+            y,
+            w,
+            nh,
+            x + w / 2,
+            y + 22,
+            escape(a),
+            x + w / 2,
+            y + 39,
+            escape(b)
+        )
+    };
+    let frame = |x: i64, y: i64, w: i64, h: i64, label: &str| -> String {
+        format!("<g class=\"node\"><rect class=\"inner\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"10\"/><text class=\"sub\" x=\"{}\" y=\"{}\">{}</text></g>", x, y, w, h, x + 12, y + 18, escape(label))
+    };
+    let edge = |x1: i64, y1: i64, x2: i64, y2: i64| -> String { format!("<path class=\"edge same\" d=\"M{} {} L{} {}\" marker-end=\"url(#arrow-same)\"/>", x1, y1, x2, y2) };
+    let elabel = |x: i64, y: i64, t: &str| -> String { format!("<g class=\"elabel same\"><text x=\"{}\" y=\"{}\" text-anchor=\"middle\">{}</text></g>", x, y, escape(t)) };
+
+    let side = |x: i64, y: i64, t: &str| -> String { format!("<g class=\"elabel same\"><text x=\"{}\" y=\"{}\" text-anchor=\"start\">{}</text></g>", x, y, escape(t)) };
+    let srv_a = "geas サーバー".to_string();
+    let srv_b = format!("口 {}（台数 1）", d.port);
+    let srv_w = node_w(&srv_a, &srv_b);
+    let vol_a = "データフォルダ".to_string();
+    let vol_w = node_w(&vol_a, &d.volume_host);
+    let env_w = if d.env_file.is_empty() { 0 } else { node_w("環境ファイル", &d.env_file) };
+    let user_w = node_w("利用者", "ブラウザなど");
+    let proxy_a = "前段のプロキシ".to_string();
+    let proxy_b = format!("ホストの {}（人の保証）", d.host_port);
+    let proxy_w = node_w(&proxy_a, &proxy_b);
+
+    let pad = PAD;
+    let cont_label = "コンテナ（非 root・読み取り専用）";
+    let cont_w = pymax(N::I(srv_w + 40), tw(cont_label) + 28).d0().parse::<i64>().unwrap_or(srv_w + 40);
+    let cont_h = nh + 48;
+    let low_w = vol_w + if env_w > 0 { 30 + env_w } else { 0 };
+    // 矢印の横のラベルが、ホストの枠からはみ出さないようにする
+    let vol_label_right = vol_w / 2 + 10 + tw(&format!("{}/app.sqlite", d.data.trim_end_matches('/'))).d0().parse::<i64>().unwrap_or(0);
+    let env_label_right = if env_w > 0 { vol_w + 30 + env_w / 2 + 10 + tw("シークレット（環境変数）").d0().parse::<i64>().unwrap_or(0) } else { 0 };
+    let inner_w = [cont_w, low_w, vol_label_right, env_label_right].into_iter().max().unwrap_or(cont_w);
+    let host_w = inner_w + 40;
+    let host_h = 40 + cont_h + 56 + nh + 24;
+    let top = pad;
+    let host_y = top;
+    let cont_y = host_y + 40;
+    let srv_y = cont_y + 36;
+    let mid_y = srv_y + nh / 2;
+    let low_y = cont_y + cont_h + 56;
+
+    let mut x = pad;
+    let mut parts: Vec<String> = vec![];
+    let user_x = x;
+    parts.push(node("start", user_x, mid_y - nh / 2, user_w, "利用者", "ブラウザなど"));
+    x += user_w + 70;
+    let mut last_right = user_x + user_w;
+    if d.proxy {
+        parts.push(node("outside", x, mid_y - nh / 2, proxy_w, &proxy_a, &proxy_b));
+        parts.push(edge(last_right, mid_y, x - 2, mid_y));
+        last_right = x + proxy_w;
+        x += proxy_w + 70;
+    }
+    let host_x = x;
+    parts.push(frame(host_x, host_y, host_w, host_h, &d.host_title));
+    let cont_x = host_x + 20;
+    parts.push(frame(cont_x, cont_y, cont_w, cont_h, cont_label));
+    let srv_x = cont_x + 20;
+    parts.push(node("", srv_x, srv_y, srv_w, &srv_a, &srv_b));
+    parts.push(edge(last_right, mid_y, host_x - 2, mid_y));
+    parts.push(elabel((last_right + host_x) / 2, mid_y - 8, &if d.proxy { format!("{} へ", d.port) } else { format!("{} → {}", d.host_port, d.port) }));
+    parts.push(edge(host_x, mid_y, srv_x - 2, mid_y));
+    let vol_x = host_x + 20;
+    parts.push(node("", vol_x, low_y, vol_w, &vol_a, &d.volume_host));
+    parts.push(edge(vol_x + vol_w / 2, low_y - 2, vol_x + vol_w / 2, cont_y + cont_h + 2));
+    parts.push(side(vol_x + vol_w / 2 + 10, low_y - 18, &format!("{}/app.sqlite", d.data.trim_end_matches('/'))));
+    if env_w > 0 {
+        let env_x = vol_x + vol_w + 30;
+        parts.push(node("", env_x, low_y, env_w, "環境ファイル", &d.env_file));
+        parts.push(edge(env_x + env_w / 2, low_y - 2, env_x + env_w / 2, cont_y + cont_h + 2));
+        parts.push(side(env_x + env_w / 2 + 10, low_y - 18, "シークレット（環境変数）"));
+    }
+    let mut right = host_x + host_w;
+    if !d.externals.is_empty() {
+        let ex = right + 90;
+        let ew = d.externals.iter().map(|e| node_w(e, "外部システム")).max().unwrap_or(120);
+        let mut ey = host_y;
+        for e in &d.externals {
+            parts.push(node("", ex, ey, ew, e, "外部システム"));
+            let cy = ey + nh / 2;
+            parts.push(format!("<path class=\"edge same\" d=\"M{} {} C{} {} {} {} {} {}\" marker-end=\"url(#arrow-same)\"/>", cont_x + cont_w, mid_y, cont_x + cont_w + 60, mid_y, ex - 60, cy, ex - 2, cy));
+            ey += nh + 16;
+        }
+        parts.push(elabel(right + 45, host_y - 6, "依頼（宣言した先だけ）"));
+        right = ex + ew;
+    }
+    let h = pymax(N::I(host_y + host_h + pad), N::I(d.externals.len() as i64 * (nh + 16) + host_y + pad)).d0().parse::<i64>().unwrap_or(400);
+    svg(N::I(right + pad), N::I(h), &parts, title)
+}
