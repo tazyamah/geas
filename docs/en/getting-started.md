@@ -166,7 +166,7 @@ This creates versions of the code with one promise broken at a time and checks w
 geas rust tests/fixtures/tutorial/memo.geas -o out/memo
 ```
 
-`out/memo` now contains a Rust crate you can build as is. The options that also produce the server and screens (`--host`, `--runtime`, `--standalone`) are described in [ai-guide.md](../ai-guide.md) (Japanese).
+`out/memo` now contains a Rust crate you can build as is. The options that also produce the server and screens (`--host`, `--runtime`, `--standalone`) are described in [ai-guide.md](ai-guide.md).
 
 ## 8. The real flow starts from a conversation
 
@@ -180,5 +180,5 @@ In practice the work starts from a conversation, not from code.
 ## Where to go next
 
 - [How it works](how-it-works.md): why the specification and the code cannot drift apart.
-- [Language reference](../language-reference.md) (Japanese): the full syntax.
-- [Guide for AI agents](../ai-guide.md) (Japanese): every command and the working rules.
+- [Language reference](language-reference.md): the full syntax.
+- [Guide for AI agents](ai-guide.md): every command and the working rules.

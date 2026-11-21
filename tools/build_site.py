@@ -76,6 +76,11 @@ NAV_EN = [
         ("docs/en/how-it-works.md", "how-it-works"),
         ("docs/en/README.md", "index"),
     ]),
+    ("Guides", [
+        ("docs/en/ai-guide.md", "ai-guide"),
+        ("docs/en/language-reference.md", "language-reference"),
+        ("docs/en/rest.md", "rest"),
+    ]),
 ]
 SPEC_LINKS_EN = [("Sample specification (Japanese)", "../../overseas_shop.html"), ("Changes since the previous version (Japanese)", "../../overseas_shop_changes.html")]
 
