@@ -59,5 +59,5 @@ A passing check is not the end: the generated Rust is actually run. Every langua
 ## Where to go next
 
 - [Getting started](getting-started.md): try it by hand.
-- [Language reference](../language-reference.md) (Japanese): the full syntax.
-- [How URLs are decided (REST)](../rest.md) (Japanese): why the language decides the URLs.
+- [Language reference](language-reference.md): the full syntax.
+- [How URLs are decided (REST)](rest.md): why the language decides the URLs.

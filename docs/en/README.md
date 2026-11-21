@@ -18,12 +18,12 @@ These English pages are translations of the Japanese originals (the Japanese tex
 | Document | Contents |
 |---|---|
 | [Guide for AI agents](ai-guide.md) | Install, commands, working flow, rules, source map |
+| [Language reference](language-reference.md) | The full syntax |
 | [REST](rest.md) | How URLs are decided |
 
 ## Reference (Japanese)
 
 | Document | Contents |
 |---|---|
-| [Language reference](../language-reference.md) | The full syntax |
 | [Why the specification and the code do not drift](../why-spec-and-code-dont-drift.md) | The reasoning, the evidence and the gaps |
 | [Roadmap](../roadmap.md) | What is not done yet |

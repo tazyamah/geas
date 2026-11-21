@@ -78,6 +78,7 @@ NAV_EN = [
     ]),
     ("Guides", [
         ("docs/en/ai-guide.md", "ai-guide"),
+        ("docs/en/language-reference.md", "language-reference"),
         ("docs/en/rest.md", "rest"),
     ]),
 ]

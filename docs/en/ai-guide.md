@@ -10,15 +10,15 @@ geas is a tool that matches a plan (a specification built through conversation) 
 
 | What you want to know | Read |
 |---|---|
-| How to write the language (declarations, statements, expressions) | [language-reference.md](../language-reference.md) (Japanese) |
-| Mistakes easy to make from other languages (`&&`, `else`, `string`, `;`, …) | [Section 12 of language-reference.md](../language-reference.md#12-他の言語から来たときに間違えやすいこと) (Japanese) |
+| How to write the language (declarations, statements, expressions) | [language-reference.md](language-reference.md) |
+| Mistakes easy to make from other languages (`&&`, `else`, `string`, `;`, …) | [Section 12 of language-reference.md](language-reference.md#12-mistakes-easy-to-make-when-coming-from-other-languages) |
 | A complete worked example (a shop that also sells overseas: screens, REST, extension, server) | [tests/fixtures/overseas_shop/overseas_shop.geas](../../tests/fixtures/overseas_shop/overseas_shop.geas), and in the same folder `overseas_shop_plan.md` (plan) and `overseas_shop_spec.md` (generated specification) |
 | Small examples | [tests/fixtures/shop/shop.geas](../../tests/fixtures/shop/shop.geas); the delete example `tests/fixtures/delete_demo/` |
 | How to build a plan (the interview procedure) | [skills/plan-interview/SKILL.md](../../skills/plan-interview/SKILL.md) |
 | How to write `.geas`, check it and show the specification to a person (questions to ask, reviewer-perspective questions, surviving mutants) | [skills/geas-develop/SKILL.md](../../skills/geas-develop/SKILL.md) |
 | Behavior tests per language feature (which features are verified by actually running them) | [language-test-map.md](../language-test-map.md) (Japanese) |
 | The basic idea of geas and how the specification and the code stay in sync (how far the guarantee goes) | [why-spec-and-code-dont-drift.md](../why-spec-and-code-dont-drift.md) (Japanese) |
-| Naming rules | Chapter 1 of [language-reference.md](../language-reference.md) (Japanese) |
+| Naming rules | Chapter 1 of [language-reference.md](language-reference.md) |
 | History, proposals and records of how things were decided (no need to read) | [history/](../history/README.md) (Japanese) |
 | Modules (`use` / `module`) | [modules.md](../modules.md) (Japanese) |
 | How dates and times are handled | [datetime.md](../datetime.md) (Japanese) |
@@ -91,7 +91,7 @@ If the check has errors or leftover "questions", `rust` and `compare` do not pro
 The way of asking in steps 2–4 (questions one at a time, reading the specification first from a reviewer's perspective, showing survivors of the mutation check) is collected in [skills/geas-develop](../../skills/geas-develop/SKILL.md).
 
 1. **Build the plan** (`skills/plan-interview`). Ask use cases one question at a time, and ask for the behavioral requirements before writing code. The plan is Markdown.
-2. **Write the `.geas`**, with [language-reference.md](../language-reference.md) (Japanese) and the nearest example (the shop) at hand. Names are ASCII; write the Japanese display name in the `///` just before.
+2. **Write the `.geas`**, with [language-reference.md](language-reference.md) and the nearest example (the shop) at hand. Names are ASCII; write the Japanese display name in the `///` just before.
 3. **Check** (`check`). Fix errors (see the line number of the finding and the guidance such as `similar name` and how to fix). **Questions (QUESTION) are things to ask a person, so do not decide them yourself; ask** (the checker found something "not decided"). Also read the warnings (missing display names, etc.).
 4. **Generate the specification and match it against the plan** (`spec` / `review` / `compare`). If they disagree, ask the person which is right, the plan or the code.
 5. **Make the app** (`rust --host --runtime`). The principle is not to add hand-written code: code that does not appear in the plan or the `.geas` should be removed, not added.
