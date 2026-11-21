@@ -148,6 +148,11 @@ impl Srv {
         panic!("サーバーが起動しません");
     }
 
+    /// 保存先の SQLite のファイル
+    pub fn db(&self) -> PathBuf {
+        self.tmp.join("a.sqlite")
+    }
+
     pub fn stop(&mut self) {
         if let Some(c) = &mut self.child {
             let _ = c.kill();
