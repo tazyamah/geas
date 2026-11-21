@@ -18,7 +18,7 @@ fn tmp(name: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> (i32, String) {
-    let r = Command::new(BIN).args(args).output().unwrap();
+    let r = Command::new(BIN).env("GEAS_LANG", "ja").args(args).output().unwrap();
     (r.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr)))
 }
 

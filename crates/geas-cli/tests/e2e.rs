@@ -20,7 +20,7 @@ fn fixture(dir: &str, name: &str) -> (PathBuf, PathBuf) {
 /// 具体例を動かした結果が、計画の期待と食い違わないこと（計画とコードの静的な差は、このテストの対象ではない）
 fn compare(dir: &str, name: &str) {
     let (code, plan) = fixture(dir, name);
-    let r = Command::new(BIN).arg("compare").arg(&code).arg(&plan).output().unwrap();
+    let r = Command::new(BIN).env("GEAS_LANG", "ja").arg("compare").arg(&code).arg(&plan).output().unwrap();
     let out = String::from_utf8_lossy(&r.stdout);
     assert!(!out.contains("具体例の不一致"), "{} の具体例が計画と合っていません:\n{}\n{}", name, out, String::from_utf8_lossy(&r.stderr));
     assert!(out.contains("突合の結果"), "{}\n{}", out, String::from_utf8_lossy(&r.stderr));
@@ -61,7 +61,7 @@ fn 生成したサーバーが起動して口が答える() {
     let (code, plan) = fixture("runtime_demo", "runtime_demo");
     let tmp = std::env::temp_dir().join(format!("geas-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
-    let r = Command::new(BIN).arg("rust").arg(&code).arg("-o").arg(&tmp).args(["--host", "--runtime", "--plan"]).arg(&plan).output().unwrap();
+    let r = Command::new(BIN).env("GEAS_LANG", "ja").arg("rust").arg(&code).arg("-o").arg(&tmp).args(["--host", "--runtime", "--plan"]).arg(&plan).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let b = Command::new("cargo").args(["build", "--release", "--quiet"]).current_dir(tmp.join("server")).output().unwrap();
     assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));

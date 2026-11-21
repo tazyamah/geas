@@ -23,7 +23,7 @@ fn sha(b: &[u8]) -> String {
 }
 
 fn run(args: &[&str], cwd: &Path) -> (i32, Vec<u8>, Vec<u8>) {
-    let r = Command::new(BIN).args(args).current_dir(cwd).output().unwrap();
+    let r = Command::new(BIN).env("GEAS_LANG", "ja").args(args).current_dir(cwd).output().unwrap();
     (r.status.code().unwrap_or(-1), r.stdout, r.stderr)
 }
 

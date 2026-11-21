@@ -159,7 +159,7 @@ fn mutants(text: &str) -> Vec<(i64, String, String, String)> {
 /// Rust 一式（lib・host・画面・拡張・サーバー・窓）を生成して、ファイルごとのハッシュを返す。生成できなければ None
 fn crate_of(path: &Path, dest: &Path) -> Option<BTreeMap<String, String>> {
     let _ = std::fs::remove_dir_all(dest);
-    let r = Command::new(BIN).arg("rust").arg(path).arg("-o").arg(dest).args(["--host", "--runtime", "--standalone"]).output().unwrap();
+    let r = Command::new(BIN).env("GEAS_LANG", "ja").arg("rust").arg(path).arg("-o").arg(dest).args(["--host", "--runtime", "--standalone"]).output().unwrap();
     if !r.status.success() {
         return None;
     }

@@ -1,4 +1,56 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// 表示は、英語モードのときだけ、出す直前に英語にする（geas_core::i18n）。
+macro_rules! println {
+    () => { std::println!() };
+    ($($t:tt)*) => { std::println!("{}", geas_core::i18n::tr(&format!($($t)*))) };
+}
+macro_rules! print {
+    ($($t:tt)*) => { std::print!("{}", geas_core::i18n::tr(&format!($($t)*))) };
+}
+macro_rules! eprintln {
+    () => { std::eprintln!() };
+    ($($t:tt)*) => { std::eprintln!("{}", geas_core::i18n::tr(&format!($($t)*))) };
+}
+
+/// 文章のファイルを書く（英語モードなら英語にして）
+fn write_text(path: impl AsRef<std::path::Path>, text: impl AsRef<str>) -> std::io::Result<()> {
+    std::fs::write(path, geas_core::i18n::tr(text.as_ref()))
+}
+
+/// --lang と GEAS_LANG から言語を決める。--lang は取り除く。どちらも無ければ英語（ライブラリの既定は日本語）
+fn take_lang(argv: &mut Vec<String>) -> Result<geas_core::i18n::Lang, String> {
+    use geas_core::i18n::{parse_lang, Lang};
+    let mut chosen: Option<Lang> = None;
+    let mut i = 0;
+    while i < argv.len() {
+        let a = argv[i].clone();
+        let val = if a == "--lang" {
+            argv.remove(i);
+            if i >= argv.len() {
+                return Err("argument --lang: expected one argument (ja or en)".into());
+            }
+            Some(argv.remove(i))
+        } else if let Some(v) = a.strip_prefix("--lang=") {
+            argv.remove(i);
+            Some(v.to_string())
+        } else {
+            i += 1;
+            None
+        };
+        if let Some(v) = val {
+            chosen = Some(parse_lang(&v).ok_or_else(|| format!("argument --lang: invalid choice: '{}' (choose from ja, en)", v))?);
+        }
+    }
+    if let Some(l) = chosen {
+        return Ok(l);
+    }
+    if let Ok(v) = std::env::var("GEAS_LANG") {
+        if !v.trim().is_empty() {
+            return parse_lang(&v).ok_or_else(|| format!("GEAS_LANG: invalid value '{}' (choose from ja, en)", v));
+        }
+    }
+    Ok(Lang::En)
+}
 use geas_core::error::Error;
 use geas_core::parser::parse;
 use std::path::Path;
@@ -112,7 +164,7 @@ const CMDS: &[Cmd] = &[
     Cmd { name: "bench", pos: &["cases", "runs"], opts: &[("--no-run", false), ("--baseline", true), ("--json", true), ("-o", true)] },
 ];
 
-const USAGE: &str = "usage: geas [-h]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,container,review,rust,compare,mutate,receipt,trace,bench} ...";
+const USAGE: &str = "usage: geas [-h] [--lang {ja,en}]\n            {interview,astdump,check,parts,spec,env-checks,env-facts,env-verify,env-probe,env-live,doctor,container,review,rust,compare,mutate,receipt,trace,bench} ...";
 
 struct Args {
     cmd: &'static str,
@@ -316,7 +368,7 @@ fn counts_line(ck: &Checker) -> String {
 
 fn write_or_print(out: Option<&str>, text: &str) {
     match out {
-        Some(o) => std::fs::write(o, text).unwrap(),
+        Some(o) => write_text(o, text).unwrap(),
         None => println!("{}", text),
     }
 }
@@ -446,9 +498,9 @@ fn cmd_review(a: &Args) -> i32 {
             return 1;
         }
     };
-    std::fs::write(out, html).unwrap();
+    write_text(out, html).unwrap();
     if let Some(d) = a.v("diff_o") {
-        std::fs::write(d, geas_core::review::review_changes(&ck, &findings, &label, base_ck.as_ref(), &base_label, false, receipt_html.as_deref())).unwrap();
+        write_text(d, geas_core::review::review_changes(&ck, &findings, &label, base_ck.as_ref(), &base_label, false, receipt_html.as_deref())).unwrap();
         println!("生成しました: {}", d);
     } else if base_ck.is_some() {
         eprintln!("前の版は、--diff-o で出力先を渡したときだけ使います（仕様書には載せません）。");
@@ -537,7 +589,7 @@ fn cmd_compare(a: &Args) -> i32 {
     let text = report(&findings);
     println!("{}", text);
     if let Some(o) = a.v("o") {
-        std::fs::write(o, &text).unwrap();
+        write_text(o, &text).unwrap();
     }
     if findings.iter().any(|f| f.kind != UNSPEC) { 1 } else { 0 }
 }
@@ -977,7 +1029,17 @@ fn dev_cmd(argv: &[String]) -> Option<i32> {
 }
 
 fn main() {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    let lang = match take_lang(&mut argv) {
+        Ok(l) => l,
+        Err(m) => {
+            std::eprintln!("geas: error: {}", m);
+            std::process::exit(2);
+        }
+    };
+    // 構文木の出力（astdump）・開発用の出力・計画書の雛形（interview）は、他の道具が読むので日本語のまま
+    let machine = matches!(argv.first().map(|s| s.as_str()), Some("astdump") | Some("interview") | Some("rustlib") | Some("rusthost"));
+    geas_core::i18n::set_lang(if machine { geas_core::i18n::Lang::Ja } else { lang });
     if let Some(c) = dev_cmd(&argv) {
         std::process::exit(c);
     }

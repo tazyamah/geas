@@ -809,7 +809,7 @@ fn page(title: &str, h1: &str, head_extra: &str, body: &str, scripts: &str, frag
     if fragment {
         return head + &content;
     }
-    format!("<!doctype html>\n<html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n{}</head><body>{}</body></html>\n", head, content)
+    format!("<!doctype html>\n<html lang=\"{}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n{}</head><body>{}</body></html>\n", if crate::i18n::lang() == crate::i18n::Lang::En { "en" } else { "ja" }, head, content)
 }
 
 fn strip_parens(s: &str) -> &str {

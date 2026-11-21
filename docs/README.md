@@ -13,6 +13,7 @@
 | [language-concepts.md](language-concepts.md) | 言語の考え方と例（読み物） |
 | [modules.md](modules.md) | ファイルの分割と再利用 |
 | [rest.md](rest.md) | URL（REST）の決まりと理由 |
+| [i18n.md](i18n.md) | 日本語・英語モード（`--lang`・`GEAS_LANG`）と、対訳表の足し方 |
 | [datetime.md](datetime.md) | 日時の考え方 |
 
 ## 動かす
