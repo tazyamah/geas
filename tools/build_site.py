@@ -76,10 +76,31 @@ NAV_EN = [
         ("docs/en/how-it-works.md", "how-it-works"),
         ("docs/en/README.md", "index"),
     ]),
-    ("Guides", [
+    ("Use", [
         ("docs/en/ai-guide.md", "ai-guide"),
         ("docs/en/language-reference.md", "language-reference"),
+        ("docs/en/language-concepts.md", "language-concepts"),
+        ("docs/en/modules.md", "modules"),
         ("docs/en/rest.md", "rest"),
+        ("docs/en/datetime.md", "datetime"),
+        ("docs/en/i18n.md", "i18n"),
+    ]),
+    ("Run", [
+        ("docs/en/server.md", "server"),
+        ("docs/en/standalone.md", "standalone"),
+    ]),
+    ("Why you can trust it", [
+        ("docs/en/why-spec-and-code-dont-drift.md", "why-spec-and-code-dont-drift"),
+        ("docs/en/language-test-map.md", "language-test-map"),
+    ]),
+    ("Working procedures for AI", [
+        ("docs/en/skill-plan-interview.md", "skill-plan-interview"),
+        ("docs/en/skill-geas-develop.md", "skill-geas-develop"),
+    ]),
+    ("What is next, license", [
+        ("docs/en/roadmap.md", "roadmap"),
+        ("docs/en/handoff.md", "handoff"),
+        ("docs/en/license.md", "license"),
     ]),
 ]
 SPEC_LINKS_EN = [("Sample specification (Japanese)", "../../overseas_shop.html"), ("Changes since the previous version (Japanese)", "../../overseas_shop_changes.html")]

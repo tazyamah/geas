@@ -1,6 +1,6 @@
 # How it works: why the specification and the code do not drift
 
-Geas aims for this: **an AI writes the code, and a human reviews only the specification, without reading any code.** To get there, the specification and the code are not two separate things to be compared later. **Both are generated mechanically from one source of truth, the `.geas` file.** This page is the overview; the evidence (tests) and the full list of what is not yet guaranteed are in [why-spec-and-code-dont-drift.md](../why-spec-and-code-dont-drift.md) (Japanese).
+Geas aims for this: **an AI writes the code, and a human reviews only the specification, without reading any code.** To get there, the specification and the code are not two separate things to be compared later. **Both are generated mechanically from one source of truth, the `.geas` file.** This page is the overview; the evidence (tests) and the full list of what is not yet guaranteed are in [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md).
 
 ## The overall shape
 
@@ -43,7 +43,7 @@ Screens, the browser extension, the server runtime, MCP tool definitions and the
 
 ## Verified by running it
 
-A passing check is not the end: the generated Rust is actually run. Every language feature has behavior tests (see the [mapping table](../language-test-map.md), Japanese), and HTTP end-to-end tests and real-browser screen tests are generated from the examples in the plan, so the expected values are independent of the code. When something changes, only the difference from the previous version is shown to the human.
+A passing check is not the end: the generated Rust is actually run. Every language feature has behavior tests (see the [mapping table](language-test-map.md)), and HTTP end-to-end tests and real-browser screen tests are generated from the examples in the plan, so the expected values are independent of the code. When something changes, only the difference from the previous version is shown to the human.
 
 ## How far can you trust it
 
@@ -54,7 +54,7 @@ A passing check is not the end: the generated Rust is actually run. Every langua
 | Values from outside, results of parts | Checked at runtime every time |
 | Generated code behaves as `.geas` says | Behavior tests and end-to-end tests (checks by example) |
 
-**Geas does not yet carry a mathematical proof for the whole code.** The soundness of the checker itself, the insides of `library` parts and the details of screen design are outside the guarantee or weak, and what is weak is shown in the "strength of guarantees" table of the specification. The full list of gaps is in section 3 of [why-spec-and-code-dont-drift.md](../why-spec-and-code-dont-drift.md) (Japanese).
+**Geas does not yet carry a mathematical proof for the whole code.** The soundness of the checker itself, the insides of `library` parts and the details of screen design are outside the guarantee or weak, and what is weak is shown in the "strength of guarantees" table of the specification. The full list of gaps is in section 3 of [why-spec-and-code-dont-drift.md](why-spec-and-code-dont-drift.md).
 
 ## Where to go next
 

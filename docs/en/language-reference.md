@@ -13,7 +13,7 @@ A list of the syntax. All the examples are in [tests/fixtures/overseas_shop/over
 - Statements are separated by newlines. A newline inside `( )` is a continuation of the expression.
 - Numbers are written with ASCII `0`–`9` (full-width digits such as `９９` cannot be used; there are no decimals either).
 - Strings are `"…"`. Inside, write `\"` for `"`, `\\` for `\` itself, `\n` for a newline and `\t` for a tab (these are the only things that can follow `\`; the regular expression `\d` is written `\\d`). A line cannot be broken as it is inside a string. To continue a long string onto the next line, write `\` at the end of the line (leading blanks on the next line are skipped). A reason containing a newline is shown broken across lines inside the specification's tables.
-- `app "name"`: the app's name (the screen heading). `timezone +09:00`: the app's default time zone (UTC if omitted). `use "other.geas"` and `module name`: see [modules.md](../modules.md) (Japanese).
+- `app "name"`: the app's name (the screen heading). `timezone +09:00`: the app's default time zone (UTC if omitted). `use "other.geas"` and `module name`: see [modules.md](modules.md).
 
 ## 2. Types
 
