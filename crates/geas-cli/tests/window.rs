@@ -45,7 +45,11 @@ fn resident() -> &'static Win {
 
 fn selftest(w: &Win, db: &Path, envs: &[(&str, &str)], drop: &[&str]) -> (Option<i32>, String) {
     let mut c = Command::new("xvfb-run");
-    c.args(["-a"]).arg(&w.exe).arg("--db").arg(db).arg("--selftest");
+    c.args(["-a"]).arg(&w.exe);
+    if !db.as_os_str().is_empty() {
+        c.arg("--db").arg(db); // 空なら --db を付けず、data_folder の置き場に任せる
+    }
+    c.arg("--selftest");
     for d in drop {
         c.env_remove(d);
     }
@@ -196,10 +200,10 @@ fn data_folderは環境変数を展開して作り_未設定なら止まる() {
     std::fs::write(&code, src).unwrap();
     let w = build_window("df", &code, &["--target", "linux"]);
     let d = t.0.join("d");
-    let (c, log) = selftest(&w, &t.0.join("unused.sqlite"), &[("GEAS_TEST_DATA", d.to_str().unwrap())], &[]);
+    let (c, log) = selftest(&w, Path::new(""), &[("GEAS_TEST_DATA", d.to_str().unwrap())], &[]);
     assert_eq!(c, Some(0), "{}", tail(&log, 2000));
     assert!(d.join("app").join("app.sqlite").is_file());
     // 未設定なら、別の場所に逃げず、止まる
-    let (c, log) = selftest(&w, &t.0.join("unused.sqlite"), &[], &["GEAS_TEST_DATA"]);
+    let (c, log) = selftest(&w, Path::new(""), &[], &["GEAS_TEST_DATA"]);
     assert!(c == Some(1) && log.contains("GEAS_TEST_DATA が設定されていません"), "{}", tail(&log, 2000));
 }
