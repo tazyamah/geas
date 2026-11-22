@@ -19,7 +19,16 @@ pub fn target_dir() -> PathBuf {
 }
 
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    // 選んだ番号は手放してからサーバーが使うので、並んで動く別の試験が同じ番号を選びうる。このプロセスで渡した番号は、二度と渡さない
+    static USED: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
+    loop {
+        let p = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut u = USED.lock().unwrap_or_else(|e| e.into_inner());
+        if !u.contains(&p) {
+            u.push(p);
+            return p;
+        }
+    }
 }
 
 pub struct Resp {
@@ -123,29 +132,38 @@ impl Srv {
 
     /// 環境変数つきで起こす。drop_prefix で始まる名前の環境変数は引き継がない
     pub fn start_env(app: &App, args: &[&str], env: &[(&str, &str)], drop_prefix: &[&str]) -> Srv {
-        let port = free_port();
-        let tmp = std::env::temp_dir().join(format!("geas-srv-{}-{}", std::process::id(), port));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let mut cmd = Command::new(&app.exe);
-        cmd.args(["--port", &port.to_string(), "--db"]).arg(tmp.join("a.sqlite")).arg("--pwa").arg(app.dir.join("ui")).args(args).stdout(Stdio::null()).stderr(Stdio::null());
-        for (k, _) in std::env::vars() {
-            if drop_prefix.iter().any(|p| k.starts_with(p)) {
-                cmd.env_remove(k);
+        // free_port が選んだ番号を、別の試験のサーバーが先に取ることがある（起動した直後に落ちる）。そのときは番号を取り直して 3 回まで起こす
+        for attempt in 0..3 {
+            let port = free_port();
+            let tmp = std::env::temp_dir().join(format!("geas-srv-{}-{}", std::process::id(), port));
+            std::fs::create_dir_all(&tmp).unwrap();
+            let mut cmd = Command::new(&app.exe);
+            cmd.args(["--port", &port.to_string(), "--db"]).arg(tmp.join("a.sqlite")).arg("--pwa").arg(app.dir.join("ui")).args(args).stdout(Stdio::null()).stderr(Stdio::null());
+            for (k, _) in std::env::vars() {
+                if drop_prefix.iter().any(|p| k.starts_with(p)) {
+                    cmd.env_remove(k);
+                }
+            }
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+            let child = cmd.spawn().unwrap();
+            let mut s = Srv { port, child: Some(child), tmp };
+            for _ in 0..100 {
+                if TcpStream::connect(("127.0.0.1", port)).is_ok() && http(port, "GET", "/api/health", &[], None).status == 200 {
+                    return s;
+                }
+                if s.child.as_mut().and_then(|c| c.try_wait().ok().flatten()).is_some() {
+                    break; // 起動せずに終わった
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            s.stop();
+            if attempt == 2 {
+                panic!("サーバーが起動しません");
             }
         }
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let child = cmd.spawn().unwrap();
-        let mut s = Srv { port, child: Some(child), tmp };
-        for _ in 0..100 {
-            if TcpStream::connect(("127.0.0.1", port)).is_ok() && http(port, "GET", "/api/health", &[], None).status == 200 {
-                return s;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        s.stop();
-        panic!("サーバーが起動しません");
+        unreachable!()
     }
 
     /// 保存先の SQLite のファイル
