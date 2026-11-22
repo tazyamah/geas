@@ -12,8 +12,8 @@ The name comes from the Irish *geis*, a vow or taboo that must be kept. The heav
 
 An online-shop example, with the specification generated from its `.geas` (this is all a human reads). The specifications themselves are currently in Japanese.
 
-- [The full specification](https://tazyamah.github.io/geas/overseas_shop.html): use cases, screen transitions, examples, states, storage, human guarantees and the runtime environment (container and infrastructure diagram). Both the diagrams and the tables are generated from the `.geas` declarations; none is drawn by hand.
-- [Changes since the previous version, and what the reviewer is asked](https://tazyamah.github.io/geas/overseas_shop_changes.html): after each update, this is all a human looks at.
+- The full specification ([English](https://tazyamah.github.io/geas/en/overseas_shop.html) / [日本語](https://tazyamah.github.io/geas/overseas_shop.html)): use cases, screen transitions, examples, states, storage, human guarantees and the runtime environment (container and infrastructure diagram). Both the diagrams and the tables are generated from the `.geas` declarations; none is drawn by hand.
+- Changes since the previous version, and what the reviewer is asked ([English](https://tazyamah.github.io/geas/en/overseas_shop_changes.html) / [日本語](https://tazyamah.github.io/geas/overseas_shop_changes.html)): after each update, this is all a human looks at.
 
 ## The flow
 
@@ -36,10 +36,11 @@ cargo test                                              # tests
 
 ## Read more
 
-- [Getting started](docs/en/getting-started.md) and [How it works](docs/en/how-it-works.md) (English), or the [documentation site](https://tazyamah.github.io/geas/en/docs/)
-- For AI agents: [AGENTS.md](AGENTS.md) → [docs/ai-guide.md](docs/ai-guide.md) (Japanese)
+- [Getting started](docs/en/getting-started.md) and [How it works](docs/en/how-it-works.md) (English), or the documentation site ([English](https://tazyamah.github.io/geas/en/docs/) / [日本語](https://tazyamah.github.io/geas/docs/))
+- For AI agents: [AGENTS.md](AGENTS.md) → ai-guide ([English](docs/en/ai-guide.md) / [日本語](docs/ai-guide.md))
 - A full worked example: [tests/fixtures/overseas_shop/](tests/fixtures/overseas_shop/)
+- What you can and cannot trust (what is guaranteed and what is not): [English](docs/en/why-spec-and-code-dont-drift.md) / [日本語](docs/why-spec-and-code-dont-drift.md)
 
 ## License
 
-The geas tool is GPL-3.0-or-later. The generated Rust and binaries are free to use without restriction. See [docs/license.md](docs/license.md) (Japanese) and [CONTRIBUTING.md](CONTRIBUTING.md).
+The geas tool is GPL-3.0-or-later. The generated Rust and binaries are free to use without restriction. See license ([English](docs/en/license.md) / [日本語](docs/license.md)) and [CONTRIBUTING.md](CONTRIBUTING.md).

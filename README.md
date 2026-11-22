@@ -12,8 +12,8 @@
 
 「海外にも売るお店」を題材にした、`.geas` から生成した仕様書です（人が読むのは、これだけ）。
 
-- [仕様書の全体](https://tazyamah.github.io/geas/overseas_shop.html)：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証、実行環境（コンテナと基盤の構成図）まで。構成図も表も、`.geas` の宣言から機械で生成しています（手で描いた図は 1 枚もありません）。
-- [前の版からの変更と、答えてほしいこと](https://tazyamah.github.io/geas/overseas_shop_changes.html)：更新のたびに、人が見るのはここだけ。
+- 仕様書の全体（[日本語](https://tazyamah.github.io/geas/overseas_shop.html) / [English](https://tazyamah.github.io/geas/en/overseas_shop.html)）：ユースケース、画面の遷移、具体例、状態、保存の形、人の保証、実行環境（コンテナと基盤の構成図）まで。構成図も表も、`.geas` の宣言から機械で生成しています（手で描いた図は 1 枚もありません）。
+- 前の版からの変更と、答えてほしいこと（[日本語](https://tazyamah.github.io/geas/overseas_shop_changes.html) / [English](https://tazyamah.github.io/geas/en/overseas_shop_changes.html)）：更新のたびに、人が見るのはここだけ。
 
 ## 流れ
 
@@ -36,11 +36,11 @@ cargo test                                         # テスト
 
 ## 読むもの
 
-- AI の方：[AGENTS.md](AGENTS.md) → [docs/ai-guide.md](docs/ai-guide.md)
-- 文書：[文書サイト](https://tazyamah.github.io/geas/docs/)（一覧は [docs/README.md](docs/README.md)）
+- AI の方：[AGENTS.md](AGENTS.md) → ai-guide（[日本語](docs/ai-guide.md) / [English](docs/en/ai-guide.md)）
+- 文書：文書サイト（[日本語](https://tazyamah.github.io/geas/docs/) / [English](https://tazyamah.github.io/geas/en/docs/)）、一覧（[日本語](docs/README.md) / [English](docs/en/README.md)）
 - 動く全体の例：[tests/fixtures/overseas_shop/](tests/fixtures/overseas_shop/)
-- 信頼してよい範囲（保証できること・できないこと）：[docs/why-spec-and-code-dont-drift.md](docs/why-spec-and-code-dont-drift.md)
+- 信頼してよい範囲（保証できること・できないこと）：[日本語](docs/why-spec-and-code-dont-drift.md) / [English](docs/en/why-spec-and-code-dont-drift.md)
 
 ## ライセンス
 
-geas 本体は GPL-3.0-or-later です。生成された Rust とバイナリは制限なく自由に使えます。詳しくは [docs/license.md](docs/license.md)、貢献の条件は [CONTRIBUTING.md](CONTRIBUTING.md)。
+geas 本体は GPL-3.0-or-later です。生成された Rust とバイナリは制限なく自由に使えます。詳しくは license（[日本語](docs/license.md) / [English](docs/en/license.md)）、貢献の条件は [CONTRIBUTING.md](CONTRIBUTING.md)。
