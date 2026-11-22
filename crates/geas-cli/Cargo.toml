@@ -18,4 +18,6 @@ sha2 = "0.10"
 tar = "0.4"
 lzma-rs = "0.3"
 regex = "1"
+num-bigint = "0.4"
+indexmap = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
