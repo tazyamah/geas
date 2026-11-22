@@ -302,6 +302,44 @@ pub fn tr(s: &str) -> String {
     if lang() == Lang::Ja || !has_ja(s) {
         return s.to_string();
     }
+    tr_html(s)
+}
+
+/// 言語を問わず、HTML を英語にする（JSON データの中は、値だけ）
+fn tr_html(s: &str) -> String {
+    // HTML の JSON データ（<script type="application/json">…</script>）の中は、行をまたいで文の型に合わせると
+    // JSON が壊れる（「{}の例{}」が JSON の波括弧に当たる）ので、このあとの行ごとの翻訳に通さず、そのまま残す
+    const OPEN: &str = "<script type=\"application/json\"";
+    if s.contains(OPEN) {
+        let mut out = String::new();
+        let mut rest = s;
+        while let Some(i) = rest.find(OPEN) {
+            let (head, tail) = rest.split_at(i);
+            out.push_str(&tr_plain(head));
+            let end = tail.find("</script>").map(|e| e + "</script>".len()).unwrap_or(tail.len());
+            out.push_str(&tr_json_script(&tail[..end]));
+            rest = &tail[end..];
+        }
+        out.push_str(&tr_plain(rest));
+        return out;
+    }
+    tr_plain(s)
+}
+
+/// `<script type="application/json" …>本体</script>` の本体を、JSON として読み、文字列の値だけ英語にして書き戻す（キーはそのまま。読めなければそのまま）
+fn tr_json_script(tag: &str) -> String {
+    let (Some(a), Some(b)) = (tag.find('>'), tag.rfind("</script>")) else { return tag.to_string() };
+    if a + 1 > b {
+        return tag.to_string();
+    }
+    let body = tag[a + 1..b].replace("<\\/", "</");
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(v) => format!("{}{}{}", &tag[..=a], crate::review::pydumps(&tr_value(v)).replace("</", "<\\/"), &tag[b..]),
+        Err(_) => tag.to_string(),
+    }
+}
+
+fn tr_plain(s: &str) -> String {
     s.split('\n').map(|l| half_width(tr_line(l, 0, false))).collect::<Vec<_>>().join("\n")
 }
 
@@ -406,6 +444,15 @@ mod tests {
         assert_eq!(to_en("| 名前 | 表示名 |"), "| Name | Display name |");
         // 利用者の書いた名前は、そのまま
         assert_eq!(to_en("商品の管理の画面"), "商品の管理の画面");
+    }
+
+    #[test]
+    fn htmlのjsonデータは壊さず_値だけ英語にする() {
+        let html = "<p>x</p><script type=\"application/json\" id=\"a\">{\"画面\": {\"x\": \"商品名の例1\"}, \"y\": \"{}の例\"}</script>";
+        let out = tr_html(html);
+        let body = out.split('>').nth(3).unwrap().trim_end_matches("</script");
+        let v: serde_json::Value = serde_json::from_str(body).expect("JSON のまま");
+        assert!(v.as_object().unwrap().contains_key("画面"));
     }
 
     #[test]

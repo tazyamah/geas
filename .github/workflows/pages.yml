@@ -38,12 +38,18 @@ jobs:
         run: |
           F=tests/fixtures/overseas_shop
           mkdir -p site
-          cargo run --release -q -p geas-cli -- review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
+          # 日本語の仕様書（既定の言語は英語なので、--lang ja を付ける）
+          cargo run --release -q -p geas-cli -- --lang ja review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
             -o site/overseas_shop.html \
             --diff-o site/overseas_shop_changes.html \
             --base $F/overseas_shop_before.geas
-          cp pages/index.html site/index.html
+          # 英語の仕様書は en/ に置く
           mkdir -p site/en
+          cargo run --release -q -p geas-cli -- --lang en review $F/overseas_shop.geas --plan $F/overseas_shop_plan.md \
+            -o site/en/overseas_shop.html \
+            --diff-o site/en/overseas_shop_changes.html \
+            --base $F/overseas_shop_before.geas
+          cp pages/index.html site/index.html
           cp pages/index.en.html site/en/index.html
           cargo run --release -q -p geas-tools -- site site
       - uses: actions/configure-pages@v5
