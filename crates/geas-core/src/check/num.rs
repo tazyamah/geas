@@ -126,6 +126,56 @@ pub fn iv_mul(a: &Iv, b: &Iv) -> Iv {
     (ps.iter().min().cloned(), ps.iter().max().cloned())
 }
 
+/// min の値の範囲。下限は両方分かるときだけ、上限は分かるほうの小さいほう（Lean の Iv.min と対応）
+pub fn iv_min(a: &Iv, b: &Iv) -> Iv {
+    let lo = match (&a.0, &b.0) {
+        (Some(x), Some(y)) => Some(x.min(y).clone()),
+        _ => None,
+    };
+    let hi = match (&a.1, &b.1) {
+        (Some(x), Some(y)) => Some(x.min(y).clone()),
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (None, None) => None,
+    };
+    (lo, hi)
+}
+
+/// max の値の範囲（Lean の Iv.max と対応）
+pub fn iv_max(a: &Iv, b: &Iv) -> Iv {
+    let lo = match (&a.0, &b.0) {
+        (Some(x), Some(y)) => Some(x.max(y).clone()),
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (None, None) => None,
+    };
+    let hi = match (&a.1, &b.1) {
+        (Some(x), Some(y)) => Some(x.max(y).clone()),
+        _ => None,
+    };
+    (lo, hi)
+}
+
+/// 絶対値の値の範囲（Lean の Iv.abs と対応）
+pub fn iv_abs(a: &Iv) -> Iv {
+    let (lo, hi) = a.clone();
+    if let Some(l) = &lo {
+        if !l.is_negative() {
+            return (lo, hi);
+        }
+    }
+    if let Some(h) = &hi {
+        if !h.is_positive() {
+            return (Some(-h.clone()), lo.map(|l| -l));
+        }
+    }
+    let top = match (&lo, &hi) {
+        (Some(l), Some(h)) => Some((-l.clone()).max(h.clone())),
+        _ => None,
+    };
+    (Some(q(0)), top)
+}
+
 pub fn phys_iv(name: &str) -> (Q, Q) {
     let b = |bits: u32| BigInt::one() << bits;
     match name {

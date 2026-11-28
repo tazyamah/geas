@@ -22,7 +22,11 @@
 
 ## 範囲の外（これから）
 
-区間は Rust では有理数（BigRational）、ここでは整数。割り算・剰余・if 式・割合（Ratio）・文字列・集合の合計・`verify`（検証ビルドだけ確かめる）・時刻の差は未対応。Lean のモデルと Rust の実装が食い違わないことは、いまは手で対応表を作って突き合わせただけで、機械では確かめていません。
+区間は Rust では有理数（BigRational）、ここでは整数。割り算・剰余・if 式・割合（Ratio）・文字列・集合の合計・`verify`（検証ビルドだけ確かめる）・時刻の差は未対応。
+
+## Rust との突き合わせ
+
+`crates/geas-core/tests/lean_diff.rs` が、区間の計算（`iv_add`・`iv_neg`・`iv_mul`・`iv_min`・`iv_max`・`iv_abs`）に乱数の入力 3,000 件（固定の種。限りなし・0・大きな値を含む）を渡し、Rust の答えと、Lean のモデル（`Geas/Diff.lean` 経由）の答えが同じであることを確かめます。`lean` が PATH に無ければ飛ばします（`GEAS_LEAN` で場所を指定）。`iv_min`・`iv_max`・`iv_abs` は、突き合わせるために `interval` の中から `num.rs` に出した関数です（動きは変えていません）。まだ機械で確かめていないのは、`check_calc` の「収まる」の判定と、`rustgen.rs` の生成文字列です。
 
 ## 動かし方
 
