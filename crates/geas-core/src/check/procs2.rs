@@ -187,34 +187,13 @@ impl<'c, 'a> ProcChecker<'c, 'a> {
             }
             Expr::Call { n, args } if NUM_FUNCS.contains(&n.as_str()) && !self.ck.parts.contains_key(n) && !args.is_empty() => {
                 let ivs: Vec<Iv> = args.iter().map(|a| self.interval(a, env)).collect();
-                let los: Vec<&Option<Q>> = ivs.iter().map(|x| &x.0).collect();
-                let his: Vec<&Option<Q>> = ivs.iter().map(|x| &x.1).collect();
                 if n == "min" {
-                    let lo = if los.iter().any(|x| x.is_none()) { None } else { los.iter().map(|x| (**x).clone().unwrap()).min() };
-                    let hi = his.iter().filter_map(|x| (**x).clone()).min();
-                    return (lo, hi);
+                    return ivs[1..].iter().fold(ivs[0].clone(), |acc, x| iv_min(&acc, x));
                 }
                 if n == "max" {
-                    let lo = los.iter().filter_map(|x| (**x).clone()).max();
-                    let hi = if his.iter().any(|x| x.is_none()) { None } else { his.iter().map(|x| (**x).clone().unwrap()).max() };
-                    return (lo, hi);
+                    return ivs[1..].iter().fold(ivs[0].clone(), |acc, x| iv_max(&acc, x));
                 }
-                let (lo, hi) = ivs[0].clone();
-                if let Some(l) = &lo {
-                    if !l.is_negative() {
-                        return (lo, hi);
-                    }
-                }
-                if let Some(h) = &hi {
-                    if !h.is_positive() {
-                        return (Some(-h.clone()), lo.map(|l| -l));
-                    }
-                }
-                let top = match (&lo, &hi) {
-                    (Some(l), Some(h)) => Some(qmax(&-l.clone(), h)),
-                    _ => None,
-                };
-                (Some(q(0)), top)
+                iv_abs(&ivs[0])
             }
             Expr::Cond { c, a, b } => {
                 let saved = self.facts.clone();
